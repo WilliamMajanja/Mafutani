@@ -167,6 +167,44 @@ def _migrate(conn):
     except Exception:
         pass
 
+    # -- forecast log: predictions recorded so they can be scored later
+    #
+    # A new table rather than a column migration, and idempotent so a
+    # pre-existing database picks it up on next boot without a re-seed.
+    # Only creates; schema.sql owns the definition, and this block exists
+    # solely so existing installs do not need to be rebuilt to get it.
+    try:
+        have = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "forecasts" not in have:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS forecasts (
+                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id       INTEGER NOT NULL,
+                  symbol        TEXT NOT NULL REFERENCES symbols(symbol) ON DELETE CASCADE,
+                  model         TEXT NOT NULL,
+                  is_real_model INTEGER NOT NULL DEFAULT 0,
+                  family        TEXT NOT NULL DEFAULT 'unknown',
+                  horizon       INTEGER NOT NULL,
+                  last_close    REAL NOT NULL,
+                  asof          INTEGER NOT NULL,
+                  created_at    INTEGER NOT NULL,
+                  mean          REAL,
+                  median        REAL,
+                  sigma         REAL,
+                  p10           REAL,
+                  p50           REAL,
+                  p90           REAL,
+                  confidence    REAL
+                )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fc_sym_asof"
+                         " ON forecasts(symbol, asof)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_fc_model"
+                         " ON forecasts(model, asof)")
+            conn.commit()
+    except Exception:
+        pass
+
     # -- crypto/stablecoin markets (USDT and USDT pairs)
     #
     # Installed on boot so an existing database picks up USDT after a

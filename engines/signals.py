@@ -564,6 +564,17 @@ def preview_signal(kind, candles, quote, params, closes=None, cot=None):
     fn = _DISPATCH.get(name)
     if fn is None:
         return {"side": None, "qty": _qty_of(params), "reason": "unknown-kind"}
+    # Length-checked, not trusted. This guard is load-bearing in a way the
+    # parity suite cannot see from the outside: a wrong-length hint is
+    # *discarded* here, so every downstream number still matches the naive
+    # path and every parity test stays green. The hint is wrong, but nothing
+    # observable changes -- except speed.
+    #
+    # That is worth stating because it means "parity is green" is not
+    # evidence that hints are correct. Verified by mutation: changing the
+    # backtester's slice from closes[lo:i+1] to closes[lo:i] leaves all
+    # parity tests passing and trips only the speed bound, because the
+    # discarded hint silently costs the optimisation its entire purpose.
     if closes is not None and len(closes) != len(candles or []):
         closes = None
     if cot is not None:

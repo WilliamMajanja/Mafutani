@@ -237,16 +237,6 @@ canvas.chart {
 .an-high { color: #ff5470; text-transform: uppercase; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
 .an-med { color: #ffb424; text-transform: uppercase; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
 .an-low { color: var(--dim); text-transform: uppercase; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
-.marquee {
-  display: inline-block; white-space: nowrap; overflow: hidden;
-  box-shadow: inset 0 0 0 1000vw var(--bg);
-  animation: scrollLeft 15s linear infinite;
-}
-@keyframes scrollLeft {
-  0%   { transform: translateX(100%); }
-  100% { transform: translateX(-100%); }
-}
-
 /* ---- status bar ---- */
 #statusbar {
   display: flex; gap: 16px; align-items: center; padding: 5px 14px;
@@ -285,7 +275,8 @@ canvas.chart {
 .term-echo { color: var(--accent); }
 .term-err { color: var(--down); }
 .term-dim { color: var(--dim); }
-.term-ok { color: var(--up); }
+/* No .term-ok: terminal.js passes "" on success (terminal.js:52), so a
+   success-tinted class was never emitted. .term-err / .term-dim are. */
 #term-form { display: flex; gap: 8px; align-items: center; padding: 6px 12px 10px; }
 .term-prompt { color: var(--up); font-weight: 700; text-shadow: 0 0 8px rgba(43, 255, 163, 0.6); }
 #term-input { font-family: inherit; }
@@ -424,6 +415,11 @@ kbd {
 
 /* Wallet (read-only MetaMask) */
 .wallet-status { margin: .5em 0; font-size: 12px; color: var(--dim); min-height: 1.2em; }
+/* Both suffixes are live: setStatus() in wallet.js builds the class as
+   "wallet-status-" + kind and passes kind="ok" on connect/chain-add/
+   chain-switch and kind="warn" on six error paths. .wallet-status-warn is
+   also emitted directly from app.js. A grep for the literal string finds
+   neither -- do not "clean up" these on a reference count. */
 .wallet-status-ok { color: var(--pos); }
 .wallet-status-warn { color: var(--neg); }
 

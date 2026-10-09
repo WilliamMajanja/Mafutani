@@ -64,13 +64,6 @@
     return p;
   }
 
-  function isChainSupported(id) {
-    for (var i = 0; i < CHAINS.length; i++) {
-      if (String(CHAINS[i].hex).toLowerCase() === String(id).toLowerCase()) return true;
-    }
-    return false;
-  }
-
   function chainById(id) {
     for (var i = 0; i < CHAINS.length; i++) {
       if (String(CHAINS[i].hex).toLowerCase() === String(id).toLowerCase()) return CHAINS[i];

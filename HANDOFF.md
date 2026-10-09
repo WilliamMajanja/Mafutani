@@ -56,13 +56,48 @@ cash unchanged. Verified against live venues.
    cd /mnt/c/Users/kawal/Documents/Projects/trading-app && python3 app.py
    ```
 
+## Forecast wiring (built this session)
+
+Kronos is **wired but not installed** — there is no torch on this machine, so
+what exists is the contract and both sides of it, not the model.
+
+| Piece | File | Notes |
+|---|---|---|
+| Contract | `services/forecast/CONTRACT.md` | `mafutani.forecast/1` |
+| Reference service | `services/forecast/reference_server.py` | random walk, stdlib, port 8011 |
+| Client | `data/forecast.py` | stdlib; raises on every failure |
+| Scoring | `engines/forecast.py` | calibration + `NOT_A_TRADE` |
+| API | `/api/forecast`, `/api/forecast/status` | auth + Pro |
+| UI | `#/forecast` | display only, zero order controls |
+| Schema | `forecasts` table | provenance is persisted |
+
+**To see it work:**
+```bash
+python3 services/forecast/reference_server.py   # terminal 1
+# then open http://localhost:8000/#/forecast     (demo@local / demo1234)
+```
+
+**To run real Kronos:** implement `mafutani.forecast/1` in a torch process,
+point `MAFUTANI_FORECAST_URL` at it. No change to this repository.
+
+Two design points worth not undoing:
+
+- **The reference service is a benchmark, not scaffolding.** It is the random
+  walk a real model must beat, and forecasts for it are recorded so a real
+  model has something to be measured against.
+- **Display-only is structural.** `forecast` is an entitlement but is absent
+  from every tier's `methods_allowed`, so no backtest or signal can be built on
+  model output. Asserted in `tests/test_forecast.py`. Do not add it.
+
+The client rejects a service that does not declare `is_real_model`, and rejects
+quantiles without `sigma`. Those two rejections are the reason a stub cannot be
+mistaken for a forecast on a chart — keep them.
+
 ## Deliberately not built
 
-- **Kronos / TimesFM** — chose "option B" (subprocess bridge, torch stays out of
-  the source tree); researched only, nothing built. Both are PyTorch models with
-  no REST surface, so zero-dep in-process is impossible. The planned shape
-  generalises: one `data/forecast.py` stdlib client + a `#/forecast` tab, with
-  each model behind its own service.
+- **Kronos / TimesFM themselves** — the wiring is done; installing either
+  needs torch (multi-GB) and neither has demonstrated edge on liquid crypto.
+  Kronos' published results are in-sample and predate current conditions.
 - **NautilusTrader** — recommended dropping. The repo has no REST gateway (the
   only "gateway" is Interactive Brokers' proprietary one), so there is nothing
   to integrate against.
@@ -86,6 +121,15 @@ cash unchanged. Verified against live venues.
   Left in place deliberately — reversing it means hand-editing `orders`,
   `fills`, cash and the position row, which is riskier than the pollution it
   removes. Delete it if you want a clean tape.
+- **Wrote 4 rows into the live database** from `tests/test_forecast.py`. The
+  test set `MAFUTANI_DB`, which `data/db.py` does not read — the real variable
+  is `DB_PATH` — so the module never isolated the database and ran against
+  `data/trading.db`. The tests still passed, which is the dangerous part: the
+  failure was invisible. All 4 rows were my own test data and are deleted; the
+  table itself is correctly migrated. The test now **asserts** the open file is
+  not the live one instead of assuming isolation. This is the second DB_PATH
+  trap — `tests/test_scalp_lab.py` and `test_scalp_live.py` already use it
+  correctly.
 - `pkill -f "python3 app.py"` killed the user's long-running server.
 - Restarted the server repeatedly without reproducing their environment,
   which silently turned `LIVE_TRADING_ENABLED` off and read as a bug.

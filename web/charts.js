@@ -55,7 +55,7 @@ function drawCandles(canvas, candles, ema9, ema21, vwap, opts) {
   var VP = (showVol && vmax > 0) ? Math.floor((H - TAX) * 0.22) : 0;
   var PH = H - TAX - VP - (VP ? 6 : 0);         // price pane height
   function y(p) { return PH - 6 - ((p - lo) / (hi - lo)) * (PH - 12); }
-  function yv(x) { return H - TAX - (x / vmax) * VP; }
+  
   var step = (W - AXW) / n, bw = Math.max(1, step * 0.62);
   function x(i) { return i * step + step / 2; }
   function fmt(p) {
