@@ -1,0 +1,14 @@
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+.env
+
+# Session artefacts, not project files. HANDOFF.md IS tracked on purpose:
+# it records verified state and open items for the next session.
+HANDOFF.local.md
+*.log
