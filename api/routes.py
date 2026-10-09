@@ -1221,87 +1221,6 @@ def _engine_arbitrage(conn, ud, asset_class="all", symbol="", min_edge_bps=None,
     return payload
 
 
-def _recent_bars(conn, symbol, lookback):
-    """The last `lookback` (ts, close) pairs, oldest first.
-
-    Deliberately `candles_1m` and nothing else: the forecast service is
-    handed a series and must be able to reproduce the number from exactly
-    the rows in the request, so provenance matters more than convenience.
-    A caller that wanted resampled bars would have to store them.
-    """
-    try:
-        rows = conn.execute(
-            "SELECT ts, close FROM candles_1m WHERE symbol = ?"
-            " ORDER BY ts DESC LIMIT ?", (symbol, int(lookback))).fetchall()
-    except Exception:
-        return []
-    return [[int(r["ts"]), float(r["close"])] for r in rows][::-1]
-
-
-def _engine_forecast(conn, ud, symbol, lookback=400, horizons=None,
-                     record=True):
-    """Fetch a forecast for one symbol from the external model service.
-
-    Read-only with respect to money: nothing here reaches `orders`, and the
-    response carries engines.forecast.NOT_A_TRADE so a caller cannot
-    mistake the payload for something actionable.
-
-    Recording is best-effort. A database whose `forecasts` table has not
-    been migrated yet -- which is every instance started before the
-    migration landed -- still serves forecasts, just without a track
-    record, because a missing analytics table is not a reason to fail a
-    read.
-    """
-    from data.forecast import ForecastUnavailable, predict, service_url
-
-    sym = (symbol or "").strip().upper()
-    if not sym:
-        raise ValueError("symbol required")
-    bars = _recent_bars(conn, sym, lookback)
-    if len(bars) < 2:
-        raise ForecastUnavailable(
-            "insufficient_history",
-            "{} has {} stored candles; a forecast needs a series to model"
-            .format(sym, len(bars)))
-
-    fc = predict(bars, symbol=sym, horizons=horizons)
-    try:
-        import engines.forecast as ef
-    except ImportError:
-        ef = None
-
-    out = {
-        "symbol": sym,
-        "forecast": fc,
-        "service": {"url": service_url(), "model": fc.get("model"),
-                    "family": fc.get("family"),
-                    "is_real_model": fc.get("is_real_model")},
-        "bars_used": len(bars),
-        "lookback": int(lookback),
-        "recorded": 0,
-    }
-    if ef is not None:
-        out["not_a_trade"] = dict(ef.NOT_A_TRADE)
-        if record:
-            try:
-                out["recorded"] = ef.record(
-                    conn, int(ud.get("id") or 0), sym, fc)
-                conn.commit()
-            except Exception:
-                # No forecasts table (unmigrated DB) or a read-only handle.
-                # Neither should cost the caller their forecast.
-                out["recorded"] = 0
-                out["record_error"] = "forecast log unavailable; not recording"
-        try:
-            out["score"] = ef.score_model(conn, sym, model=fc.get("model"))
-        except Exception:
-            out["score"] = None
-    out["disclaimer"] = (
-        "A model output is an observation, not an instruction. No forecast "
-        "path can place an order. Treat any number here as unproven until "
-        "the score above shows it beat a random walk.")
-    return out
-
 
 def _engine_preview(conn, strategy_name, symbol, params):
     """Evaluate one strategy against stored candles and return its verdict.
@@ -1757,11 +1676,6 @@ class Router:
             return self._arbitrage(conn, h, qs)
         if path == "/api/arbitrage/venues" and method == "GET":
             return self._arbitrage_venues(conn, h)
-        # forecast service (display only -- cannot reach an order)
-        if path == "/api/forecast" and method == "GET":
-            return self._forecast(conn, h, qs)
-        if path == "/api/forecast/status" and method == "GET":
-            return self._forecast_status(conn, h)
         # watchlists
         if path == "/api/watchlists" and method == "GET":
             return self._wl_list(conn, h)
@@ -3157,90 +3071,6 @@ class Router:
             "Edges are net of two legs of taker fees and are observations, "
             "not executions. Paper trading only. Not financial advice.")
         return _send_json(h, payload)
-
-    def _forecast(self, conn, h, qs):
-        """GET /api/forecast?symbol=&lookback=&horizons=
-
-        Auth + Pro required. Returns the model's forecast, the service's own
-        self-description, and this deployment's accumulated score for that
-        model.
-
-        Failure is 503 with the service's own words, never a number. There
-        is no fallback forecast on this endpoint, by design: a caller that
-        receives a forecast should be able to assume a model produced it.
-        """
-        user, _sess = self._require_user(conn, h)
-        if user is None:
-            return True
-        ud = _row_to_dict(user)
-        try:
-            from core.tiers import require_entitlement
-            require_entitlement(ud.get("tier", "Free"), "forecast")
-        except PermissionError as e:
-            return _err(h, str(e), 403)
-        except ImportError:
-            return _err(h, "tier entitlements unavailable", 503)
-
-        symbol = (qs.get("symbol", [""])[0] or "").strip().upper()
-        try:
-            lookback = int(qs.get("lookback", ["400"])[0] or 400)
-        except (TypeError, ValueError):
-            lookback = 400
-        lookback = max(2, min(2000, lookback))
-        raw_h = qs.get("horizons", [""])[0]
-        horizons = None
-        if raw_h:
-            try:
-                horizons = [int(x) for x in str(raw_h).split(",") if x.strip()]
-                horizons = [x for x in horizons if x > 0][:8]
-            except ValueError:
-                horizons = None
-        try:
-            from data.forecast import ForecastUnavailable
-        except ImportError:
-            return _err(h, "forecast client unavailable", 503)
-
-        try:
-            payload = _engine_forecast(conn, ud, symbol, lookback=lookback,
-                                      horizons=horizons)
-        except ForecastUnavailable as e:
-            # 503, not 500: the failure is upstream of this app, and the
-            # detail is the operator's fastest route to the cause.
-            return _err(h, "forecast unavailable [{}]: {}".format(
-                e.reason, e.detail), 503)
-        except ValueError as e:
-            return _err(h, str(e), 400)
-        except Exception as e:
-            return _err(h, "forecast failed: {}".format(e), 500)
-        return _send_json(h, payload)
-
-    def _forecast_status(self, conn, h):
-        """GET /api/forecast/status -- which model service is configured.
-
-        Auth required but NOT tier-gated, and the asymmetry is deliberate:
-        a Free-tier page has to be able to tell the operator "this is a Pro
-        feature" apart from "your model server is down", and it cannot do
-        that while both answers come back as an opaque 403. Carries no
-        prices and no user data.
-        """
-        user, _sess = self._require_user(conn, h)
-        if user is None:
-            return True
-        try:
-            from data.forecast import ForecastUnavailable, health
-            st = health(force=True)
-            return _send_json(h, {"ok": True, "service": st})
-        except ForecastUnavailable as e:
-            # 200 with ok=false: "configured but unreachable" is a state the
-            # UI renders, not an error it should throw on.
-            from data.forecast import service_url
-            return _send_json(h, {
-                "ok": False, "configured_url": service_url(),
-                "error": e.detail, "reason": e.reason})
-        except ImportError:
-            return _err(h, "forecast client unavailable", 503)
-        except Exception as e:
-            return _err(h, "forecast status failed: {}".format(e), 500)
 
     def _arbitrage_venues(self, conn, h):
         """GET /api/arbitrage/venues -- the venue registry + fee schedule.

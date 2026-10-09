@@ -4,9 +4,8 @@ Why this file exists
 --------------------
 Three times now a test has written to the live ``data/trading.db``:
 
-* ``test_forecast.py`` set ``MAFUTANI_DB``, a variable ``data/db.py`` does
-  not read (it reads ``DB_PATH``), so the module silently ran against the
-  real database.
+* a test set ``MAFUTANI_DB``, a variable ``data/db.py`` does not read (it
+  reads ``DB_PATH``), so the module silently ran against the real database.
 * ``test_vibe_interactive.py`` builds ``PaperBroker(user_id=1)`` with no
   ``conn=``. ``brokers/paper.py`` opens a connection lazily in its ``conn``
   property, defaulting to ``data/trading.db`` -- 3 real paper orders per

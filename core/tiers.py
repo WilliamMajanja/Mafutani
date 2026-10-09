@@ -1,21 +1,11 @@
 """Tier entitlements. Stdlib only, import-safe (no server/db imports)."""
 import json
 
-# 'forecast' is an entitlement but is deliberately absent from every tier's
-# `methods_allowed`. Those two lists mean different things: an entitlement
-# controls whether a *page* is reachable, a method is what a *backtest or
-# signal* may run. Forecasts get the first and not the second, so no
-# strategy, signal or backtest can be built on a model's output. That is the
-# mechanism behind the display-only rule -- not a convention, and not a check
-# somewhere downstream that could be forgotten.
-
 ENTITLEMENTS = {
     "Free": {
         "max_symbols": 10,
         "live_enabled": False,
         "arbitrage": False,
-        # Forecasts cost a model server, so they ride the paid tiers.
-        "forecast": False,
         "methods_allowed": ["ema_trend", "dual_ema"],
         "api_rate": 60,
     },
@@ -29,7 +19,6 @@ ENTITLEMENTS = {
         # It is paper-only either way -- the gate is about the
         # information, not about the money.
         "arbitrage": True,
-        "forecast": True,
         "methods_allowed": [
             "ema_trend", "dual_ema", "vwap_pullback", "vwap_bands",
             "ema_trend_cot",
@@ -41,7 +30,6 @@ ENTITLEMENTS = {
         "max_symbols": 100,
         "live_enabled": True,
         "arbitrage": True,
-        "forecast": True,
         "methods_allowed": [
             "ema_trend", "dual_ema", "vwap_pullback", "vwap_bands",
             "manual", "orb_breakout", "rsi_fade", "mean_reversion",
@@ -53,7 +41,6 @@ ENTITLEMENTS = {
         "max_symbols": 100,
         "live_enabled": True,
         "arbitrage": True,
-        "forecast": True,
         "methods_allowed": [
             "ema_trend", "dual_ema", "vwap_pullback", "vwap_bands",
             "manual", "orb_breakout", "rsi_fade", "mean_reversion",
@@ -85,7 +72,6 @@ def get_entitlements(user_tier):
         "max_symbols": e["max_symbols"],
         "live_enabled": e["live_enabled"],
         "arbitrage": e["arbitrage"],
-        "forecast": e["forecast"],
         "methods_allowed": list(e["methods_allowed"]),
         "api_rate": e["api_rate"],
     }

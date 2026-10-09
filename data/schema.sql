@@ -235,45 +235,6 @@ CREATE TABLE IF NOT EXISTS venue_quotes (
 CREATE INDEX IF NOT EXISTS idx_vq_sym_venue_ts ON venue_quotes(symbol, venue, ts);
 CREATE INDEX IF NOT EXISTS idx_vq_ts ON venue_quotes(ts);
 
--- Forecasts are recorded so they can be scored later.
---
--- A forecast model is only worth running if it can be measured. Every
--- prediction this deployment draws is stored with the state of the world
--- when it was drawn (`last_close`, `asof`) plus the claim it made, and
--- `engines/forecast.score_model` later resolves each one against the
--- candle that actually closed at asof + horizon*bar.
---
--- Rows are kept for the reference random walk as well as any real model.
--- That is the point: a benchmark nobody recorded cannot be compared
--- against, so a real model has nothing to beat.
---
--- `is_real_model` is stored rather than inferred from the model name
--- because the whole safety property of the forecast path rests on being
--- able to tell, after the fact and from the database alone, whether a
--- given number came from a trained model or from a baseline. The client
--- refuses to display a forecast that does not declare this field.
-CREATE TABLE IF NOT EXISTS forecasts (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id       INTEGER NOT NULL,
-  symbol        TEXT NOT NULL REFERENCES symbols(symbol) ON DELETE CASCADE,
-  model         TEXT NOT NULL,
-  is_real_model INTEGER NOT NULL DEFAULT 0,
-  family        TEXT NOT NULL DEFAULT 'unknown',
-  horizon       INTEGER NOT NULL,
-  last_close    REAL NOT NULL,
-  asof          INTEGER NOT NULL,
-  created_at    INTEGER NOT NULL,
-  mean          REAL,
-  median        REAL,
-  sigma         REAL,
-  p10           REAL,
-  p50           REAL,
-  p90           REAL,
-  confidence    REAL
-);
-CREATE INDEX IF NOT EXISTS idx_fc_sym_asof ON forecasts(symbol, asof);
-CREATE INDEX IF NOT EXISTS idx_fc_model ON forecasts(model, asof);
-
 -- ---------------------------------------------------------------- watchlists
 CREATE TABLE IF NOT EXISTS watchlists (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
