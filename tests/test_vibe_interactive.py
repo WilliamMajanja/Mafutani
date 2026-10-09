@@ -18,6 +18,7 @@ if WORKDIR not in sys.path:
 from brokers.interactive import BrokerSession  # noqa: E402
 from brokers import paper as paper_mod         # noqa: E402
 from brokers.base import BrokerError          # noqa: E402
+from data import db as db_mod                 # noqa: E402
 
 
 # ------------------------------------------------------------------ fixtures
@@ -101,12 +102,53 @@ def declining_then_flat(n=60, symbol="BTCUSD", ts0=1767620220):
     return out
 
 
+_SESSION_CONN = {}
+
+
+def _test_conn():
+    """A per-process connection to the suite sandbox, with a user to act as.
+
+    This used to be `PaperBroker(user_id=1, cash=100000.0)` with no `conn=`.
+    PaperBroker opens a connection lazily in its `conn` property, defaulting
+    to `data/trading.db` -- so every run of this file placed three real
+    0.1-BTC paper orders in the live database. It was unnoticed because the
+    suite passed; the writes were invisible to the runner.
+
+    353 such orders accumulated over 13 days before it was found. The
+    `tests/__init__.py` sandbox now catches the class of bug, but relying on
+    a global guard alone would leave this test depending on a foreign file's
+    side effect to be correct. So the connection is explicit: this test owns
+    its database, and the fact is visible at the call site.
+    """
+    conn = _SESSION_CONN.get("conn")
+    if conn is None:
+        conn = db_mod.init_db()
+        conn.execute(
+            "INSERT OR IGNORE INTO users (id, email, tier, password_hash)"
+            " VALUES (1, 'vibe-test@local', 'Pro', 'x')")
+        conn.execute(
+            "INSERT OR IGNORE INTO symbols (symbol) VALUES ('BTCUSD')")
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (user_id, cash, starting_cash)"
+            " VALUES (1, 100000.0, 100000.0)")
+        # A touch price, or engines.paper refuses to match ("no market data").
+        # The live database had one because the feed had been running; an
+        # empty sandbox does not, so the fixture has to supply it. A quote
+        # from long ago is fine -- match() takes the latest row it finds.
+        conn.execute(
+            "INSERT OR REPLACE INTO quotes_l1 (symbol, bid, ask, last, ts)"
+            " VALUES ('BTCUSD', 99900.0, 100100.0, 100000.0, 1767620220)")
+        conn.commit()
+        _SESSION_CONN["conn"] = conn
+    return conn
+
+
 def session(data=None, broker=True):
     b = None
     if broker:
         # user_id is required by PaperBroker; these tests exercise the
         # session, not the broker's own persistence.
-        b = paper_mod.PaperBroker(user_id=1, cash=100000.0)
+        b = paper_mod.PaperBroker(conn=_test_conn(), user_id=1, cash=100000.0)
     return BrokerSession(b, data=data, user_id=1)
 
 
