@@ -491,22 +491,77 @@ def live_venue_books(symbols, ttl=None, timeout=6):
     return dict(_LIVE_BOOK_CACHE["books"])
 
 
-def prune_venue_quotes(conn, keep_per_book=40, max_age_s=2 * 3600):
+# Retention for venue_quotes, in rows per (symbol, venue) book.
+#
+# Both bounds were 40 / 2h, which sounds generous and is not. Measured on
+# this deployment: 37 rows per instrument covering 1.6 hours, and 36 rows
+# covering 27 minutes. Every microstructure question is unanswerable at that
+# depth -- order-flow imbalance needs a sequence, a "persistent gap" needs
+# to have persisted, and neither can be distinguished from a transient with
+# 37 points.
+#
+# 1440 rows is roughly one day at the current poll cadence, which is the
+# minimum span at which "this dislocation lasted" is a claim with evidence
+# behind it rather than an assumption. It is still bounded: the cap and the
+# age limit both remain, so a long-lived deployment cannot grow without
+# limit.
+#
+# Overridable because the right number depends on the poll interval, which
+# is not fixed here: MAFUTANI_VQ_KEEP rows/book, MAFUTANI_VQ_MAX_AGE_S
+# seconds. Set the cap low if the database is on slow storage, because
+# venue_quotes sits next to candles_1m and competes for the same pages.
+DEFAULT_VQ_KEEP = 1440
+DEFAULT_VQ_MAX_AGE_S = 3 * 24 * 3600
+
+
+def _vq_keep():
+    raw = os.environ.get("MAFUTANI_VQ_KEEP")
+    if not raw:
+        return DEFAULT_VQ_KEEP
+    try:
+        v = int(raw)
+    except ValueError:
+        return DEFAULT_VQ_KEEP
+    # A cap below ~200 makes microstructure work impossible; below 40 it
+    # breaks the cross-venue comparison the scanner exists to do. Refusing
+    # is better than silently accepting a value that guarantees a
+    # single-venue read of a two-venue market.
+    return max(40, v)
+
+
+def _vq_max_age_s():
+    raw = os.environ.get("MAFUTANI_VQ_MAX_AGE_S")
+    if not raw:
+        return DEFAULT_VQ_MAX_AGE_S
+    try:
+        v = int(raw)
+    except ValueError:
+        return DEFAULT_VQ_MAX_AGE_S
+    return max(60, v)
+
+
+def prune_venue_quotes(conn, keep_per_book=None, max_age_s=None):
     """Trim venue_quotes per (symbol, venue), and drop anything stale.
 
-    Same two independent conditions as `prune_quotes`, for the same
-    reason: the per-book cap bounds the table between the first poll of
-    an hour and the first prune, and the age limit is what stops an
-    overnight gap from filling the table with history nobody reads.
+    Two independent conditions, both necessary. The per-book cap bounds the
+    table between the first poll of an hour and the first prune; the age
+    limit is what stops an overnight gap from filling the table with history
+    nobody reads. Either alone leaves a path to unbounded growth.
 
-    Partitioning by (symbol, venue) rather than symbol alone is
-    essential here. Partitioning on symbol would let a busy venue evict
-    the only record of a quiet one, and the scanner would then see a
-    symbol as single-venue -- silently reporting "no dislocation" for a
-    market that has two.
+    Partitioning by (symbol, venue) rather than symbol alone is essential.
+    Partitioning on symbol would let a busy venue evict the only record of a
+    quiet one, and the scanner would then see a symbol as single-venue --
+    silently reporting "no dislocation" for a market that has two. That is
+    the specific failure this partitioning exists to prevent.
     """
+    # Clamp an explicit override too, not just the env-derived value. A
+    # caller passing keep_per_book=5 would otherwise reintroduce exactly the
+    # single-venue-read failure the partitioning above prevents.
+    keep = max(40, _vq_keep() if keep_per_book is None
+               else int(keep_per_book))
+    age = max(60, _vq_max_age_s() if max_age_s is None else int(max_age_s))
     try:
-        cutoff = _now() - int(max_age_s)
+        cutoff = _now() - age
         cur = conn.execute(
             "DELETE FROM venue_quotes WHERE id IN ("
             "  SELECT id FROM ("
@@ -514,13 +569,43 @@ def prune_venue_quotes(conn, keep_per_book=40, max_age_s=2 * 3600):
             "      PARTITION BY symbol, venue ORDER BY ts DESC, id DESC) AS rn"
             "    FROM venue_quotes"
             "  ) WHERE rn > ? OR ts < ?)",
-            (int(keep_per_book), cutoff))
+            (keep, cutoff))
         removed = cur.rowcount or 0
         if removed:
             conn.commit()
         return int(removed)
     except Exception:
         return 0
+
+
+def venue_quote_depth(conn):
+    """Per (venue, symbol): rows, distinct timestamps, span seconds.
+
+    Exists because "is there enough history to measure anything?" is the
+    question that has to be answered before adding a microstructure model,
+    and the answer was previously invisible. Depth is the binding constraint
+    on everything in this area, so it is reported rather than assumed.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT venue, symbol, COUNT(*) AS rows,"
+            " COUNT(DISTINCT ts) AS dts, MIN(ts) AS lo, MAX(ts) AS hi"
+            " FROM venue_quotes GROUP BY venue, symbol"
+            " ORDER BY rows DESC"
+        ).fetchall()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        out.append({
+            "venue": d.get("venue"),
+            "symbol": d.get("symbol"),
+            "rows": int(d.get("rows") or 0),
+            "distinct_ts": int(d.get("dts") or 0),
+            "span_s": int(d.get("hi") or 0) - int(d.get("lo") or 0),
+        })
+    return out
 
 
 class EquityPoller:

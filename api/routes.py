@@ -1169,7 +1169,7 @@ def _engine_arbitrage(conn, ud, asset_class="all", symbol="", min_edge_bps=None,
             if len(node) >= 2:
                 cross_books[sym] = node
     rows.extend(_arb.scan_crypto(sorted(cross_books.keys()), cross_books,
-                                 size=size))
+                                 size=size, attribute=True))
 
     if _in_scope("crypto"):
         crypto_syms = sorted(by_class["crypto"].keys())
@@ -1215,9 +1215,35 @@ def _engine_arbitrage(conn, ud, asset_class="all", symbol="", min_edge_bps=None,
             continue
         priced.append(r)
     priced.sort(key=lambda r: -(r.get("edge_bps") or 0.0))
+
+    # Attribution rollup: how many priced edges are one venue's book?
+    #
+    # Kept beside `profitable_count` rather than buried per-row, because
+    # the failure this guards against is a scanner reporting a profitable
+    # cross-venue edge that is really one venue quoting oddly -- see
+    # engines.arbitrage.venue_attribution and Flowerday et al. (2026). A
+    # headline count that hides this is the same bug with a summary on top.
+    fragile = 0
+    untested = 0
+    for r in priced:
+        attr = r.get("attribution") or {}
+        if not attr.get("testable"):
+            untested += 1
+        elif attr.get("robust") is False:
+            fragile += 1
     payload["profitable"] = priced
     payload["profitable_count"] = len(priced)
     payload["priced_count"] = sum(1 for r in rows if r.get("edge_bps") is not None)
+    payload["attribution"] = {
+        "priced": len(priced),
+        "fragile": fragile,
+        "untested": untested,
+        "robust": len(priced) - fragile - untested if priced else 0,
+        "note": ("fragile = the edge collapses when one venue is removed, so "
+                 "it is that venue's book rather than a market dislocation. "
+                 "untested = fewer than 3 venues, so attribution could not "
+                 "run."),
+    }
     return payload
 
 

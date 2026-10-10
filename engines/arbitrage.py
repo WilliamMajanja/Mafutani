@@ -202,6 +202,129 @@ def cross_venue(symbol, books, size=None):
     return out
 
 
+# ------------------------------------------------------------------ 1b. attribution
+def venue_attribution(symbol, books, size=None):
+    """Leave-one-venue-out test on a cross-venue gap.
+
+    A cross-venue gap is a statement about *two* venues, which means it can
+    be an artefact of one of them. The most common shape is a venue whose
+    fiat gateway is impaired: its book is not really comparable with anyone
+    else's, because the claim behind it is not the same claim. Anything
+    measured against it is measuring the gateway, not the market.
+
+    Flowerday, Gandal, Halaburda, Olson & Ardel, "Bitcoin arbitrage: The
+    role of an exchange" (Quantitative Finance and Economics 10(3):624-648,
+    2026) find that ~80% of hours with measured cross-exchange dispersion
+    include Bitfinex, and that excluding it drops the correlation between
+    mispricing and volatility from 0.86 to 0.59 and the restricted mean
+    duration of a positive episode from 11.1 to 3.6 minutes. One venue was
+    carrying most of the apparent signal.
+
+    So this recomputes the gap with each venue removed in turn and reports
+    what survives. A gap that collapses when any single venue is dropped is
+    not a market dislocation and should never have been presented as one.
+
+    Requires three or more venues. With two, removing either leaves nothing
+    to compare, and a "robust" verdict would be vacuous -- so it reports
+    `testable=False` rather than manufacturing confidence from a test that
+    cannot run.
+    """
+    out = {"symbol": str(symbol or ""), "testable": False,
+           "venues": [], "robust": None, "driver": None,
+           "survives_every_dropout": None,
+           "base_gross_bps": None, "reason": ""}
+
+    usable = {}
+    for venue, book in (books or {}).items():
+        bid, ask = _positive((book or {}).get("bid")), _positive((book or {}).get("ask"))
+        if bid > 0 and ask > 0 and ask >= bid:
+            usable[venue] = dict(book or {}, bid=bid, ask=ask)
+
+    out["venue_count"] = len(usable)
+    if len(usable) < 3:
+        out["reason"] = ("needs 3+ venues to test attribution; {} available"
+                         .format(len(usable)))
+        return out
+
+    out["testable"] = True
+    base = cross_venue(symbol, usable, size=size)
+    base_gross = _f(base.get("gross_bps"), 0.0)
+    out["base_gross_bps"] = base_gross if base_gross else None
+    out["base_edge_bps"] = base.get("edge_bps")
+
+    # Nothing to attribute when there is no dislocation to attribute.
+    # Without this the loop below reports `robust=True` on a set of venues
+    # that all agree -- "the gap survives every dropout" when there was
+    # never a gap. A robustness verdict about a non-existent effect is not
+    # a weak result, it is a fabricated one.
+    if base_gross <= 0:
+        out["reason"] = ("no dislocation to attribute ({})"
+                         .format(base.get("reason") or "best bid <= best ask"))
+        return out
+
+    # Each dropout is scored on the gross dislocation, not the net edge.
+    # Net edge is already negative on costs in almost every case, so
+    # comparing net edges would show every dropout as "no change" and hide
+    # exactly the collapse we are looking for.
+    survivors = []
+    for venue in sorted(usable):
+        reduced = {v: b for v, b in usable.items() if v != venue}
+        r = cross_venue(symbol, reduced, size=size)
+        gross = _f(r.get("gross_bps"), 0.0)
+        ratio = (gross / base_gross) if base_gross > 0 else None
+        row = {
+            "dropped": venue,
+            "gross_bps": r.get("gross_bps"),
+            "edge_bps": r.get("edge_bps"),
+            "retained_fraction": round(ratio, 4) if ratio is not None else None,
+            "buy_venue": r.get("buy_venue"),
+            "sell_venue": r.get("sell_venue"),
+            "priced": r.get("gross_bps") is not None,
+            # A gap that disappears when this venue leaves was that venue.
+            "collapses": bool(base_gross > 0 and gross < base_gross * 0.5),
+        }
+        out["venues"].append(row)
+        survivors.append(not row["collapses"])
+
+    out["survives_every_dropout"] = all(survivors) if survivors else None
+    collapsed = [r["dropped"] for r in out["venues"] if r["collapses"]]
+
+    if not collapsed:
+        out["robust"] = True
+        out["driver"] = None
+        out["driver_is_venue"] = False
+        out["reason"] = ("gap survives removing any single venue ({} tested)"
+                         .format(len(out["venues"])))
+        return out
+
+    # More than one collapse means no single venue is "the driver" -- the
+    # gap lives in the spread of the book, not in any one member of it. A
+    # pairwise gap has only two venues; when you add a third you can find
+    # the middle of the distribution, and if that middle is what survives,
+    # the extreme venue is an outlier rather than the market's price.
+    if len(collapsed) == len(out["venues"]):
+        out["robust"] = False
+        out["driver"] = None
+        out["driver_is_venue"] = False
+        out["reason"] = ("gap rests on whichever two venues are furthest "
+                         "apart -- every single-venue drop collapses it")
+    elif len(collapsed) == 1:
+        out["robust"] = False
+        out["driver"] = collapsed[0]
+        out["driver_is_venue"] = True
+        out["reason"] = ("gap collapses without {} -- this is one venue's "
+                         "book, not a market dislocation".format(collapsed[0]))
+    else:
+        out["robust"] = False
+        out["driver"] = None
+        out["driver_is_venue"] = False
+        out["reason"] = (
+            "gap narrows by more than half without {} -- no single venue "
+            "carries it, so it is dispersion within the book"
+            .format(" or ".join(collapsed)))
+    return out
+
+
 # ------------------------------------------------------------------ 2. triangular
 def triangular(symbols, books, fee_multiplier=1.0, venue=None):
     """Closed three-leg crypto cycle: A -> B -> C -> A.
@@ -768,18 +891,25 @@ COMMODITY_SPREADS = (
 )
 
 
-def scan_crypto(symbols, books_by_symbol, size=None):
+def scan_crypto(symbols, books_by_symbol, size=None, attribute=False):
     """Run every crypto model over the routed symbols.
 
     Args:
       symbols:       list of crypto symbols to consider.
       books_by_symbol: {symbol: {venue: book}}.
+      attribute:     also run `venue_attribution` per symbol, so each row
+                     says whether its gap survives dropping a venue. Off by
+                     default because it re-runs the cross-venue model once
+                     per venue; on for any surface that shows a number.
     """
     out = []
     for sym in sorted(symbols or []):
         node = (books_by_symbol or {}).get(sym) or {}
         if len(node) >= 2:
-            out.append(cross_venue(sym, node, size=size))
+            row = cross_venue(sym, node, size=size)
+            if attribute:
+                row["attribution"] = venue_attribution(sym, node, size=size)
+            out.append(row)
     return out
 
 
