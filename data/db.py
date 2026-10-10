@@ -167,6 +167,31 @@ def _migrate(conn):
     except Exception:
         pass
 
+    # -- strategy catalogue: keep mode and params in step with the engine
+    #
+    # schema.sql seeds these with INSERT OR IGNORE, so an existing database
+    # keeps whatever it was seeded with forever. That is correct for rows a
+    # user has customised and wrong for rows describing what the engine can
+    # actually do: when book_imbalance went from stub to wired in
+    # engines/signals.py, the database kept advertising "stub" and the
+    # catalogue reported a method that existed and a method that did not.
+    #
+    # Only `mode` and the two descriptive fields are synced. params_json is
+    # deliberately left alone: those are the user's defaults to tune, and
+    # overwriting them on every boot would discard real configuration.
+    try:
+        from engines.signals import STRATEGIES as _CANON
+        for _s in _CANON:
+            conn.execute(
+                "UPDATE strategies SET mode = ?, tier_required = ?,"
+                " display_name = COALESCE(NULLIF(display_name, ''), ?)"
+                " WHERE name = ?",
+                (_s.get("mode", "wired"), _s.get("tier_required", "Free"),
+                 _s.get("display_name") or "", _s.get("name")))
+        conn.commit()
+    except Exception:
+        pass
+
     # -- crypto/stablecoin markets (USDT and USDT pairs)
     #
     # Installed on boot so an existing database picks up USDT after a

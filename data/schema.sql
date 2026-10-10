@@ -416,7 +416,7 @@ INSERT OR IGNORE INTO strategies (name, display_name, params_json, tier_required
   ('mean_reversion', 'Mean Reversion',  '{"period":20,"entry_z":2.0}',             'Pro',  'wired'),
   ('orb_breakout',   'Opening Range Breakout', '{"range_min":15}',                'Pro',  'stub'),
   ('rsi_fade',       'RSI Fade',        '{"period":14,"overbought":70,"oversold":30}', 'Pro', 'stub'),
-  ('book_imbalance', 'Book Imbalance',  '{"depth":5,"threshold":1.5}',             'Institutional', 'stub'),
+  ('book_imbalance', 'Book Imbalance (OFI)', '{"lookback":60,"min_transitions":20,"threshold":0.15,"max_spread_bps":25.0}', 'Institutional', 'wired'),
   ('news_momentum',  'News Momentum',   '{"window_min":30}',                      'Institutional', 'stub');
 
 INSERT OR IGNORE INTO symbols (symbol, asset_type, name, enabled, tick_size, lot_size) VALUES

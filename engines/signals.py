@@ -107,11 +107,17 @@ STRATEGIES = [
     },
     {
         "name": "book_imbalance",
-        "display_name": "Book Imbalance",
+        "display_name": "Book Imbalance (OFI)",
         "tier_required": "Institutional",
-        "mode": "stub",
-        "description": "Spread/queue book-imbalance scalp (needs L2). Stub in V1.",
-        "params": {"depth": 5, "threshold": 1.5},
+        "mode": "wired",
+        "description": (
+            "Order-flow imbalance at the best quotes, after Cont, Kukanov & "
+            "Stoikov (arXiv:1011.6402). Single-level: their Appendix B3 finds "
+            "levels 2-5 add little, and their own OFI was estimated from "
+            "snapshot depth changes, which is what this feed stores. Not "
+            "verified on crypto -- measured on 50 S&P 500 stocks."),
+        "params": {"lookback": 60, "min_transitions": 20,
+                   "threshold": 0.15, "max_spread_bps": 25.0},
     },
     {
         "name": "news_momentum",
@@ -525,6 +531,75 @@ def signal_mean_reversion(candles, quotes, params, closes=None):
     return _flat(None, "no-extreme-z{:.2f}".format(z), params)
 
 
+def signal_book_imbalance(candles, quotes, params, closes=None, book=None):
+    """Order-flow imbalance at the best quotes. Cont et al., arXiv:1011.6402.
+
+    Parameters (all optional):
+
+      lookback          transitions to aggregate   (default 60)
+      min_transitions   refuse below this many    (default 20)
+      threshold         |normalised OFI| to act on (default 0.15)
+      max_spread_bps, qty                        (as elsewhere)
+
+    `book` is the optional venue book history -- a list of {bid, ask,
+    bid_size, ask_size} oldest first. Candles cannot supply this: a candle
+    carries OHLCV and a mid, not the touch with its queues. When no book
+    history is supplied this returns "no-book-history" rather than
+    substituting a proxy, because a mid-price reconstruction would be a
+    different quantity wearing the same name.
+
+    The threshold is on OFI *normalised by resting depth*, not on raw OFI.
+    A raw flow of 5000 is unremarkable on a deep book and enormous on a thin
+    one; the paper's slope is inversely proportional to depth, so the
+    normalised form is what makes one threshold mean anything across
+    instruments.
+
+    Returns "none" with a reason whenever the evidence is short. That is the
+    expected outcome here, not an edge case: this deployment stores a
+    polled top-of-book snapshot rather than order events, so a deep enough
+    book to measure OFI takes hours to accumulate, and a strategy that
+    guessed in the meantime would be measuring its own imagination.
+    """
+    params = dict(params or {})
+
+    def _num(key, default, cast=float):
+        try:
+            return cast(params.get(key, default))
+        except (TypeError, ValueError):
+            return cast(default)
+
+    lookback = _num("lookback", 60, int)
+    min_tr = _num("min_transitions", 20, int)
+    threshold = _num("threshold", 0.15)
+
+    ok, _spread = _check_spread(quotes, params)
+    if not ok:
+        return _flat(None, "spread-too-wide", params)
+
+    if not book:
+        return _flat(None, "no-book-history", params)
+
+    try:
+        from engines.microstructure import ofi_state
+    except ImportError:  # pragma: no cover - direct-path execution
+        from microstructure import ofi_state
+
+    st = ofi_state(book, lookback=lookback, min_transitions=min_tr)
+    if not st.get("ok"):
+        return _flat(None, "ofi-{0}".format(st.get("reason") or "unavailable"),
+                     params)
+
+    norm = st.get("ofi_norm")
+    if norm is None:
+        return _flat(None, "ofi-no-depth", params)
+
+    if norm >= threshold:
+        return _emit("buy", "ofi-buy-{:.3f}".format(norm), params)
+    if norm <= -threshold:
+        return _emit("sell", "ofi-sell-{:.3f}".format(norm), params)
+    return _flat(None, "ofi-flat-{:.3f}".format(norm), params)
+
+
 # ------------------------------------------------------------------ dispatch
 _DISPATCH = {
     "ema_trend": signal_ema_trend,
@@ -534,10 +609,12 @@ _DISPATCH = {
     "manual": manual_signal,
     "dual_ema": signal_dual_ema,
     "mean_reversion": signal_mean_reversion,
+    "book_imbalance": signal_book_imbalance,
 }
 
 
-def preview_signal(kind, candles, quote, params, closes=None, cot=None):
+def preview_signal(kind, candles, quote, params, closes=None, cot=None,
+                   book=None):
     """Single entry point for UI preview, live board, and backtester.
 
     Returns {"side": "buy"|"sell"|None, "qty": float, "reason": str}.
@@ -577,6 +654,23 @@ def preview_signal(kind, candles, quote, params, closes=None, cot=None):
     # discarded hint silently costs the optimisation its entire purpose.
     if closes is not None and len(closes) != len(candles or []):
         closes = None
+    if book is not None:
+        try:
+            return fn(candles, quote, params, closes=closes, book=book)
+        except TypeError:
+            # A strategy with no book parameter is not the same strategy.
+            # Falling back to a call without `book` here would silently
+            # degrade a microstructure signal into something that ignores
+            # the order book entirely, which is precisely the failure this
+            # argument exists to prevent. Match on the signature instead.
+            import inspect
+            try:
+                takes = "book" in inspect.signature(fn).parameters
+            except (TypeError, ValueError):
+                takes = False
+            if takes:
+                raise
+            return fn(candles, quote, params, closes=closes)
     if cot is not None:
         # A TypeError here is NOT swallowed and retried without the gate.
         # The `closes` branch below swallows one, for signal functions
