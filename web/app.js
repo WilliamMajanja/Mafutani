@@ -443,6 +443,22 @@
           edgeCell(r) + "<td class='dim'>" + arbBasis(r) + "</td>" +
           "<td class='kpi-l'>" + esc(r.reason || "") + "</td></tr>";
       }).join("");
+      var attr = d.attribution || {};
+      // Shown above the venue table because it qualifies the headline count.
+      // A "2 net-positive" that is really one venue quoting oddly is the same
+      // bug as the count, with a summary on top -- see README on
+      // Flowerday et al. (2026).
+      var attrBlock = "";
+      if (attr.priced) {
+        attrBlock = "<div class='card" +
+          (attr.fragile ? " danger-card" : "") + "'><h4>Venue attribution</h4>" +
+          "<p class='kpi-l'>Each gap recomputed with one venue removed. " +
+          "<b>" + attr.fragile + " fragile</b> of " + attr.priced +
+          " priced — collapse when a single venue is dropped, so that is one " +
+          "venue's book rather than a market dislocation." +
+          (attr.untested ? " " + attr.untested + " untested (fewer than 3 venues)." : "") +
+          "</p></div>";
+      }
       var venues = (d.venues || []).map(function (v) {
         return "<tr><td><b>" + esc(v.venue) + "</b></td><td>" +
           num(v.fee_bps, 1) + "</td><td>" + esc(v.asset_class || "") + "</td>" +
@@ -458,7 +474,7 @@
         "executable edge — only as a ratio with its own history.</p>" +
         "<table><tr><th>Venue</th><th>Taker bps</th><th>Class</th><th>Instruments</th></tr>" +
         (venues || "<tr><td colspan='4' class='dim'>none</td></tr>") + "</table>" +
-        "</div><p class='kpi-l'>" + esc(d.disclaimer || "") + "</p>";
+        "</div>" + attrBlock + "<p class='kpi-l'>" + esc(d.disclaimer || "") + "</p>";
     }
     document.getElementById("arb-go").onclick = load;
     // Auto-refresh only while this page is mounted. An interval that

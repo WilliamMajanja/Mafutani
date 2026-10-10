@@ -252,10 +252,61 @@ cap). No caching yet — repeat runs recompute.
 | `dual_ema` | Free | 12/26 cross confirmed by price vs the slow EMA |
 | `ema_trend_cot` | Pro | EMA 9/21 with entries vetoed when the CFTC shows the crowd fully positioned (3-day lag enforced) |
 | `vwap_pullback` | Pro | Buys dips below a rising VWAP, sells bounces above a falling one |
-| `vwap_bands` | Pro | Session-VWAP sigma bands + 200-EMA regime gate + 50-EMA stop ([SSRN 6650958](https://ssrn.com/abstract=6650958)) |
+| `vwap_bands` | Pro | Session-VWAP sigma bands + 200-EMA regime gate + 50-EMA stop (parameters attributed to SSRN 6650958 — see note) |
 | `mean_reversion` | Pro | Z-score fade of extremes |
 | `manual` | Pro | One-click passthrough, still spread- and risk-checked |
-| `orb_breakout`, `rsi_fade`, `book_imbalance`, `news_momentum` | Pro / Institutional | Metadata only — no logic yet |
+| `book_imbalance` | Institutional | Order-flow imbalance at the best quotes, depth-normalised ([Cont, Kukanov & Stoikov, arXiv:1011.6402](https://arxiv.org/abs/1011.6402)) — see below |
+| `orb_breakout`, `rsi_fade`, `news_momentum` | Pro / Institutional | Metadata only — no logic yet |
+
+#### `book_imbalance`, and why it was a stub for the wrong reason
+
+`book_imbalance` sat registered as a stub reading *"Spread/queue
+book-imbalance scalp (needs L2)"*. It does not need L2.
+
+Cont, Kukanov & Stoikov measure OFI at the **best quotes**, and find that
+extending to five levels per side "only slightly improves" goodness of fit.
+More directly, their footnote 2 records that TAQ carries no order-flow
+events, so they *estimated* OFI from volume changes at the bid and ask at
+regularly spaced points in calendar time — which is exactly what a polled
+REST snapshot is. Single-level estimation is their primary method.
+
+What they report: β significant in 98% of samples, mean R² ≈ 65% against
+≈ 32% for trade imbalance, stable across time scales and stocks.
+
+Three limits, stated because they are the difference between a ported result
+and a hypothesis:
+
+- **It was measured on 50 S&P 500 stocks on the NYSE.** Not on crypto.
+  Dobrev, Liu, Kim & Rodriguez find the imbalance-amplifies-volatility effect
+  in [U.S. Treasuries](https://www.federalreserve.gov/econres/notes/feds-notes/order-flow-imbalances-and-amplification-of-price-movements-evidence-from-u-s-treasury-markets-20251103.html)
+  (FEDS Notes, 2025-11-03) — also not crypto. This is a market-structure
+  regularity, not a law.
+- **The backtester cannot evaluate it.** A backtest has no book history to
+  pass, so every bar returns `no-book-history` and the significance verdict
+  is `not evaluable`. That is the truth, not a gap to fill in later by
+  loosening the check.
+- **The multi-level question is genuinely open.** Xu, Gould & Howison
+  ([arXiv:1907.06230](https://arxiv.org/abs/1907.06230)) re-estimate on full
+  LOBSTER event data and find deeper levels improve out-of-sample RMSE by
+  65–75% — but only under Ridge, because flow across levels is strongly
+  correlated and OLS over-fits. Worth testing when L2 exists; not available
+  now.
+
+The threshold is on OFI **normalised by resting depth**, because the paper's
+slope is inversely proportional to depth: a raw flow of 5000 is unremarkable
+on a deep book and enormous on a thin one, so an un-normalised threshold
+would mean something different on every instrument.
+
+> **Note on SSRN 6650958.** The 200-EMA regime gate and 50-EMA trailing stop
+> in `vwap_bands` are attributed to that paper, and the attribution has not
+> been verified — SSRN returns 403 to automated requests, so it could not be
+> opened. Every other citation in this file was checked against an
+> abstract on arXiv, RePEc, LSE Research Online, AIMS Press or the Federal
+> Reserve. Treat that one parameter set as folklore until someone reads the
+> source. The regime gate is on by default rather than optional garnish
+> because the paper's own reported win rate is 45.3% — below a coin flip —
+> and it still works, which is an argument about payoff asymmetry, not
+> about a high hit rate.
 
 `vwap_bands` uses the session-anchored VWAP in `engines/vwap.py` rather than
 `indicators.vwap_series`. The latter accumulates from the first candle it is
@@ -480,7 +531,7 @@ so BTCUSD pointed at Binance and Coinbase had nowhere to go.
 decide which element to take, and the tape could have started averaging
 two venues into one invented price.
 
-### Three refusals the scanner makes on purpose
+### Four refusals the scanner makes on purpose
 
 - **No edge from a synthetic leg.** Any model touching a generated tick
   returns `edge_bps=None` and a reason. Same reasoning that put `source`
@@ -493,6 +544,56 @@ two venues into one invented price.
 - **Unpriceable is not zero.** A model that cannot price an edge says so.
   Collapsing "cannot price now" into "nothing here" is how a scanner
   reports an empty table when the honest answer is "never looked".
+- **One venue's book is not a market dislocation.** `venue_attribution()`
+  recomputes every cross-venue gap with each venue removed in turn. A gap
+  that collapses without one venue *was* that venue's book, and the API
+  reports it as `fragile` beside `profitable_count`.
+
+#### Why the scanner finds nothing, according to the literature
+
+The app measures 0.2–4.6 bps of real cross-venue dislocation against ~70 bps
+of round-trip taker cost. That result is not a bug in the scanner. It is
+what the published work describes:
+
+> "Arbitrage opportunities in markets for cryptocurrencies are
+> well-documented. In this paper, we confirm that they exist; however, their
+> magnitude **decreased greatly from April 2018 onward**. Analyzing various
+> trading strategies, we show that it is **barely possible to exploit**
+> existing price differences since then. […] informed trading is correlated
+> with a reduction in arbitrage opportunities."
+>
+> — Crépellière, Pelster & Zeisberger, *Arbitrage in the market for
+> cryptocurrencies*, [Journal of Financial Markets 64:100817,
+> 2023](https://doi.org/10.1016/j.finmar.2023.100817)
+
+An earlier version of this file cited two SSRN papers for the same point and
+neither could be verified. This one can, and its date matters: the arbitrage
+this app was built to find was largely gone before the first version shipped.
+
+Makarov & Schoar, *Trading and arbitrage in cryptocurrency markets*,
+[J. Financial Economics 135:293–319, 2020](https://doi.org/10.1016/j.jfineco.2019.07.001),
+found the opposite in the 2014–2017 window — "large, recurrent arbitrage
+opportunities across exchanges […] which often persist for weeks" — with
+deviations *larger across countries than within*. Read together the two
+papers describe a market that had the gaps, and then closed them. The
+scanner is the instrument that should show the closing.
+
+The attribution check above exists because a second 2026 paper shows what a
+non-closing gap looks like:
+
+> ~80% of hours with a measured price dispersion include Bitfinex. When
+> Bitfinex is excluded, the correlation between mispricing and volatility
+> falls from 0.86 to 0.59, and the restricted mean duration of positive
+> episodes declines from 11.1 to 3.6 minutes.
+>
+> — Flowerday, Gandal, Halaburda, Olson & Ardel, *Bitcoin arbitrage: The role
+> of an exchange*, [Quantitative Finance and Economics 10(3):624–648,
+> 2026](https://doi.org/10.3934/QFE.2026024)
+
+One venue was carrying most of the apparent signal, and the paper's
+interpretation — a fiat-redemption premium, not a tradeable gap — is
+indistinguishable from a scanner reporting a dislocation. That is what
+`venue_attribution()` is built to catch before it reaches a table.
 
 **Which venues are real.** Crypto gets two tradeable books each (Binance,
 Coinbase). FX uses **Kraken**, which publishes a real two-sided book —
@@ -514,6 +615,30 @@ market-data table. Set `MAFUTANI_ARB_PERSIST=1` if you want that history.
 
 Set `MAFUTANI_ARB_FEED=0` to stop the feed loop polling venues (it is up to two HTTP
 calls per symbol per tick, against third-party rate limits).
+
+#### Venue-quote retention, and why it was raised
+
+`venue_quotes` retained **40 rows per (symbol, venue) book with a 2-hour age
+limit**. Measured on this deployment that was 37 rows per instrument —
+enough to see a gap, nowhere near enough to say how long it lasted. Order
+flow needs a sequence, and "this dislocation persisted" needs time to have
+passed.
+
+Defaults are now **1440 rows (≈1 day) and 3 days of age**, overridable with
+`MAFUTANI_VQ_KEEP` and `MAFUTANI_VQ_MAX_AGE_S`.
+
+The cap has a **floor of 40** applied to both the env override and any
+explicit argument. This is not a nudge about performance: the cap is
+partitioned by `(symbol, venue)` precisely so a busy venue cannot evict a
+quiet one's history, and a cap below ~40 lets it happen. The failure is
+silent — the scanner reports a two-venue market as single-venue and prints
+"no dislocation" for a market that has two.
+
+`data.feeds.venue_quote_depth(conn)` reports rows, distinct timestamps and
+span per book, so "is there enough history to measure anything?" has an
+answer instead of an assumption. `tests/test_venue_depth.py` asserts the
+measured 37-row case fails the usability floor, which is why the retention
+changed rather than the gate.
 
 ## Tests
 
