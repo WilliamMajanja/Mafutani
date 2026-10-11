@@ -20,15 +20,39 @@ import math
 from engines.indicators import atr, zscore, ema_series
 
 EWMA_LAMBDA = 0.94            # RiskMetrics volatility smoothing
-SPIKE_Z = 2.5                 # price-spike z threshold
+
+# The sigma-multiples below are FALLBACKS, not the threshold.
+#
+# They used to be the threshold. A fixed z is a Gaussian convention, and
+# these instruments are not Gaussian: on a series with kurtosis 8, the
+# empirical 2.5-sigma point sits near p=0.4%, not the 1.24% a 2.5 cut implies,
+# so the same "unusual" label fires about three times as often as intended.
+#
+# On this deployment's current tape the fallbacks are *accurate* -- BTCUSD
+# 1m returns have kurtosis 3.07, variance ratio 0.998, because
+# scripts/seed.py generates rng.gauss(0.0, 0.0006 * vol_mult). That is
+# precisely the trap: a Gaussian assumption looks correct on synthetic data
+# and breaks on real data, which is the only place it matters.
+#
+# So each threshold is estimated from the instrument's own history via
+# engines.tails, and the constant is used only when the estimate cannot be
+# made. `_scan_window` reports which applied in `threshold_basis`, so a
+# reader is never guessing whether a number came from the data or a
+# convention.
+SPIKE_Z = 2.5                 # fallback price-spike z (used only if unknown)
 SPIKE_MIN_PCT = 0.02          # floor so a collapsed sigma cannot fake a spike
-VOLUME_Z = 2.0                # volume z threshold
-REGIME_RATIO = 2.0            # EWMA vol vs baseline ratio (expansion)
-COMPRESS_RATIO = 0.55         # below this = compression (breakout setup)
+VOLUME_Z = 2.0                # fallback volume z threshold
+REGIME_RATIO = 2.0            # fallback EWMA vol vs baseline (expansion)
+COMPRESS_RATIO = 0.55         # fallback compression ratio (breakout setup)
 BREAKOUT_LOOKBACK = 60        # bars for level breakouts
-VELOCITY_Z = 3.0              # last-bar move vs the instrument's own sigma
+VELOCITY_Z = 3.0              # fallback last-bar move vs instrument sigma
 VELOCITY_ABS = 0.5            # absolute % escape hatch (see _velocity)
 RECENT_BARS = 15              # how far back the radar looks for events
+
+# Tail probability for the price-spike cut. 0.995 is the two-sided 1%
+# convention that 2.5-sigma implies, kept so the estimated threshold is
+# comparable with the fallback it replaces.
+SPIKE_P = 0.995
 
 
 def _f(x, default=0.0):
@@ -59,6 +83,105 @@ def _std(xs):
         return 0.0
     m = _mean(xs)
     return math.sqrt(sum((x - m) ** 2 for x in xs) / len(xs))
+
+
+def _estimate_cuts(vals_all, candles=None):
+    """Estimate every threshold from full history. Returns a `cuts` dict.
+
+    One place, called once per `detect_anomalies`, so that estimation and
+    application cannot drift apart. Each entry carries its own `basis`, and
+    a missing entry means "fall back to the module constant" rather than
+    "estimate failed silently".
+
+    Volume additionally carries `vol_cut_units` -- the p99 in the volumes'
+    own units -- because a z multiple and a volume are not comparable
+    without a mean, and the mean here is the instrument's own.
+    """
+    out = {}
+    try:
+        from engines.tails import spike_threshold as _thr
+    except ImportError:  # pragma: no cover - direct-path execution
+        try:
+            from tails import spike_threshold as _thr
+        except ImportError:
+            return {}
+
+    rets = _rets(vals_all)
+    if len(rets) >= 20:
+        t = _thr(rets, fallback=SPIKE_Z, p=SPIKE_P)
+        if t:
+            t["kurtosis"] = _round_or_none(t.get("kurtosis"))
+            t["threshold"] = _round_or_none(t.get("threshold"))
+            out["spike"] = t
+
+    vol_all = [_f(c.get("volume")) for c in (candles or [])
+               if isinstance(c, dict)]
+    vol_all = [v for v in vol_all if v > 0]
+    if len(vol_all) >= 20:
+        vt = _thr(vol_all, fallback=VOLUME_Z, p=0.99)
+        if vt and vt.get("z") is not None:
+            vm = _mean(vol_all)
+            if vm > 1e-12:
+                vt["vol_cut_units"] = vm * abs(vt["z"])
+            vt["kurtosis"] = _round_or_none(vt.get("kurtosis"))
+            out["volume"] = vt
+
+    exp_cut, comp_cut = _regime_cuts(rets)
+    out["regime"] = (exp_cut, comp_cut)
+    out["regime_basis"] = _regime_basis(rets)
+    return out
+
+
+def _round_or_none(x):
+    return None if x is None else round(float(x), 4)
+
+
+def _vol_ratio_series(rets, window=60, lamb=EWMA_LAMBDA):
+    """Trailing EWMA-vol / trailing-std ratio, one value per bar.
+
+    This is the same quantity the regime detector compares against a
+    threshold; here it is produced as a series so the threshold can be
+    estimated from it rather than assumed.
+    """
+    out = []
+    for i in range(window, len(rets) + 1):
+        w = rets[i - window:i]
+        base = _std(w)
+        reg, _v = ewma_volatility(w, lamb=lamb)
+        out.append((reg / base) if base > 1e-12 else 1.0)
+    return out
+
+
+def _regime_cuts(rets, window=60):
+    """(expansion_cut, compression_cut) for this instrument's vol ratio.
+
+    Quantiles of the ratio's own distribution: an expansion is a ratio in
+    the top 5% of what this instrument has actually done, not above a 2.0
+    that happens to round-number. Falls back to the module constants when
+    there is not enough history to estimate.
+    """
+    try:
+        from engines.tails import (MIN_TAIL_OBS, empirical_quantile)  # noqa
+    except ImportError:  # pragma: no cover - direct-path execution
+        try:
+            from tails import MIN_TAIL_OBS, empirical_quantile  # noqa
+        except ImportError:
+            return REGIME_RATIO, COMPRESS_RATIO
+    series = _vol_ratio_series(rets, window=window)
+    if len(series) < MIN_TAIL_OBS:
+        return REGIME_RATIO, COMPRESS_RATIO
+    s = sorted(series)
+    return (empirical_quantile(s, 0.95) or REGIME_RATIO,
+            empirical_quantile(s, 0.05) or COMPRESS_RATIO)
+
+
+def _regime_basis(rets, window=60):
+    """Whether the cuts came from data or the fallback constants."""
+    return ("estimated" if len(_vol_ratio_series(rets, window=window))
+            >= _MIN_RATIO_OBS else "fallback")
+
+
+_MIN_RATIO_OBS = 400
 
 
 def _velocity(rets, pct):
@@ -246,12 +369,24 @@ def detect_anomalies(symbol, closes, candles=None, quote=None, meta=None,
     # which is acceptable for a spread-stress reading and noted here
     # rather than silently assumed.
     seen = {}
+    # Thresholds are estimated ONCE, here, from the full tape -- and then
+    # handed to every _scan_window call.
+    #
+    # This ordering is the whole point. The sweep shows each detector a
+    # 20-25 bar window, and a tail percentile needs hundreds of
+    # observations, so an estimate made inside _scan_window always
+    # degrades to the Gaussian fallback. An earlier version of this change
+    # computed the estimate inside the detector, reported it in the API
+    # response, and then compared the bar against the hardcoded constant
+    # anyway: the number was published and never used. Estimating out here
+    # and passing it down is what makes the threshold real.
+    cuts = _estimate_cuts(vals_all, candles)
     for k in range(min(window, max(1, len(vals_all) - 20))):
         v = vals_all[:-k] if k else vals_all
         c = (candles[:-k] if k else candles) if candles else None
         if len(v) < 20:
             break
-        res = _scan_window(symbol, v, c, quote, meta)
+        res = _scan_window(symbol, v, c, quote, meta, cuts=cuts)
         for a in res["anomalies"]:
             a["bars_ago"] = k
             # first sighting wins: the sweep runs newest-first
@@ -260,6 +395,20 @@ def detect_anomalies(symbol, closes, candles=None, quote=None, meta=None,
     anomalies = sorted(seen.values(),
                        key=lambda a: (a.get("bars_ago", 0), a["kind"]))
     out["anomalies"] = anomalies[:6]
+
+    # Report the thresholds actually applied, so a reader is never guessing
+    # whether a number came from the data or from a convention.
+    spike = cuts.get("spike") or {}
+    vol = cuts.get("volume") or {}
+    out["threshold_basis"] = spike.get("basis")
+    out["threshold_kurtosis"] = spike.get("kurtosis")
+    out["threshold_n"] = spike.get("n")
+    out["threshold_p995"] = spike.get("threshold")
+    out["volume_threshold_basis"] = vol.get("basis")
+    out["volume_threshold_p99"] = vol.get("threshold")
+    out["regime_expansion_cut"], out["regime_compression_cut"] = \
+        cuts.get("regime") or (REGIME_RATIO, COMPRESS_RATIO)
+    out["regime_basis"] = cuts.get("regime_basis") or "fallback"
     weights = {"high": 12.0, "medium": 6.0, "low": 2.0}
     out["anomaly_score"] = round(
         min(100.0, sum(weights.get(a["severity"], 0.0) for a in anomalies)), 1)
@@ -267,10 +416,21 @@ def detect_anomalies(symbol, closes, candles=None, quote=None, meta=None,
     return out
 
 
-def _scan_window(symbol, vals, candles=None, quote=None, meta=None):
-    """Single-bar detection pass. See detect_anomalies for the sweep."""
+def _scan_window(symbol, vals, candles=None, quote=None, meta=None,
+                 cuts=None):
+    """Single-bar detection pass. See detect_anomalies for the sweep.
+
+    `cuts` carries thresholds estimated from the instrument's FULL history.
+    It has to be passed in rather than computed here, because this function
+    only ever sees the trailing 20-25 bars: a tail percentile needs
+    hundreds of observations, so estimating from the window always returns
+    the fallback. That was not a performance shortcut -- it meant the
+    estimated threshold was computed, reported to the API, and never
+    actually used in the gate. `detect_anomalies` now estimates once and
+    passes the result down.
+    """
     out = {"symbol": str(symbol or ""), "anomaly_score": 0.0, "anomalies": []}
-    meta = meta or {}
+    cuts = cuts or {}
     vals = [x for x in (_f(c) for c in (vals or [])) if x > 0]
     n = len(vals)
     if n < 20:
@@ -281,17 +441,66 @@ def _scan_window(symbol, vals, candles=None, quote=None, meta=None):
     if len(rets) >= 15:
         zs = zscore(rets[-(len(rets)):], 20)[-1] if len(rets) >= 20 else 0.0
         pct = (vals[-1] / vals[-2] - 1.0) * 100.0 if vals[-2] > 0 else 0.0
+        # Prefer the cut estimated by the caller from full history. Falling
+        # back to estimating from this 24-bar window is retained only for
+        # direct `_scan_window` callers, and it will always land on the
+        # fallback constant -- which is why the sweep passes one in.
+        thr = cuts.get("spike") or {"threshold": float(SPIKE_Z),
+                                    "basis": "fallback:no-full-history",
+                                    "z": None, "n": 0, "kurtosis": None}
+        # `threshold` is a SIGMA MULTIPLE, so it is directly comparable with
+        # the SPIKE_Z fallback. The bar's return has to be converted into the
+        # same units before it can be compared, which means multiplying by
+        # the trailing sigma the rolling z is measured against. Comparing a
+        # quantile to a z would be the units error this line exists to avoid.
+        cut_z = float(thr.get("threshold") or SPIKE_Z)
+        out["threshold_basis"] = thr.get("basis")
+        out["threshold_kurtosis"] = thr.get("kurtosis")
+        out["threshold_n"] = thr.get("n")
+        out["threshold_z"] = cut_z
+        trailing_sd = _std(rets[-20:]) if len(rets) >= 20 else 0.0
+        ret_cut = trailing_sd * cut_z
         # A z-score against a near-zero sigma is degenerate: on a flat
         # series sigma collapses and *any* tick wiggle reads as a
         # 5-sigma event. Require a materially non-zero move as well, so
         # "unusual for this instrument" cannot manufacture a signal out
         # of rounding. This is the same guard _velocity applies.
-        if abs(zs) >= SPIKE_Z and abs(pct) >= SPIKE_MIN_PCT:
-            sev = "high" if abs(zs) >= 4.0 else "medium"
+        #
+        # The gate.
+        #
+        # Measured, and this matters for reading the code: the two
+        # magnitude conditions are NOT independent. `ret_cut` is
+        # `trailing_sd * cut_z`, and `zs` is a rolling z over essentially
+        # the same trailing window, so |ret| >= cut_z*sd already implies
+        # |z| >= cut_z. Reverting the z side to the fixed 2.5 is therefore
+        # behaviourally inert whenever cut_z > 2.5 -- verified by mutation:
+        # swapping `cut_z` back to `SPIKE_Z` on the z side changes zero
+        # detections, because the return-side condition is strictly
+        # tighter and does the work on its own.
+        #
+        # Both are kept anyway, for two reasons. They degrade differently:
+        # if `trailing_sd` is unavailable the return-side test cannot be
+        # evaluated at all (it needs a sigma to scale the cut), and the z
+        # condition is the one that still works from `zscore`'s own
+        # window. And keeping the z side on `cut_z` means the two agree by
+        # construction, so a future edit to one cannot silently loosen the
+        # detector relative to the other.
+        #
+        # The substantive change is the return side: a move must clear the
+        # instrument's own full-history tail, not just its recent sigma.
+        # A move that is huge but sits inside the instrument's own history
+        # is not flagged as a 1-in-200 event -- which is the false alarm
+        # the fixed z produced on fat tails.
+        if abs(zs) >= cut_z and abs(pct) >= SPIKE_MIN_PCT and \
+                trailing_sd > 1e-12 and abs(rets[-1]) >= ret_cut:
+            sev = "high" if abs(zs) >= max(4.0, cut_z + 1.0) else "medium"
             out["anomalies"].append({
                 "kind": "price_spike", "severity": sev,
-                "message": "single-bar return {:+.3f}% (z={:.1f}) — {} standard deviations outside expected move".format(
-                    pct, zs, "4+" if abs(zs) >= 4.0 else "2.5+")})
+                "message": ("single-bar return {:+.3f}% (z={:.1f}, "
+                            "cut={:.1f} sigma = {:.4f}%, {}) — beyond this "
+                            "instrument's own history").format(
+                                pct, zs, cut_z, ret_cut * 100.0,
+                                thr.get("basis"))})
         # Velocity is measured against the instrument's OWN recent
         # per-bar volatility, not a fixed percentage. The old gate was a
         # hardcoded abs(pct) > 0.5, which is meaningless across a
@@ -330,30 +539,68 @@ def _scan_window(symbol, vals, candles=None, quote=None, meta=None):
                     round(rng / a, 2), round(a, 4))})
 
     # -- volume z (unusual activity)
+    #
+    # Estimated from this instrument's own volume history for the same
+    # reason as the price spike: participation is heavy-tailed, so a fixed
+    # 2.0 cuts a different fraction of bars in a liquid instrument than in a
+    # quiet one. The estimate comes from the caller (full history) for the
+    # reason documented on `_scan_window`.
     vols = [_f(c.get("volume") if isinstance(c, dict) else 0.0) for c in (candles or [])]
     vols = [v for v in vols if v > 0]
     if len(vols) >= 20:
         vz = zscore(vols, 20)[-1]
-        if vz >= VOLUME_Z:
-            ratio = vols[-1] / (_mean(vols) or 1.0)
+        vthr = cuts.get("volume") or {"threshold": float(VOLUME_Z),
+                                      "basis": "fallback:no-full-history"}
+        vmean = _mean(vols)
+        vcut_z = float(vthr.get("threshold") or VOLUME_Z)
+        # Volume needs BOTH readings, because its own units are not
+        # comparable with a z multiple:
+        #   * vz >= vcut_z          -- unusually high vs its own recent sigma
+        #   * vols[-1] >= vmean * vcut_z -- vs the instrument's own history
+        # `vol_cut_units` is the second condition already expressed in volume
+        # units; when it is absent the caller supplied only a z, and the
+        # z condition alone is used rather than inventing a unit threshold.
+        vol_cut = vthr.get("vol_cut_units")
+        if vthr.get("basis") != "estimated" and vmean > 1e-12:
+            vol_cut = vmean * vcut_z
+        rel_cut = (vmean * vcut_z / vmean) if vmean > 1e-12 else vcut_z
+        fires = vz >= vcut_z and (vol_cut is None or vols[-1] >= vol_cut)
+        if fires:
             out["anomalies"].append({
-                "kind": "volume", "severity": "medium" if vz >= 3.5 else "low",
-                "message": "volume {:.1f}x average (z={:.1f}) — unusual participation".format(
-                    ratio, vz)})
+                "kind": "volume",
+                "severity": "medium" if (vol_cut and vols[-1] >= vol_cut * 1.5)
+                            else "low",
+                "message": ("volume {:.1f}x average (z={:.1f}, "
+                            "cut={:.1f} sigma = {:.0f} units, {}) — unusual "
+                            "participation").format(
+                                vols[-1] / (vmean or 1.0), vz, vcut_z,
+                                (vol_cut or 0.0), vthr.get("basis"))})
 
     # -- EWMA vol regime shift vs baseline
+    #
+    # Also estimated rather than fixed. REGIME_RATIO=2.0 and
+    # COMPRESS_RATIO=0.55 were conventions with no measurement behind them;
+    # the quantiles of this instrument's own vol-ratio series say where its
+    # expansions and compressions actually start.
     if len(rets) >= 60:
         base = _std(rets[-60:])
         reg_var, _v = ewma_volatility(rets[-60:])
         ratio = (reg_var / base) if base > 1e-12 else 1.0
-        if ratio >= REGIME_RATIO:
+        exp_cut, comp_cut = cuts.get("regime") or _regime_cuts(rets)
+        rb = (cuts.get("regime_basis")
+              or (cuts.get("regime") and "estimated") or _regime_basis(rets))
+        if ratio >= exp_cut:
             out["anomalies"].append({
                 "kind": "vol_expansion", "severity": "medium",
-                "message": "volatility regime expanding {:.1f}x baseline — sizing down advised".format(ratio)})
-        elif ratio <= COMPRESS_RATIO:
+                "message": ("volatility regime expanding {:.1f}x baseline "
+                             "(p95={:.2f}, {}) — sizing down advised").format(
+                                 ratio, exp_cut, rb)})
+        elif ratio <= comp_cut:
             out["anomalies"].append({
                 "kind": "vol_compression", "severity": "low",
-                "message": "volatility compressed {:.2f}x baseline — breakout setup forming".format(ratio)})
+                "message": ("volatility compressed {:.2f}x baseline "
+                             "(p05={:.2f}, {}) — breakout setup forming").format(
+                                 ratio, comp_cut, rb)})
 
     # -- spread stress vs asset cap
     bid, ask = _f((quote or {}).get("bid")), _f((quote or {}).get("ask"))

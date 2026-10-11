@@ -1,3 +1,94 @@
+# Handoff — 2026-10-12 (distribution-estimated anomaly thresholds)
+
+Option 1 from the 2026-10-09 session: replace `anomaly.py`'s fixed sigma
+multiples with thresholds estimated from each instrument's own history.
+
+## Green
+
+- **1323 tests pass** (`python3 -m unittest discover -s tests`, ~13 min).
+  Last full-suite run was against this code; the only change since was
+  comment-only in `engines/anomaly.py`.
+- `engines/tails.py` (new), `tests/test_tails.py` (new, 40 tests) pass.
+- **Uncommitted.** HEAD is still `34678aa`.
+
+## What changed
+
+`engines/tails.py` (new) estimates a threshold from an instrument's own
+distribution: empirical quantiles (not a parametric fit — a quantile is a
+definition, not a distributional assumption), winsorised kurtosis, MAD-based
+robust sigma, and a `basis` field on every answer saying whether it came
+from data or a fallback.
+
+`engines/anomaly.py` now estimates once in `detect_anomalies` via
+`_estimate_cuts` and passes the result into every `_scan_window` call.
+The constants (`SPIKE_Z`, `VOLUME_Z`, `REGIME_RATIO`, `COMPRESS_RATIO`) are
+demoted to fallbacks, documented as such.
+
+## Four defects found and fixed along the way
+
+1. **The estimate was computed but never used.** The first version
+   estimated inside `_scan_window`, which only ever sees a 20-25 bar
+   window — far below `MIN_TAIL_OBS=400`, so it always degraded to the
+   fallback. The number was published in the API response and the gate
+   compared against the hardcoded 2.5 anyway. Fixed by estimating from
+   full history and threading `cuts` down. **This was the whole point of
+   the change and it was silently not happening.**
+
+2. **Winsorisation was circular.** `kurtosis()` capped at
+   `5 * std(xs)` — but `std` is inflated by the very outlier being capped,
+   so the cap landed above it and nothing was winsorised. Measured: kurtosis
+   1850 on a series whose true value is 3.0. Now caps at `5 * robust_sigma`.
+
+3. **The docstring claimed a value the function cannot return.**
+   Winsorising at 5 robust sigmas bounds kurtosis at ~4.81 regardless of
+   the true tail (measured: df=1.5 raw 8.94, winsorised 4.81). The
+   docstring said ">5 is heavy-tailed" — unreachable. Now states the
+   ceiling, and `raw_kurtosis()` was added for unbounded tail weight.
+   `classify()` returns both.
+
+4. **A "three times" claim was unsupported.** Measured two-sided
+   P(|r| > 2.5σ): Gaussian 1.24%, kurtosis 4.57 → 2.59% (2.08x). Docstring
+   corrected to the measured table.
+
+## Mutation testing (this is why the tests are shaped as they are)
+
+Mutating the gate to ignore `cut_z` **did not fail the tests** at first,
+because the reporting-only tests all still passed. Two rounds of
+behaviour-counting tests were added in response. Final state:
+
+| Mutation | Caught? |
+|---|---|
+| winsorise with contaminated `std` | yes (2 tests) |
+| gate ignores the estimated cut on the **return** side | yes |
+| gate ignores it on the **z** side | **no — and it does not need to be** |
+
+That last row is a finding, not a gap. The two magnitude conditions are not
+independent: `ret_cut = trailing_sd * cut_z` and `zs` uses a rolling z over
+the same window, so `|ret| >= 3.17*sd` already implies `|z| >= 2.5`.
+Reverting the z side is provably inert. Both conditions are kept anyway —
+they degrade differently (`trailing_sd` unavailable kills the return side,
+not the z side) — and this is documented at the gate.
+
+## Still true, still blocking
+
+- **`candles_1m` is synthetic** (`scripts/seed.py:206`,
+  `rng.gauss(0.0, 0.0006 * vol_mult)`; kurtosis 3.07, variance ratio
+  0.998/0.960/0.948). This change is therefore **near-inert on current
+  data by design** — on Gaussian input the estimated cut lands at 2.51 vs
+  the 2.5 constant, and there is a test asserting that drift stays small.
+  The fix only earns its keep on fat tails, which is where real data is.
+- **No torch work on `candles_1m` is meaningful** until real bars exist.
+  Options: `MAFUTANI_ARB_PERSIST=1` (operator decision, still not made) or
+  `scripts/ingest_csv.py`.
+
+## Operational
+
+- App server `:8000`, live trading **off** (`LIVE_TRADING_ENABLED` unset).
+- ML service `:8021` needs `.venv-torch/bin/python services/ml/server.py`.
+  Its background shell hit a 1-hour tool timeout today — that is the
+  harness limit on a long-running server, not a crash.
+- Do not `pkill -f app.py`; kill by PID.
+
 # Handoff — 2026-10-09
 
 Written at end of session so tomorrow starts from verified facts rather than
