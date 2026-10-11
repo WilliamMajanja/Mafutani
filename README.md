@@ -1,5 +1,12 @@
 # Mafutani Trading Consolidation and Consortium (zero-deps, stdlib only)
 
+> **The app is stdlib-only and this is enforced by a test, not a promise.**
+> PyTorch is used by one optional service that runs *outside* the app, in its
+> own virtualenv, reached over plain HTTP. `tests/test_ml_bridge.py` fails if
+> any module the app imports can reach `torch`, and fails if `torch` ever
+> becomes importable from the system Python. See
+> [Torch, without depending on it](#torch-without-depending-on-it).
+
 > **Disclaimer: not financial advice. Paper trading is the default. Live trading
 > is disabled unless `LIVE_TRADING_ENABLED=1` + eligible tier + explicit confirm.**
 
@@ -640,10 +647,94 @@ answer instead of an assumption. `tests/test_venue_depth.py` asserts the
 measured 37-row case fails the usability floor, which is why the retention
 changed rather than the gate.
 
+## Torch, without depending on it
+
+The app is stdlib-only. PyTorch runs in `services/ml/`, in its own
+virtualenv, and is reached over plain HTTP by `engines/mlclient.py` — which
+imports `urllib` and nothing else.
+
+```bash
+python3 -m venv .venv-torch
+.venv-torch/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venv-torch/bin/python services/ml/server.py --port 8021    # optional
+```
+
+Nothing in the trading path imports it. If the service is down, `mlclient`
+raises `MLUnavailable` and callers degrade; the app carries on unchanged.
+
+| Env | Default | |
+|---|---|---|
+| `MAFUTANI_ML_URL` | `http://127.0.0.1:8021` | service root |
+| `MAFUTANI_ML_TIMEOUT_S` | `30` | per-request |
+| `MAFUTANI_ML_TTL_S` | `300` | fit cache |
+
+The venv is 899 MB and gitignored. CPU wheel — CUDA reports unavailable under
+this WSL2 setup, and a 3-parameter ridge fit does not need a GPU.
+
+#### What the model is for
+
+`services/ml/model.py` fits the OFI price-impact coefficient on **this
+deployment's own books**:
+
+```
+dMid = alpha + beta * ofi/depth + gamma * 1/depth
+```
+
+Cont, Kukanov & Stoikov report that slope inversely proportional to depth,
+with β significant in 98% of their samples — on 50 S&P 500 stocks. That
+coefficient is a property of *their* books. Importing it would be the same
+error as copying a parameter from a paper without the paper, so this fits it
+locally instead. Ridge is not decoration: the `1/depth` term is
+`1/depth²` once multiplied out and correlates with the OFI term, which is
+the instability Xu, Gould & Howison ([arXiv:1907.06230](https://arxiv.org/abs/1907.06230))
+report across levels — they switch to Ridge for the same reason.
+
+#### Four things it refuses
+
+- **Fewer than 30 usable transitions** → `ok=False`, no coefficient. Cont et
+  al. fit on tens of thousands per stock; anything an order of magnitude
+  below that is being read for its shape, not its value.
+- **Constant depth** → `depth_degenerate=True`. If depth does not move,
+  `1/depth` is a constant and `gamma` is collinear with the intercept.
+  Measured on independent outcomes at constant depth, this fit returned
+  **β=0.229 at r²=0.009** — about 1.8 standard errors of noise, which a
+  caller reading `β` alone would have taken for signal.
+- **|t| < 2** → `verdict: "not-distinguishable-from-noise"`.
+- **Any failure at all** → the client raises. It never returns a default
+  coefficient, because a fallback and a real fit are indistinguishable at the
+  point of use.
+
+Recovered a known coefficient exactly in test — on synthetic data with
+α=1.0, β=2.5, γ=0.3 it returns **α=1.0017, β=2.4998, r²=1.0000**.
+
+#### Bugs found while building it, kept as comments
+
+Three, all in the commit history:
+
+- **`standard_errors` used numpy**, which the CPU torch wheel does not pull.
+  It crashed with "Numpy is not available" — the dependency had leaked out of
+  the one place meant to be self-contained, which is exactly what this split
+  exists to prevent. Now written in torch.
+- **The warm-up passed 4 rows**, below `MIN_OBS`, so `fit()` returned before
+  ever constructing an LBFGS. It warmed up nothing; the first real `/fit` paid
+  **22s** and blew the client's timeout, surfacing as a transport error
+  indistinguishable from the service being down. `/fit` is now 0.074s.
+- **`steps=2000`** on a 3-parameter quadratic: 400× the parameter count, 23s
+  against 0.03s for an identical answer.
+
+#### What is not wired
+
+The client and service exist and are tested end to end over HTTP. **No
+endpoint calls them yet**, and the OFI signal still uses its fixed
+threshold. That is deliberate: the honest input is `venue_quotes`, and
+`MAFUTANI_ARB_PERSIST` defaults off, so there are currently 37 rows per book
+and no depth to fit on. Turning the persist flag on is an operator decision
+that starts writing a second market-data table, so it has not been flipped.
+
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 1150 tests, stdlib only
+python3 -m unittest discover -s tests   # 1283 tests, stdlib only
 ```
 
 ## Workspace standard

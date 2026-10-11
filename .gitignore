@@ -12,3 +12,14 @@ __pycache__/
 # it records verified state and open items for the next session.
 HANDOFF.local.md
 *.log
+
+# The torch service's virtualenv. 899 MB of wheels, and the whole point of
+# the split is that the app does not depend on it -- committing it would make
+# the repository carry a dependency it claims not to have, and would bloat
+# every clone by a gigabyte. Recreate with:
+#   python3 -m venv .venv-torch
+#   .venv-torch/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venv-torch/
+.venv*/
+venv/
+env/
