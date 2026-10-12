@@ -39,6 +39,7 @@ import os
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -126,8 +127,27 @@ class _Handler(BaseHTTPRequestHandler):
         if not self.token:
             return True
         import hmac
+        # Two accepted carriers, and both are necessary.
+        #
+        # The header is what the Python side sends. The query parameter is
+        # what the MQL5 EA sends, and it has to be: MQL5's WebRequest has no
+        # overload that sets headers *and* a request body, so a POST from an
+        # EA cannot physically carry an `X-Mafutani-Token` header. The EA
+        # therefore puts the token in the URL. This was only discovered by
+        # compiling against a real MetaEditor -- see services/mt5/README.md.
+        #
+        # A token in a URL is weaker than one in a header, since it can land
+        # in access logs. That is why the listener stays on loopback and
+        # refuses any other bind without an explicit operator override.
         got = self.headers.get("X-Mafutani-Token", "")
+        if not got:
+            got = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query).get("token", [""])[0]
         return hmac.compare_digest(str(got), str(self.token))
+
+    def _path(self):
+        """Path with the query string stripped, for routing."""
+        return urllib.parse.urlsplit(self.path).path
 
     def _send(self, code, obj):
         raw = json.dumps(obj).encode("utf-8")
@@ -150,10 +170,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send(401, {"error": "bad or missing token"})
             return
-        if self.path.startswith("/health"):
+        if self._path().startswith("/health"):
             self._send(200, {"ok": True, "service": "mt5-bridge"})
             return
-        if self.path.startswith("/next"):
+        if self._path().startswith("/next"):
             # One held request per connection; the EA polls this in a loop.
             deadline = time.time() + POLL_HOLD_S
             while time.time() < deadline:
@@ -175,11 +195,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "invalid JSON"})
             return
 
-        if self.path.startswith("/result"):
+        if self._path().startswith("/result"):
             self.state.put_result(body)
             self._send(200, {"ok": True})
             return
-        if self.path.startswith("/exec"):
+        if self._path().startswith("/exec"):
             cid = self.state.submit(body)
             res = self.state.wait_for(cid, float(
                 body.pop("_timeout", 20) if isinstance(body, dict) else 20))

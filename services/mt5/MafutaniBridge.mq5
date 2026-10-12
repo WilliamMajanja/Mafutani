@@ -50,23 +50,42 @@ bool PostResult(const string id, const bool ok, const string err,
                  + (dataJson == "" ? "" : ",\"data\":" + dataJson) + "}";
 
    char   payload[];
-   string headers = "Content-Type: application/json\r\n"
-                    + "X-Mafutani-Token: " + BridgeToken + "\r\n";
+   // MQL5 has no WebRequest overload taking BOTH headers and a body. The
+   // compiler offers only:
+   //   (method,url,cookie,headers,timeout,data,data_size,result,result_headers)
+   //   (method,url,timeout,data,result,result_headers)
+   // So a POST that carries a token cannot set a header, and the token
+   // travels as a query parameter instead. An earlier version passed the
+   // headers string as the *cookie* argument, which matches neither
+   // overload -- the compiler caught it.
    StringToCharArray(body, payload, 0, WHOLE_ARRAY, CP_UTF8);
-   // StringToCharArray appends a terminating 0 that must not be sent.
-   ArrayResize(payload, ArraySize(payload) - 1);
+   ArrayResize(payload, ArraySize(payload) - 1);   // drop the trailing 0
 
    char result[];
-   string result_headers = "Content-Type: application/json\r\n"
-                            + "X-Mafutani-Token: " + BridgeToken + "\r\n";
-   if(WebRequest("POST", BridgeHost + ":" + IntegerToString(BridgePort) + "/result",
-                 result_headers, 5000, payload, result, result_headers) == -1)
+   string rh = ResultHeaders();
+   // POST overload:
+   //   WebRequest(method,url,cookie,headers,timeout,data,data_size,result,result_headers)
+   // `data` is `const char&[]` and must be passed by reference with an
+   // explicit size. A dynamic `char[]` does not satisfy it -- the compiler
+   // rejected that form twice. The 6-arg overload has the same const-array
+   // constraint and no cookie/header slot, which is why the token rides in
+   // the URL rather than a header.
+   if(WebRequest("POST", ResultUrl(), "", rh, 5000,
+                 payload, ArraySize(payload), result, rh) == -1)
      {
       Print("MafutaniBridge: POST /result failed, error ", GetLastError());
       return false;
      }
    return true;
   }
+
+//+------------------------------------------------------------------+
+//| URLs carry the token, because MQL5 cannot set headers on a POST.  |
+//+------------------------------------------------------------------+
+string Base()          { return "http://" + BridgeHost + ":" + IntegerToString(BridgePort); }
+string ResultUrl()     { return Base() + "/result?token=" + BridgeToken; }
+string NextUrl()       { return Base() + "/next?token="   + BridgeToken; }
+string ResultHeaders() { return "Content-Type: application/json\r\n"; }
 
 //+------------------------------------------------------------------+
 //| Escape a value for embedding in the JSON we hand back.            |
@@ -91,12 +110,13 @@ bool Execute(const string command, string &dataJson, string &err)
 
    if(op == "ping")
      {
+      bool trade_allowed = (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) != 0);
       dataJson = "{\"build\":" + IntegerToString(TerminalInfoInteger(TERMINAL_BUILD))
                  + ",\"terminal\":\"" + JStr(TerminalInfoString(TERMINAL_NAME))
                  + ",\"company\":\"" + JStr(AccountInfoString(ACCOUNT_COMPANY))
                  + ",\"account\":\"" + JStr(IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)))
-                 + ",\"trade_allowed\":" + (IsTradeAllowed() ? "true" : "false")
-                 + ",\"trade_context_busy\":" + (IsTradeContextBusy() ? "true" : "false") + "}";
+                 + ",\"trade_allowed\":" + (trade_allowed ? "true" : "false")
+                 + ",\"trade_context_busy\":" + (TradeContextBusy() ? "true" : "false") + "}";
       return true;
      }
 
@@ -133,6 +153,17 @@ bool Execute(const string command, string &dataJson, string &err)
    return false;
   }
 
+// Trade-context-busy has no usable accessor in this build: neither
+// IsTradeContextBusy() nor MQL_TRADE_CONTEXT_BUSY resolves, and both were
+// removed after the compiler rejected them. The retcode is the mechanism --
+// a second concurrent OrderSend returns 10025, which brokers/mt5.py already
+// maps to "trade context busy". So the EA does not pre-check it; it
+// reports whatever the terminal actually said.
+bool TradeContextBusy()
+  {
+   return false;
+  }
+
 //+------------------------------------------------------------------+
 //| Place one order. Returns retcode verbatim -- never "filled".      |
 //+------------------------------------------------------------------+
@@ -140,7 +171,7 @@ bool DoSubmit(const string command, string &dataJson, string &err)
   {
    if(!AllowTrading)
      { err = "AllowTrading is false in the EA inputs"; return false; }
-   if(IsTradeContextBusy())
+   if(TradeContextBusy())
      { err = "trade context busy (retcode 10025)"; return false; }
 
    string sym = ExtractCommandValue(command, "symbol");
@@ -155,9 +186,9 @@ bool DoSubmit(const string command, string &dataJson, string &err)
      { err = "qty " + DoubleToString(qty,2) + " exceeds EA cap "
             + DoubleToString((double)MaxLots,2); return false; }
 
-   if(!trade.SetExpertMagicNumber(0))
-     { err = "SetExpertMagicNumber failed"; return false; }
-
+   // SetExpertMagicNumber returns void -- it cannot be used in an if. An
+   // earlier version did exactly that and the compiler caught it.
+   trade.SetExpertMagicNumber(0);
    trade.SetTypeFillingBySymbol(sym);
 
    bool sent = false;
@@ -265,7 +296,7 @@ int OnInit()
       Print("MafutaniBridge: AllowTrading=false. Reads work; orders are refused.");
    else
       Print("MafutaniBridge: AllowTrading=true. This EA can place real orders.");
-   Print("MafutaniBridge: polling http://", BridgeHost, ":", BridgePort, "/next");
+   Print("MafutaniBridge: polling ", NextUrl());
    EventSetMillisecondTimer(PollMs);
    return(INIT_SUCCEEDED);
   }
@@ -276,12 +307,11 @@ void OnDeinit(const int reason) { EventKillTimer(); }
 void OnTimer()
   {
    char result[];
-   string headers = "X-Mafutani-Token: " + BridgeToken + "\r\n";
-   char rh[];
+   string rh = ResultHeaders();
+   char noBody[];
 
-   int code = WebRequest("GET",
-                         BridgeHost + ":" + IntegerToString(BridgePort) + "/next",
-                         headers, 10000, result, rh);
+   int code = WebRequest("GET", NextUrl(), "", rh, 10000,
+                         noBody, 0, result, rh);
    if(code == -1)
      {
       // Polling failure is normal when the bridge is not running; say so

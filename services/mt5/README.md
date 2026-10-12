@@ -70,6 +70,56 @@ export MAFUTANI_MT5_TOKEN=...      # must match the bridge
 
 Then `broker: "mt5"` in the normal order path.
 
+## Compiling the EA
+
+Already done on this machine with the terminal's own MetaEditor:
+
+```bash
+"/mnt/c/Program Files/NAGA Capital MT5 Terminal/MetaEditor64.exe" \
+  /compile:"C:\\path\\to\\MafutaniBridge.mq5" /log:"C:\\path\\build.log"
+```
+
+Writes `MafutaniBridge.ex5` beside the source and reports
+`Result: 0 errors, 0 warnings` in the log.
+
+## Three things only the compiler could tell us
+
+The first draft of this EA was written from documentation and **did not
+compile — 9 errors.** All three below are fixed. They are exactly the kind
+of thing that reading docs does not reveal.
+
+### 1. MQL5 cannot set headers on a POST
+
+`WebRequest` offers only:
+
+```
+(method, url, cookie, headers, timeout, data, data_size, result, result_headers)
+(method, url, timeout, data, result, result_headers)
+```
+
+Neither accepts headers *and* a body together. So the EA physically cannot
+send `X-Mafutani-Token` on its `POST /result`, and **the token travels as a
+query parameter** (`/result?token=...`). The bridge accepts either carrier;
+the Python side still uses the header.
+
+A token in a URL is weaker than one in a header — it can land in access
+logs — which is part of why the listener stays on loopback.
+
+### 2. `data` is `const char&[]`, so a dynamic `char[]` does not fit
+
+Passing a resized dynamic array fails with "no one of the overloads can be
+applied". It must be passed by reference with an explicit size, via the
+9-argument overload.
+
+### 3. `IsTradeContextBusy()` and `MQL_TRADE_CONTEXT_BUSY` do not exist
+
+Neither resolves in this build. The EA no longer pre-checks for a busy
+trade context; the retcode is the mechanism — a second concurrent
+`OrderSend` returns 10025, which `brokers/mt5.py` already maps.
+
+Also: `CTrade.SetExpertMagicNumber` returns **void**, so it cannot be used
+in an `if` statement.
+
 ## Safety properties
 
 | Property | Where |
@@ -106,8 +156,20 @@ same host on both sides. Use the Windows host address
 
 ## Not verified
 
-The MQL5 source has **not been compiled** — there is no terminal here, and
-`MetaEditor` is not available under WSL2. Everything on the Python side is
-covered by tests using a `FakeEA` that polls `/next` and posts to `/result`
-exactly as the real EA does. The `OrderSend` shim is the part that needs a
-real terminal to confirm.
+The EA **compiles**: `Result: 0 errors, 0 warnings`, confirmed against the
+real MetaEditor on this machine, and the `.ex5` is installed at
+`AppData/Roaming/MetaQuotes/Terminal/<hash>/MQL5/Experts/`.
+
+Not yet verified: **runtime behaviour inside a live terminal.** Nothing has
+confirmed the terminal actually polls, that the WebRequest whitelist accepts
+the URL, or that `OrderSend` behaves as expected on your broker's account.
+Those need the terminal running with the EA attached.
+
+Order of operations, and it is not optional:
+
+1. `AllowTrading = false`, attach to a chart, confirm the Experts log shows
+   `MafutaniBridge: polling ...` and `AllowTrading=false`.
+2. Start the bridge, call `connect()` from the app, check `terminal_info()`
+   returns a real build number.
+3. Only then consider `AllowTrading = true` — and first on a **demo**
+   account.

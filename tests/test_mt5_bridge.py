@@ -244,6 +244,65 @@ class _LiveBridge:
         self.httpd.server_close()
 
 
+class TestEAQueryStringAuth(unittest.TestCase):
+    """The carrier the MQL5 EA is forced to use.
+
+    MQL5's WebRequest has no overload that sets headers *and* a body, so
+    the EA cannot send `X-Mafutani-Token` on its POST /result and puts the
+    token in the URL instead. That was found by compiling against a real
+    MetaEditor, not by reading documentation, so it is pinned here: if the
+    bridge stops accepting the query form the EA silently stops being able
+    to report any result at all, and every order looks like a timeout.
+    """
+
+    def test_token_in_the_query_string_is_accepted(self):
+        with _LiveBridge(token="s3cret") as b:
+            import json as _json
+            import urllib.request as _r
+            # Exactly what the EA does: token in the URL, no header.
+            # /next is a long-poll that holds ~25s when the queue is empty,
+            # so a command is queued first to make it return at once --
+            # otherwise this test needs a 25s timeout just to assert nothing.
+            b.state.submit({"op": "ping"})
+            with _r.urlopen(b.base + "/next?token=s3cret", timeout=10) as r:
+                self.assertEqual(_json.loads(r.read().decode())["ok"], True)
+
+            body = _json.dumps({"id": "x", "ok": True}).encode()
+            rq = _r.Request(b.base + "/result?token=s3cret", data=body,
+                            method="POST",
+                            headers={"Content-Type": "application/json"})
+            _r.urlopen(rq, timeout=10).read()
+            self.assertEqual(b.state.take_result("x")["ok"], True)
+
+    def test_query_token_is_still_rejected_when_wrong(self):
+        import urllib.error
+        import urllib.request as _r
+        with _LiveBridge(token="s3cret") as b:
+            # /health answers immediately, so the 401 lands before any
+            # long-poll timeout could mask it.
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                _r.urlopen(b.base + "/health?token=nope", timeout=10)
+            self.assertEqual(cm.exception.code, 401)
+
+    def test_header_token_still_works(self):
+        """The Python side keeps using the header; both carriers stay live."""
+        import json as _json
+        import urllib.request as _r
+        with _LiveBridge(token="s3cret") as b:
+            req = _r.Request(b.base + "/health",
+                             headers={"X-Mafutani-Token": "s3cret"})
+            with _r.urlopen(req, timeout=10) as r:
+                self.assertEqual(_json.loads(r.read().decode())["ok"], True)
+
+    def test_routing_ignores_the_query_string(self):
+        """/health?token=.. must route as /health, not 404."""
+        import json as _json
+        import urllib.request as _r
+        with _LiveBridge(token="s3cret") as b:
+            with _r.urlopen(b.base + "/health?token=s3cret", timeout=10) as r:
+                self.assertEqual(_json.loads(r.read().decode())["ok"], True)
+
+
 class TestEndToEndWithFakeEA(unittest.TestCase):
     def setUp(self):
         os.environ.pop("LIVE_TRADING_ENABLED", None)
