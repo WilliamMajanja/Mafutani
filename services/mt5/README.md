@@ -72,15 +72,28 @@ Then `broker: "mt5"` in the normal order path.
 
 ## Compiling the EA
 
-Already done on this machine with the terminal's own MetaEditor:
+The compiler is discovered, so this works on any broker's terminal without
+editing a path:
 
 ```bash
-"/mnt/c/Program Files/NAGA Capital MT5 Terminal/MetaEditor64.exe" \
-  /compile:"C:\\path\\to\\MafutaniBridge.mq5" /log:"C:\\path\\build.log"
+python3 scripts/build_mt5_ea.py --list      # show what was found
+python3 scripts/build_mt5_ea.py             # compile only
+python3 scripts/build_mt5_ea.py --install   # compile + install into terminals
+python3 scripts/build_mt5_ea.py --install --terminal <id>   # just one
 ```
 
-Writes `MafutaniBridge.ex5` beside the source and reports
-`Result: 0 errors, 0 warnings` in the log.
+It searches Program Files and the local MetaQuotes tree for
+`MetaEditor64.exe`, compiles with the documented `/compile:` and `/log:`
+switches, and reports `Result: 0 errors, 0 warnings`. With more than one
+MetaEditor installed it prints the ambiguity and lets you choose with
+`--metaeditor`.
+
+**Any broker's MetaEditor can build this EA.** It is not broker-specific,
+and nothing in the repository references a particular terminal or
+installation path.
+
+`.ex5` is a build artifact tied to the MetaEditor build that produced it, so
+it is not committed (see `.gitignore`). Rebuild after a terminal update.
 
 ## Three things only the compiler could tell us
 
@@ -156,14 +169,14 @@ same host on both sides. Use the Windows host address
 
 ## Not verified
 
-The EA **compiles**: `Result: 0 errors, 0 warnings`, confirmed against the
-real MetaEditor on this machine, and the `.ex5` is installed at
-`AppData/Roaming/MetaQuotes/Terminal/<hash>/MQL5/Experts/`.
+The EA **compiles**: `Result: 0 errors, 0 warnings`, confirmed against a
+real MetaEditor via `scripts/build_mt5_ea.py`, and installed into every
+terminal this machine has.
 
 Not yet verified: **runtime behaviour inside a live terminal.** Nothing has
 confirmed the terminal actually polls, that the WebRequest whitelist accepts
-the URL, or that `OrderSend` behaves as expected on your broker's account.
-Those need the terminal running with the EA attached.
+the URL, or that `OrderSend` behaves as expected on a broker's account.
+Those need a terminal running with the EA attached.
 
 Order of operations, and it is not optional:
 

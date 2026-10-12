@@ -23,3 +23,9 @@ HANDOFF.local.md
 .venv*/
 venv/
 env/
+
+# MQL5 compiled output. A .ex5 is tied to the MetaEditor build that produced
+# it -- rebuild with scripts/build_mt5_ea.py after a terminal update. Only
+# the .mq5 source is tracked.
+*.ex5
+*.ex4
