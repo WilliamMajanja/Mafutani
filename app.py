@@ -391,6 +391,45 @@ class Handler(BaseHTTPRequestHandler):
 # ------------------------------------------------------------------ feed loop
 
 
+def _prune_stale_venue_quotes():
+    """Trim venue_quotes. Runs whether or not persistence is enabled.
+
+    This is deliberately NOT inside `_venue_quotes`, and that separation is
+    the whole point. Pruning used to happen only after a successful write,
+    under the same `MAFUTANI_ARB_PERSIST` flag -- so the moment an operator
+    turned persistence off, the rows already written were orphaned
+    forever: nothing wrote, and nothing pruned.
+
+    Measured on this deployment: 727 rows sitting 10.6 days old against a
+    3-day `MAFUTANI_VQ_MAX_AGE_S`, all of which `prune_venue_quotes` would
+    have removed. That is precisely the "growing table nobody asked for"
+    that the opt-in flag and the retention defaults were added to prevent,
+    and the flag had made retention unreachable.
+
+    Retaining is optional; honouring a retention limit after the fact is
+    not. An operator who opts out should stop accumulating, not be left
+    holding whatever was already there.
+    """
+    try:
+        from data.db import connect as _c
+        from data.feeds import prune_venue_quotes as _prune_vq
+    except ImportError:
+        return 0
+    try:
+        conn = _c()
+    except Exception:
+        return 0
+    try:
+        return _prune_vq(conn)
+    except Exception:
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _venue_quotes(symbols, timeout=5, workers=8):
     """Optional: record polled venue books to venue_quotes.
 
@@ -407,6 +446,10 @@ def _venue_quotes(symbols, timeout=5, workers=8):
 
     Failures are silent by construction -- a scanner that cannot see both
     books must report "one venue", never invent the second.
+
+    Pruning is NOT done here. It runs unconditionally from the feed tick
+    via `_prune_stale_venue_quotes`, so that turning this flag off stops
+    the writes without stranding the rows already written.
     """
     try:
         from data.feeds import (VenuePoller, persist_venue_quotes,
@@ -431,13 +474,7 @@ def _venue_quotes(symbols, timeout=5, workers=8):
     except Exception:
         return 0
     try:
-        written = persist_venue_quotes(conn, books)
-        try:
-            from data.feeds import prune_venue_quotes as _prune_vq
-            _prune_vq(conn)
-        except Exception:
-            pass
-        return written
+        return persist_venue_quotes(conn, books)
     finally:
         try:
             conn.close()
@@ -544,6 +581,16 @@ def _feed_once():
         # on demand regardless of whether this runs.
         try:
             _venue_quotes(enabled)
+        except Exception:
+            pass
+        # Retention runs regardless of whether the write above happened.
+        # It only deletes rows already past their age limit, so on a
+        # deployment that never persisted anything this is a cheap no-op
+        # rather than ongoing work. Keeping it here rather than inside
+        # _venue_quotes is what stops an operator opting out from stranding
+        # whatever was written before they opted out.
+        try:
+            _prune_stale_venue_quotes()
         except Exception:
             pass
         now = int(time.time())

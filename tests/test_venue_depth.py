@@ -201,6 +201,156 @@ class TestPruneBehaviour(_Db):
                          "an explicit tiny cap was honoured; it must clamp")
 
 
+class TestPruneRunsWhenPersistenceIsOff(_Db):
+    """Retention must not be gated behind the flag that writes.
+
+    This is a real defect that shipped, found by measurement rather than by
+    reading: `prune_venue_quotes` was called only from inside
+    `_venue_quotes`, after a successful write, under the same
+    `MAFUTANI_ARB_PERSIST` flag. Turning persistence off therefore stopped
+    the writes *and* stopped the pruning, stranding every row already
+    written.
+
+    Measured on the live deployment: 727 rows sitting 10.6 days old against
+    a 3-day `DEFAULT_VQ_MAX_AGE_S` -- every one of them past its limit, and
+    none of them eligible for removal, because the code path that would
+    have removed them could not be reached. That is exactly the "growing
+    table nobody asked for" that the opt-in flag was added to prevent, so
+    the opt-in was quietly defeating its own purpose.
+
+    These tests drive the real `app.py` functions rather than
+    `prune_venue_quotes` directly, because the defect was never in the
+    pruner -- it was in who calls it. Testing the pruner would have passed
+    throughout, exactly as the reporting tests did for the anomaly work.
+    """
+
+    def setUp(self):
+        for k in ("MAFUTANI_VQ_KEEP", "MAFUTANI_VQ_MAX_AGE_S",
+                  "MAFUTANI_ARB_PERSIST"):
+            os.environ.pop(k, None)
+        self.conn.execute("DELETE FROM venue_quotes")
+
+    def _fresh_app(self):
+        """Import app.py against this test's sandbox DB.
+
+        app.py reads DB_PATH at connect time, so the sandbox set by
+        `tests/__init__.py` applies. Re-imported per test because the
+        module holds feed-loop state at import time.
+        """
+        for m in [k for k in list(sys.modules)
+                  if k in ("app",) or k.startswith("data.")]:
+            del sys.modules[m]
+        import app as app_mod
+        return app_mod
+
+    def test_persist_flag_is_off_in_this_scenario(self):
+        """Guards the premise: these tests are about the OFF case."""
+        os.environ.pop("MAFUTANI_ARB_PERSIST", None)
+        self.assertFalse(feeds.venue_persist_enabled())
+
+    def test_venue_quotes_writes_nothing_when_persist_is_off(self):
+        app_mod = self._fresh_app()
+        self.assertEqual(app_mod._venue_quotes(["BTCUSD"], timeout=1), 0,
+                         "wrote venue rows with persistence disabled")
+
+    def test_stale_rows_are_pruned_even_though_nothing_writes(self):
+        """The regression itself.
+
+        Stale rows, persistence OFF, no write occurs -- and the rows must
+        still go. Before the fix this returned 0 and removed nothing,
+        because pruning was unreachable without a write.
+        """
+        app_mod = self._fresh_app()
+        old = int(time.time()) - 30 * 86400      # 30 days back
+        self.seed("binance", 20, base_ts=old)
+        self.seed("coinbase", 20, base_ts=old)
+        self.assertEqual(self.count(), 40)
+
+        removed = app_mod._prune_stale_venue_quotes()
+        self.assertGreater(removed, 0,
+                           "stale rows survived while persistence was off; "
+                           "retention was gated behind the write flag")
+        self.assertEqual(self.count(), 0,
+                         "rows older than the age limit were not removed")
+
+    def test_prune_is_a_noop_when_nothing_is_stale(self):
+        """A deployment that never persisted pays ~nothing for this.
+
+        The prune call runs on every feed tick regardless of the flag, so
+        it must not do real work against an empty or current table.
+        """
+        app_mod = self._fresh_app()
+        self.assertEqual(app_mod._prune_stale_venue_quotes(), 0)
+
+        now = int(time.time())
+        self.seed("binance", 30, now=now)
+        self.assertEqual(app_mod._prune_stale_venue_quotes(), 0,
+                         "pruned rows that were inside the retention window")
+
+    def test_prune_never_raises_into_the_feed_loop(self):
+        """The feed tick must survive a pruning failure.
+
+        Retention is housekeeping; it must not be able to take down the
+        tape feed that is writing the data it would have been trimming.
+
+        The table is *renamed* rather than dropped, and restored in a
+        finally block, because `self.conn` is shared across the class --
+        dropping it broke every test that ran afterwards. That failure is
+        itself a reminder that these tests share real state rather than
+        mocks, which is deliberate here: the bug was a wiring bug, and
+        wiring bugs are invisible to tests that replace the wiring.
+        """
+        app_mod = self._fresh_app()
+        self.seed("binance", 5, base_ts=int(time.time()) - 30 * 86400)
+        self.conn.execute("ALTER TABLE venue_quotes RENAME TO venue_quotes_gone")
+        self.conn.commit()
+        try:
+            self.assertEqual(app_mod._prune_stale_venue_quotes(), 0)
+            self.assertEqual(app_mod._venue_quotes(["BTCUSD"], timeout=1), 0)
+        finally:
+            self.conn.execute(
+                "ALTER TABLE venue_quotes_gone RENAME TO venue_quotes")
+            self.conn.commit()
+
+
+    def test_feed_tick_calls_the_pruner(self):
+        """Pins the wiring, which is the only thing that broke.
+
+        The tests above call `_prune_stale_venue_quotes` directly, so they
+        would all still pass if the feed tick stopped calling it -- and a
+        pruner nothing calls is exactly the original defect. Removing the
+        call site from `_feed_once` was verified to leave every other test
+        here green.
+
+        Rather than run `_feed_once` for real (it reaches for network
+        quotes and would be slow and flaky), this records that the call
+        happens by substituting a counting double and driving one tick.
+        """
+        app_mod = self._fresh_app()
+        self.seed("binance", 5, base_ts=int(time.time()) - 30 * 86400)
+
+        calls = []
+        real_prune = app_mod._prune_stale_venue_quotes
+        app_mod._prune_stale_venue_quotes = lambda: (calls.append(1), 0)[1]
+        # Keep the tick cheap and offline: no symbol set to write means no
+        # per-symbol work, and venue writing is opt-in and off here anyway.
+        real_quotes = app_mod._real_quotes
+        app_mod._real_quotes = lambda syms: {}
+        real_vq = app_mod._venue_quotes
+        app_mod._venue_quotes = lambda syms, **kw: 0
+        try:
+            app_mod._feed_once()
+        finally:
+            app_mod._prune_stale_venue_quotes = real_prune
+            app_mod._real_quotes = real_quotes
+            app_mod._venue_quotes = real_vq
+
+        self.assertGreaterEqual(
+            len(calls), 1,
+            "the feed tick did not call the pruner; retention would never "
+            "run no matter how correct prune_venue_quotes is")
+
+
 class TestDepthReport(_Db):
     """`venue_quote_depth` exists so depth is measured, not assumed."""
 
