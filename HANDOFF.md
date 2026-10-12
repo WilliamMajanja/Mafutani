@@ -1,3 +1,64 @@
+# Handoff — 2026-10-12 (venue-quote retention was unreachable)
+
+Second session on 2026-10-12. Picked up from `4d50922`.
+
+## Green
+
+- **1329 tests pass** (~14 min). Clean tree at `f3740c1`.
+- App server `:8000` healthy (pid 800678). **ML service `:8021` is down** --
+  its background shell hit the harness's 1-hour timeout, not a crash.
+  Restart with `.venv-torch/bin/python services/ml/server.py --port 8021`.
+
+## Defect found and fixed
+
+`prune_venue_quotes` was called only from inside `_venue_quotes`, after a
+successful write, under the same `MAFUTANI_ARB_PERSIST` flag. So turning
+persistence off stopped the writes *and* the pruning, orphaning every row
+already written.
+
+Found by measurement, not by reading the code. `venue_quotes` had grown from
+37 to 727 rows since the last handoff while `MAFUTANI_ARB_PERSIST` was unset,
+and the newest row was 10.6 days old against a 3-day
+`DEFAULT_VQ_MAX_AGE_S`. All 727 were past their limit and none were eligible
+for removal -- the code path could not be reached. Retention had been
+unreachable since it was written, so the opt-in flag was defeating the exact
+purpose it was added for.
+
+Fix: `_prune_stale_venue_quotes()` runs from the feed tick unconditionally.
+It deletes only rows already past their age limit, so a deployment that never
+persisted pays a no-op query.
+
+**The 727 stale rows are still on disk.** The fix prevents recurrence; it
+does not retroactively clean. Deleting live-DB rows needs an operator go-ahead
+-- not done, deliberately.
+
+## The lesson worth carrying
+
+Three of the six new tests call `_prune_stale_venue_quotes` directly, and
+mutating away the *call site* in `_feed_once` left all of them green. A pruner
+nothing calls passes every test written about the pruner. The wiring test
+(`test_feed_tick_calls_the_pruner`) exists solely to close that, and deleting
+the call site now fails it. Same shape as the anomaly work: the first test
+round checked that thresholds were *reported*, and the estimate was never
+actually *used*.
+
+Six tests, all three mutations verified to fail:
+re-gating the prune behind the flag; deleting the feed-tick call site;
+gutting the prune function.
+
+## Still true, still blocking
+
+- **`candles_1m` remains synthetic** (`scripts/seed.py:206`). The anomaly
+  threshold work is near-inert on it by design; real bars still needed.
+  Paths: `MAFUTANI_ARB_PERSIST=1` (operator decision) or `scripts/ingest_csv.py`.
+- Torch idle until real data exists. No volatility/regime learning is
+  meaningful on i.i.d. Gaussian returns.
+
+## Operational
+
+- Do not `pkill -f app.py`; kill by PID.
+- Backup: `/tmp/opencode/trading.db.bak.pre_rebuild` (213 MB).
+
 # Handoff — 2026-10-12 (distribution-estimated anomaly thresholds)
 
 Option 1 from the 2026-10-09 session: replace `anomaly.py`'s fixed sigma
