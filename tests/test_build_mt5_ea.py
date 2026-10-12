@@ -221,6 +221,13 @@ class TestRepositoryIsBrokerIndependent(unittest.TestCase):
         for name in names:
             if not name.endswith((".py", ".md", ".mq5", ".sh", ".txt")):
                 continue
+            # This file necessarily contains the forbidden tokens -- it is
+            # where they are listed. Scanning itself would make the test
+            # unsatisfiable the moment it is written, which is the same
+            # trap as a linter flagging its own ignore list.
+            if os.path.abspath(os.path.join(ROOT, name)) == \
+                    os.path.abspath(__file__):
+                continue
             try:
                 with open(os.path.join(ROOT, name), encoding="utf-8") as f:
                     yield name, f.read()

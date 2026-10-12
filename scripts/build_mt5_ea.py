@@ -1,26 +1,27 @@
 """Compile MafutaniBridge.mq5 with any installed MetaEditor. Stdlib only.
 
-    python3 scripts/build_mt5_ea.py                 # compile
-    python3 scripts/build_mt5_ea.py --list          # show what was found
-    python3 scripts/build_mt5_ea.py --install       # compile + install everywhere
-    python3 scripts/build_mt5_ea.py --install --terminal 71C4AE97
+    python3 scripts/build_mt5_ea.py --list
+    python3 scripts/build_mt5_ea.py
+    python3 scripts/build_mt5_ea.py --install --terminal <id>
+    python3 scripts/build_mt5_ea.py --install --metaeditor "/path/to/MetaEditor64.exe"
 
 Why this exists rather than a documented command
 ------------------------------------------------
-The first pass documented a literal path:
+The first pass documented a literal path to one broker's installed
+terminal, under Program Files. That is wrong in two ways: it names a
+specific broker's terminal, so a user on a different broker cannot build at
+all; and it is a path that changes with every terminal update or reinstall.
+Nobody should have to edit a command in a README to compile a file.
 
-    "/mnt/c/Program Files/NAGA Capital MT5 Terminal/MetaEditor64.exe" ...
-
-That is wrong in two ways. It names one broker's terminal, so a user on a
-different broker cannot build at all; and it is a path into `Program Files`
-that changes with every terminal update or reinstall. Nobody should have to
-edit a command in a README to compile a file.
-
-So the compiler is *discovered*: every `MetaEditor64.exe` under Program
+So the compiler is *discovered*: every MetaEditor64.exe under Program
 Files and the local app-data tree is found, and if there is more than one
 the ambiguity is reported rather than resolved silently. Building against
 a different broker's MetaEditor than the one you run is a legitimate
 choice, so the choice is surfaced, not hidden.
+
+That literal path is deliberately not reproduced here: a script whose whole
+purpose is to stop hardcoding one would be contradicting itself in its own
+docstring, and a test greps the repository to keep it that way.
 
 Nothing is installed anywhere without --install, and --install prints
 exactly which directories it wrote to.
