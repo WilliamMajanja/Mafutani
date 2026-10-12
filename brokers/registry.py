@@ -70,6 +70,20 @@ def _build_binance(**kw):
     return BinanceBroker(**kw)
 
 
+def _build_mt5(**kw):
+    """MetaTrader 5 via the local EA bridge.
+
+    Registered as its own builder rather than a `VenueProfile` because the
+    transport is not HTTP-to-a-venue in the usual sense: there is no venue
+    REST API, no API key, and no HMAC signing. The credential is a shared
+    token between this process and a local bridge on the operator's own
+    machine, and the terminal has already authenticated to its broker
+    independently of anything here.
+    """
+    from .mt5 import build as _mt5_build
+    return _mt5_build(**kw)
+
+
 register("paper", _build_paper,
          "Simulated execution against the local database (default)")
 # The one venue that can actually execute. Registered under its real name
@@ -77,6 +91,9 @@ register("paper", _build_paper,
 # logic that endpoint data cannot describe -- see brokers/binance.py.
 register("binance", _build_binance,
          "Binance spot: HMAC-signed live execution (set BROKER_BINANCE_API_KEY/SECRET)")
+register("mt5", _build_mt5,
+         "MetaTrader 5 via a local MQL5 EA bridge (run services/mt5/bridge_server.py "
+         "beside the terminal; set MAFUTANI_MT5_TOKEN)")
 for _p in _profiles.PROFILES:
     register(_p, _rest_builder_for(_p),
              "REST adapter for the '{}' venue shape".format(_p))
