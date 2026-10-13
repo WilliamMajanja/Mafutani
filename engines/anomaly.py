@@ -62,6 +62,115 @@ REGIME_WINDOW = 60
 # see _regime_cuts.
 MIN_REGIME_OBS = 150
 
+# Rolling window for the spike z-score.
+Z_WINDOW = 20
+
+
+# ------------------------------------------------------------- resolutions
+# What a "bar" is, and so what every bar-counted window means.
+#
+# Added because the windows here are counts, not durations, and a count
+# silently acquires its meaning from the bar it is counted in. 20 bars is
+# 20 minutes at one resolution and 20 trading days at another; 60 bars is
+# an hour or a quarter. Nothing in the code could tell those apart, so a
+# caller asking for a daily regime got the 1m-shaped model run on daily
+# bars with nothing marking the difference.
+#
+# On EWMA_LAMBDA specifically
+# ---------------------------
+# 0.94 is RiskMetrics' *daily* constant: half-life ln(0.5)/ln(0.94) = 11.2
+# bars, which is 11.2 trading days on a daily chart. An earlier note here
+# claimed that made it "wrong" for 1-minute bars. That was overstated --
+# the ratio between the EWMA half-life and REGIME_WINDOW is 60/11.2 = 5.4x
+# at *both* resolutions, because both are counted in bars. It is
+# self-consistent either way.
+#
+# So both profiles keep 0.94 and no shipped 1m number changes. The point is
+# that the half-life is now stated in bars *and* wall-clock per resolution,
+# rather than being a constant that happens to hold for two different
+# reasons.
+#
+# What genuinely differs by resolution is headroom. A p99.5 wants ~400
+# observations: 6.7 hours of 1m history, but 400 trading days -- 1.6 years.
+
+
+def _sig(x, n):
+    """Round to `n` significant figures.
+
+    `round(x, 2)` is the wrong tool for a quantity whose magnitude spans
+    three orders of magnitude across resolutions: it returns 0.19 for the
+    1-minute half-life (a 1.8% error) and 268.86 for the daily one (a
+    0.02% error), so the same call is precise for one profile and lossy
+    for the other. Significant figures keep the *relative* error bounded,
+    which is the property a reader of these numbers actually needs.
+    """
+    if not x:
+        return None
+    try:
+        return float("%.*g" % (n, x))
+    except (TypeError, ValueError):
+        return None
+
+
+# A daily symbol with two years falls back to the Gaussian constant, and
+# that fallback is reported rather than hidden.
+class _Resolution(object):
+    """Named bar interval, plus the windows that are counted in it."""
+
+    __slots__ = ("name", "seconds", "z_window", "regime_window", "lamb",
+                 "label")
+
+    def __init__(self, name, seconds, label):
+        self.name = name
+        self.seconds = seconds
+        self.label = label
+        # Bar-counted, so identical across resolutions by design.
+        self.z_window = Z_WINDOW
+        self.regime_window = REGIME_WINDOW
+        self.lamb = EWMA_LAMBDA
+
+    @property
+    def half_life_bars(self):
+        try:
+            return math.log(0.5) / math.log(self.lamb)
+        except (ValueError, ZeroDivisionError):
+            return None
+
+    def describe(self):
+        hl = self.half_life_bars
+        return {
+            "name": self.name,
+            "label": self.label,
+            "bar_seconds": self.seconds,
+            "z_window_bars": self.z_window,
+            "regime_window_bars": self.regime_window,
+            "ewma_lambda": self.lamb,
+            "ewma_half_life_bars": _sig(hl, 4) if hl else None,
+            "ewma_half_life_hours": _sig(hl * self.seconds / 3600.0, 3)
+                                     if hl else None,
+        }
+
+
+RESOLUTIONS = {
+    "1m": _Resolution("1m", 60, "1-minute"),
+    "1d": _Resolution("1d", 86400, "daily"),
+}
+DEFAULT_RESOLUTION = "1m"
+
+
+def get_resolution(name):
+    """Resolve a tf to a profile, defaulting rather than raising.
+
+    A chart that renders at the wrong resolution is recoverable; one that
+    fails to render is not. The caller is told what it actually got.
+    """
+    key = str(name or DEFAULT_RESOLUTION).strip().lower()
+    return RESOLUTIONS.get(key) or RESOLUTIONS[DEFAULT_RESOLUTION]
+
+
+def resolution_names():
+    return sorted(RESOLUTIONS)
+
 
 def _f(x, default=0.0):
     try:
@@ -160,8 +269,13 @@ def _vol_ratio_series(rets, window=60, lamb=EWMA_LAMBDA):
     return out
 
 
-def _regime_cuts(rets, window=60):
+def _regime_cuts(rets, window=60, lamb=EWMA_LAMBDA):
     """(expansion_cut, compression_cut) for this instrument's vol ratio.
+
+    `lamb` must be the same smoothing factor used to build the series the
+    cuts are quantiled from. Passing a different one would place cuts on a
+    distribution the caller never computed, and every value would be
+    plausible and wrong.
 
     Quantiles of the ratio's own distribution: an expansion is a ratio in
     the top 5% of what this instrument has actually done, not above a 2.0
@@ -175,7 +289,7 @@ def _regime_cuts(rets, window=60):
             from tails import MIN_TAIL_OBS, empirical_quantile  # noqa
         except ImportError:
             return REGIME_RATIO, COMPRESS_RATIO
-    series = _vol_ratio_series(rets, window=window)
+    series = _vol_ratio_series(rets, window=window, lamb=lamb)
     # 150, not MIN_TAIL_OBS (400). The vol ratio is a far smoother statistic
     # than a return, so its 5th and 95th percentiles settle well before 400
     # observations -- and until they do, every bar falls inside the fallback
@@ -189,9 +303,10 @@ def _regime_cuts(rets, window=60):
             empirical_quantile(s, 0.05) or COMPRESS_RATIO)
 
 
-def _regime_basis(rets, window=60):
+def _regime_basis(rets, window=60, lamb=EWMA_LAMBDA):
     """Whether the cuts came from data or the fallback constants."""
-    return ("estimated" if len(_vol_ratio_series(rets, window=window))
+    return ("estimated" if len(_vol_ratio_series(rets, window=window,
+                                                  lamb=lamb))
             >= MIN_REGIME_OBS else "fallback")
 
 
@@ -670,22 +785,33 @@ def _scan_window(symbol, vals, candles=None, quote=None, meta=None,
 # chart. The regime window (60) and the z window (20) are bar counts, so on
 # daily data they mean 60 days and 20 days -- not wrong, but a different
 # question from the one the 1m thresholds answer.
-def chart_context(closes, candles=None, window=REGIME_WINDOW):
+def chart_context(closes, candles=None, window=None, tf=DEFAULT_RESOLUTION):
     """Regime + anomaly flags for each bar. Cheap enough for a few hundred.
 
+    `tf` selects a resolution profile (see `RESOLUTIONS`). It does *not*
+    change the windows -- those are bar counts, deliberately the same at
+    every resolution, so 20 bars means 20 of whatever the caller supplied.
+    What it changes is that the result *reports* which interval those
+    counts were counted in, so a daily chart cannot be mistaken for a
+    minute one.
+
     Returns:
-      {"n", "basis", "kurtosis", "cut_z", "n_threshold",
+      {"n", "basis", "kurtosis", "cut_z", "n_threshold", "resolution", "tf",
        "regime": {"expansion", "compression", "basis"},
        "series": [{"ts", "ret", "z", "ratio", "state", "anomaly", "severity"}]}
 
     `state` is "expansion" | "compression" | None (inside the band).
     `anomaly` is the anomaly kind for that bar, or None.
     """
+    res = get_resolution(tf)
+    if window is None:
+        window = res.regime_window
     vals = [_f(c) for c in (closes or [])]
     vals = [x for x in vals if x is not None and x > 0]
     n = len(vals)
     out = {"n": n, "basis": "fallback:no-history", "kurtosis": None,
            "cut_z": SPIKE_Z, "n_threshold": 0, "series": [],
+           "resolution": res.describe(), "tf": res.name,
            "regime": {"expansion": REGIME_RATIO,
                       "compression": COMPRESS_RATIO,
                       "basis": "fallback"}}
@@ -714,12 +840,14 @@ def chart_context(closes, candles=None, window=REGIME_WINDOW):
             out["kurtosis"] = t.get("kurtosis")
             out["n_threshold"] = t.get("n") or 0
 
-    exp_cut, comp_cut = _regime_cuts(rets, window=window)
+    exp_cut, comp_cut = _regime_cuts(rets, window=window, lamb=res.lamb)
     out["regime"] = {"expansion": exp_cut, "compression": comp_cut,
-                     "basis": _regime_basis(rets, window=window)}
+                     "basis": _regime_basis(rets, window=window,
+                                            lamb=res.lamb)}
 
     # Rolling z, mirroring the detector's own gate.
-    zs = zscore(rets, 20) if len(rets) >= 20 else [0.0] * len(rets)
+    zs = (zscore(rets, res.z_window) if len(rets) >= res.z_window
+          else [0.0] * len(rets))
     if len(zs) < len(rets):
         zs = [0.0] * (len(rets) - len(zs)) + list(zs)
 
@@ -731,7 +859,7 @@ def chart_context(closes, candles=None, window=REGIME_WINDOW):
     # ending on bar index i. So ratios[k] belongs to bar `window+k`, not
     # `window+k+1`. Anchoring one higher shifted every band a bar to the
     # right and dropped the final ratio entirely: 239 of 240 populated.
-    ratios = _vol_ratio_series(rets, window=window)
+    ratios = _vol_ratio_series(rets, window=window, lamb=res.lamb)
     ratio_by_idx = {}
     for k, v in enumerate(ratios):
         ratio_by_idx[window + k] = v

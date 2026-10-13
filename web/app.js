@@ -1350,14 +1350,28 @@
     function regCaption(c) {
       if (!c || !c.series || !c.series.length) return "";
       var r = c.regime || {};
+      var rs = c.resolution || {};
       var flagged = c.series.filter(function (x) { return x.anomaly; }).length;
       var state = r.basis === "estimated"
         ? "cuts p95/p05 = " + (r.expansion || 0).toFixed(2) + " / " +
           (r.compression || 0).toFixed(2) + " (estimated)"
         : "cuts " + (r.expansion || 0).toFixed(2) + " / " +
           (r.compression || 0).toFixed(2) + " (FALLBACK constants)";
+      // State the interval the bar-counted windows were counted in. On a
+      // daily chart a "60-bar window" is a quarter, not an hour, and the
+      // reader cannot work that out from the picture.
+      var win = "";
+      if (rs.regime_window_bars != null) {
+        win = " · " + (rs.label || c.tf || "") + " bars, " +
+          rs.regime_window_bars + "-bar window";
+        if (rs.ewma_half_life_hours != null) {
+          var hl = rs.ewma_half_life_hours;
+          win += " · vol half-life " +
+            (hl >= 48 ? (hl / 24).toFixed(0) + "d" : hl.toFixed(1) + "h");
+        }
+      }
       return "<span class='dim'>regime strip: red = expansion, blue = " +
-        "compression · " + esc(state) + " · spike cut " +
+        "compression · " + esc(state) + esc(win) + " · spike cut " +
         (c.cut_z || 0).toFixed(2) + " sigma · " + flagged +
         " flagged bar(s)" +
         (c.kurtosis != null ? " · kurtosis " + (c.kurtosis).toFixed(2) : "") +
@@ -1446,45 +1460,43 @@
           if (h) h.innerHTML = "";
         });
 
-      // Regime + anomaly context. 1m only: the regime window (60) and the z
-      // window (20) are bar counts, so on daily bars they would mean 60 days
-      // and 20 days and the strip would be answering a different question
-      // than the thresholds behind it were asked. Refuse rather than lie --
-      // and the refusal is visible in the caption rather than silent.
-      if (used === "1m") {
-        api("GET", "/api/chart_context?symbol=" + encodeURIComponent(sym) +
-            "&limit=" + encodeURIComponent(lim))
-          .then(function (c) {
-            if (used !== tf) return;      // a slower response lost the race
-            reg = (c && c.series && c.series.length) ? c : null;
-            var host = document.getElementById("c-regime");
-            if (host) host.innerHTML = reg ? regCaption(reg) : "";
-            render();
-          })
-          .catch(function () {
-            reg = null;
-            var h2 = document.getElementById("c-regime");
-            if (h2) h2.innerHTML = "";
-          });
-      } else {
-        reg = null;
-        var h3 = document.getElementById("c-regime");
-        if (h3) {
-          h3.innerHTML = "<span class='dim'>regime strip: 1m only — " +
-            "the thresholds are per-minute. Not shown on " + esc(used) +
-            ".</span>";
-        }
-      }
+      // Regime + anomaly context, at whatever resolution is on screen.
+      //
+      // This previously refused tf=1d outright, on the reasoning that a
+      // 60-bar regime window meant "one hour" and would become "three
+      // months". That ambiguity was real but the refusal was the wrong
+      // response: the window is a bar count and means 60 bars of whatever
+      // is loaded, which is a legitimate question at either resolution.
+      //
+      // The engine now reports the interval it counted in -- the windows,
+      // and the EWMA half-life in both bars and wall-clock -- so the
+      // caption states the basis instead of the panel deciding for the
+      // reader which question is being asked.
+      api("GET", "/api/chart_context?symbol=" + encodeURIComponent(sym) +
+          "&tf=" + encodeURIComponent(used) +
+          "&limit=" + encodeURIComponent(lim))
+        .then(function (c) {
+          if (used !== tf) return;      // a slower response lost the race
+          reg = (c && c.series && c.series.length) ? c : null;
+          var host = document.getElementById("c-regime");
+          if (host) host.innerHTML = reg ? regCaption(reg) : "";
+          render();
+        })
+        .catch(function () {
+          reg = null;
+          var h2 = document.getElementById("c-regime");
+          if (h2) h2.innerHTML = "";
+        });
 
       var q0 = raw[0];
-          var o0 = q0.o != null ? q0.o : q0.open;
-          var totV = vols.reduce(function (a, b) { return a + b; }, 0);
-          document.getElementById("qp").innerHTML =
-            "<div class='quote-cell'><div class='k'>Last</div><div class='v' id='qp-last'>" + num(last) + "</div></div>" +
-            "<div class='quote-cell'><div class='k'>Chg%</div><div class='v " + (pct >= 0 ? "up" : "down") + "'>" +
-            (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%</div></div>" +
-            "<div class='quote-cell'><div class='k'>Open</div><div class='v'>" + num(o0) + "</div></div>" +
-            "<div class='quote-cell'><div class='k'>High</div><div class='v'>" + num(hi) + "</div></div>" +
+      var o0 = q0.o != null ? q0.o : q0.open;
+      var totV = vols.reduce(function (a, b) { return a + b; }, 0);
+      document.getElementById("qp").innerHTML =
+        "<div class='quote-cell'><div class='k'>Last</div><div class='v' id='qp-last'>" + num(last) + "</div></div>" +
+        "<div class='quote-cell'><div class='k'>Chg%</div><div class='v " + (pct >= 0 ? "up" : "down") + "'>" +
+        (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%</div></div>" +
+        "<div class='quote-cell'><div class='k'>Open</div><div class='v'>" + num(o0) + "</div></div>" +
+        "<div class='quote-cell'><div class='k'>High</div><div class='v'>" + num(hi) + "</div></div>" +
             "<div class='quote-cell'><div class='k'>Low</div><div class='v'>" + num(lo) + "</div></div>" +
             "<div class='quote-cell'><div class='k'>Volume</div><div class='v'>" + num(totV, 0) + "</div></div>" +
             "<div class='quote-cell'><div class='k'>Candles</div><div class='v'>" + raw.length + "</div></div>";

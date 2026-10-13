@@ -2449,17 +2449,16 @@ class Router:
             return _err(h, "candles failed: {}".format(e), 500)
 
     def _chart_context(self, conn, h, qs):
-        """Per-bar regime + anomaly flags for the 1m chart.
+        """Per-bar regime + anomaly flags for the chart.
 
         Separate from /api/anomalies, which is a cross-symbol screener --
         "which instruments look unusual right now" -- and cannot answer
         "what was the regime on the bar under the cursor".
 
-        1m only, deliberately. The regime window and the z window are both
-        bar counts, so on daily bars they would mean 60 days and 20 days:
-        a different question from the one these thresholds answer. Serving
-        tf=1d from here would pair daily bars with 1m-shaped constants and
-        report the result as if it meant something.
+        Reads the same table /api/candles serves for the same `tf`, through
+        the same map, so the candles and the context can never describe
+        different series. This used to hardcode candles_1m while the chart
+        already served candles_1d for a daily symbol.
         """
         symbol = (qs.get("symbol", [""])[0] or "").strip()
         if not symbol:
@@ -2469,24 +2468,46 @@ class Router:
         except (TypeError, ValueError):
             limit = 200
         limit = max(30, min(limit, 2000))
+
+        tf = (qs.get("tf", ["1m"])[0] or "1m").strip().lower()
+        table = _CANDLE_TABLES.get(tf, "candles_1m")
+        resolved = tf if tf in _CANDLE_TABLES else "1m"
+
         try:
             rows = conn.execute(
-                "SELECT ts, open, high, low, close, volume FROM candles_1m"
-                " WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
+                "SELECT ts, open, high, low, close, volume FROM "
+                + table + " WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
                 (symbol, limit)).fetchall()
             candles = [_row_to_dict(r) for r in rows][::-1]
         except Exception as e:
             return _err(h, "chart context failed: {}".format(e), 500)
         if not candles:
-            return _send_json(h, {"symbol": symbol, "n": 0, "series": [],
-                                  "basis": "no-data"})
+            # Same shape as a populated response. An earlier version returned
+            # a short dict here, so a client reading `regime.basis` worked
+            # for a symbol with data and raised KeyError for one without --
+            # the failure arriving only on symbols an operator was least
+            # likely to have tested.
+            try:
+                from engines.anomaly import get_resolution
+                res_desc = get_resolution(resolved).describe()
+            except Exception:
+                res_desc = {"name": resolved}
+            return _send_json(h, {
+                "symbol": symbol, "n": 0, "series": [],
+                "basis": "no-data", "tf": resolved, "table": table,
+                "resolution": res_desc, "kurtosis": None, "cut_z": None,
+                "n_threshold": 0,
+                "regime": {"expansion": None, "compression": None,
+                           "basis": "no-data"},
+            })
         try:
             from engines.anomaly import chart_context
             ctx = chart_context([c.get("close") for c in candles],
-                                candles=candles)
+                                candles=candles, tf=resolved)
         except Exception as e:
             return _err(h, "chart context failed: {}".format(e), 500)
         ctx["symbol"] = symbol
+        ctx["table"] = table
         return _send_json(h, ctx)
 
     def _chart_position(self, conn, h, qs):
