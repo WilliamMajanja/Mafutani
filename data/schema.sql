@@ -154,6 +154,37 @@ CREATE TABLE IF NOT EXISTS candles_1m (
 );
 CREATE INDEX IF NOT EXISTS idx_candles_sym_ts ON candles_1m(symbol, ts);
 
+-- Daily bars.
+--
+-- These are NOT a substitute for, and must never be loaded into,
+-- candles_1m. Everything downstream is resolution-aware in ways that are
+-- easy to get wrong: engines/backtest.py annualises with sqrt(252*390),
+-- which is a 1-minute figure; the indicators are parameterised per bar; and
+-- a daily bar labelled as a minute bar would make every return, every
+-- volatility figure and every significance test wrong in a direction that
+-- looks entirely plausible.
+--
+-- They exist because 42 of this deployment's symbols -- equities,
+-- commodities and FX -- have no free 1-minute source. Yahoo carries years
+-- of daily OHLCV and only minutes of intraday, so daily is what real data
+-- actually means for them. Storing it at its true resolution is the honest
+-- option; expanding it into fabricated minutes is what this table exists to
+-- make unnecessary.
+--
+-- `ts` is the session open, in epoch seconds UTC, matching candles_1m.
+CREATE TABLE IF NOT EXISTS candles_1d (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL REFERENCES symbols(symbol) ON DELETE CASCADE,
+  ts     INTEGER NOT NULL,
+  open   REAL NOT NULL,
+  high   REAL NOT NULL,
+  low    REAL NOT NULL,
+  close  REAL NOT NULL,
+  volume REAL NOT NULL DEFAULT 0,
+  UNIQUE (symbol, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_candles_1d_sym_ts ON candles_1d(symbol, ts);
+
 -- Covering index for the volume aggregation behind /api/screener
 -- (SUM(volume) GROUP BY symbol). Without `volume` in the index SQLite
 -- must read every one of the ~1.5M rows; with it the aggregation is
