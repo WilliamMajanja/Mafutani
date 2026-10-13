@@ -97,6 +97,11 @@ _VOL_CACHE = {"ts": 0.0, "vols": {}, "lock": threading.Lock()}
 # requests into one read.
 VOL_CACHE_TTL = 5.0  # seconds
 
+# tf -> table, for /api/candles. A fixed map rather than a formatted string
+# so no user-supplied value can ever reach the SQL text. Adding a resolution
+# means adding a row here, never a new string-building path.
+_CANDLE_TABLES = {"1m": "candles_1m", "1d": "candles_1d"}
+
 
 def refresh_symbol_volume(conn):
     """Rebuild the symbol_volume summary from candles_1m.
@@ -2410,12 +2415,32 @@ class Router:
         except (TypeError, ValueError):
             limit = 200
         limit = max(1, min(limit, 5000))
+
+        # Resolution routing.
+        #
+        # `tf` was already being sent by the frontend (web/app.js) and was
+        # being silently ignored, so every chart read candles_1m and the
+        # daily bars fetched into candles_1d were invisible. This is a bug,
+        # not a feature request: the parameter existed on one side only.
+        #
+        # The table name comes from a fixed map and is never interpolated
+        # from user input -- a `tf` of `1m; DROP TABLE candles_1m` must not
+        # reach the query. An unrecognised tf falls back to 1m rather than
+        # erroring, because a chart that renders at the wrong resolution is
+        # recoverable and one that fails to render is not; the response
+        # reports the resolution actually used so the mismatch is visible.
+        tf = (qs.get("tf", ["1m"])[0] or "1m").strip().lower()
+        table = _CANDLE_TABLES.get(tf, "candles_1m")
+        resolved = tf if tf in _CANDLE_TABLES else "1m"
+
         try:
             rows = conn.execute(
-                "SELECT symbol, ts, open, high, low, close, volume FROM candles_1m"
-                " WHERE symbol = ? ORDER BY ts DESC LIMIT ?", (symbol, limit)).fetchall()
+                "SELECT symbol, ts, open, high, low, close, volume FROM "
+                + table + " WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
+                (symbol, limit)).fetchall()
             out = [_row_to_dict(r) for r in rows][::-1]
-            return _send_json(h, {"symbol": symbol, "candles": out})
+            return _send_json(h, {"symbol": symbol, "tf": resolved,
+                                  "table": table, "candles": out})
         except Exception as e:
             return _err(h, "candles failed: {}".format(e), 500)
 

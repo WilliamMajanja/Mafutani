@@ -1305,6 +1305,8 @@
       "<label><input type='checkbox' id='ov-vw' checked style='width:auto'> VWAP</label>" +
       "<label><input type='checkbox' id='ov-bb' style='width:auto'> Bollinger(20)</label>" +
       "<label><input type='checkbox' id='ov-rsi' checked style='width:auto'> RSI(14)</label>" +
+      "<label>TF <select id='c-tf'><option value='1m'>1m</option>" +
+      "<option value='1d'>1d</option></select></label>" +
       "<label>Limit <input id='c-lim' type='number' value='200' style='width:90px'></label>" +
       "<button id='c-go' type='button'>Reload</button></div>" +
       "<canvas class='chart' id='cv'></canvas><canvas class='rsi' id='rsi' style='margin-top:8px'></canvas>" +
@@ -1343,18 +1345,35 @@
     }
     function load() {
       var lim = document.getElementById("c-lim").value || 200;
+      var tf = (document.getElementById("c-tf") || {}).value || "1m";
       document.getElementById("cstats").textContent = "loading…";
-      api("GET", "/api/candles?symbol=" + encodeURIComponent(sym) + "&tf=1m&limit=" + encodeURIComponent(lim))
+      api("GET", "/api/candles?symbol=" + encodeURIComponent(sym) +
+          "&tf=" + encodeURIComponent(tf) + "&limit=" + encodeURIComponent(lim))
         .then(function (data) {
           raw = data.candles || data.rows || [];
           closes = raw.map(clOf); vols = raw.map(volOf);
-          if (!raw.length) { document.getElementById("cstats").textContent = "no candles for " + sym; render(); return; }
+          if (!raw.length) {
+            document.getElementById("cstats").textContent =
+              "no " + tf + " candles for " + sym +
+              (tf === "1d" ? " (daily history is only loaded for symbols " +
+                "covered by scripts/fetch_yahoo.py)" : "");
+            render(); return;
+          }
+          // Echo the resolution the API actually used. If it differs from
+          // what was asked for, the chart is showing the wrong timeframe
+          // and the operator should know that rather than infer it.
+          var used = data.tf || tf;
+          if (used !== tf) {
+            document.getElementById("cerr").innerHTML =
+              "requested " + esc(tf) + ", API served " + esc(used);
+          }
           var first = closes[0], last = closes[closes.length - 1];
           var hi = Math.max.apply(null, raw.map(function (c) { return c.h != null ? c.h : c.high; }));
           var lo = Math.min.apply(null, raw.map(function (c) { return c.l != null ? c.l : c.low; }));
           var chg = last - first, pct = first ? chg / first * 100 : 0;
           var avgV = vols.reduce(function (a, b) { return a + b; }, 0) / vols.length;
-          document.getElementById("cstats").innerHTML = "n=" + raw.length +
+          document.getElementById("cstats").innerHTML = "tf=" + esc(used) +
+            " · n=" + raw.length +
             " · last=" + num(last) + " · chg=" + (chg >= 0 ? "+" : "") + num(chg) +
             " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · range " + num(lo) + "–" + num(hi) +
             " · avgVol=" + num(avgV, 0);
