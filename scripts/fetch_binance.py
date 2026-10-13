@@ -54,6 +54,7 @@ already stored for that symbol rather than re-downloading.
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import time
 import urllib.error
@@ -174,6 +175,14 @@ def resolve_range(conn, symbol, days, start, end):
     Resumability is the reason this reads the database: re-running a
     backfill that was interrupted at 40% should fetch the remaining 60%,
     not start over.
+
+    The trap, which bit once already: when the database already holds bars
+    for `symbol` and the caller gave no explicit `--start`, this continues
+    *forward* from the newest stored bar. So `--days 90` against a
+    populated database silently means "fetch whatever is missing since the
+    last row", not "give me 90 days of history" -- it fetched 16 days and
+    reported it as 90. Pass `--start` to mean an absolute window, which is
+    the only way to backfill deliberately.
     """
     now = int(time.time())
     if start:
@@ -228,12 +237,24 @@ def ingest(conn, symbol, rows):
         batch.append((symbol, r["ts"], r["open"], r["high"], r["low"],
                       r["close"], r["volume"]))
     if batch:
-        conn.executemany(
-            "INSERT OR REPLACE INTO candles_1m"
-            " (symbol, ts, open, high, low, close, volume)"
-            " VALUES (?,?,?,?,?,?,?)", batch)
-        conn.commit()
-        written = len(batch)
+        # Retried on lock contention with the live feed: a 259k-row insert is
+        # long enough to collide with a server tick, and losing the whole
+        # backfill to that would be absurd.
+        last = None
+        for attempt in range(20):
+            try:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO candles_1m"
+                    " (symbol, ts, open, high, low, close, volume)"
+                    " VALUES (?,?,?,?,?,?,?)", batch)
+                conn.commit()
+                written = len(batch)
+                break
+            except sqlite3.OperationalError as e:
+                last = e
+                time.sleep(1.0 + attempt * 0.5)
+        else:
+            raise last
     return written, bad
 
 
@@ -284,6 +305,12 @@ def main():
     ap.add_argument("--prune-stale", action="store_true",
                     help="delete this symbol's rows older than the fetched "
                          "window, so real bars replace synthetic ones")
+    ap.add_argument("--as", dest="alias", action="append", default=[],
+                    metavar="PAIR=SYMBOL",
+                    help="store PAIR's bars under SYMBOL instead of under "
+                         "the pair's own name. Use when the app's symbol "
+                         "differs from the exchange pair -- the app trades "
+                         "BTCUSD, the exchange lists BTCUSDT. Repeatable.")
     ap.add_argument("--yes", action="store_true",
                     help="required with --prune-stale, because it deletes")
     args = ap.parse_args()
@@ -308,17 +335,40 @@ def main():
             pass
     conn = connect(target)
 
+    # alias: exchange pair -> symbol name to write it under.
+    #
+    # Spec is PAIR=SYMBOL, read in the order that matches the positional
+    # argument: you fetch a pair and say where it lands. The first version
+    # documented SYMBOL=PAIR and then read it in that order, so
+    # `--as BTCUSD` after `BTCUSDT` meant "fetch BTCUSD's bars, store them
+    # under BTCUSDT" -- silently backwards, and it failed loudly rather
+    # than writing wrong data, which is the only reason it was caught.
+    alias = {}
+    for spec in args.alias:
+        if "=" not in spec:
+            print("--as needs PAIR=SYMBOL, got %r" % spec, file=sys.stderr)
+            return 2
+        pair, sym_name = spec.split("=", 1)
+        pair = pair.strip().upper()
+        sym_name = sym_name.strip().upper()
+        if not pair or not sym_name:
+            print("--as needs PAIR=SYMBOL, got %r" % spec, file=sys.stderr)
+            return 2
+        alias[pair] = sym_name
+
     try:
         for sym in args.symbols:
-            sym = sym.upper()
-            start_ts, end_ts = resolve_range(conn, sym, args.days,
+            pair = sym.upper()
+            write_as = alias.get(pair, pair)
+            start_ts, end_ts = resolve_range(conn, write_as, args.days,
                                              args.start, args.end)
             if args.limit_days:
                 start_ts = max(start_ts, end_ts - int(args.limit_days * 86400))
 
             total = max(0, end_ts - start_ts) // 60
+            label = pair if pair == write_as else "%s (as %s)" % (pair, write_as)
             print("%s: %s .. %s (~%d bars)" % (
-                sym,
+                label,
                 time.strftime("%Y-%m-%d %H:%M", time.gmtime(start_ts)),
                 time.strftime("%Y-%m-%d %H:%M", time.gmtime(end_ts)),
                 total))
@@ -332,7 +382,7 @@ def main():
             t0 = time.time()
             pages = 0
             while cursor < end_ts * 1000:
-                rows = fetch_klines(sym, cursor, end_ts * 1000,
+                rows = fetch_klines(pair, cursor, end_ts * 1000,
                                     limit=args.limit,
                                     use_app_proxy=args.use_app_proxy)
                 if not rows:
@@ -340,7 +390,7 @@ def main():
                 fresh = [r for r in rows if r["ts"] * 1000 >= cursor]
                 if not fresh:
                     break
-                report_gaps(fresh, sym)
+                report_gaps(fresh, write_as)
                 all_rows.extend(fresh)
                 pages += 1
                 nxt = fresh[-1]["ts"] * 1000 + 60000
@@ -375,19 +425,37 @@ def main():
                 _print_calendar(uniq)
                 continue
 
-            written, bad = ingest(conn, sym, uniq)
+            if write_as != pair:
+                conn.execute("INSERT OR IGNORE INTO symbols (symbol) VALUES (?)",
+                             (write_as,))
+                conn.commit()
+            written, bad = ingest(conn, write_as, uniq)
             print("  wrote %d rows (skipped %d malformed)" % (written, bad))
 
             if args.prune_stale:
                 lo = min(r["ts"] for r in uniq)
-                cur = conn.execute(
-                    "DELETE FROM candles_1m WHERE symbol = ? AND ts < ?",
-                    (sym, lo))
-                removed = cur.rowcount or 0
-                conn.commit()
-                print("  pruned %d row(s) older than %s" % (
-                    removed,
-                    time.strftime("%Y-%m-%d %H:%M", time.gmtime(lo))))
+                # The live app server holds short write locks on a feed tick,
+                # and a big DELETE can collide with one. Retry briefly rather
+                # than aborting a completed 180-day backfill over a transient
+                # lock: the fetch and the INSERT are already committed above.
+                removed = 0
+                for attempt in range(20):
+                    try:
+                        cur = conn.execute(
+                            "DELETE FROM candles_1m WHERE symbol = ? AND ts < ?",
+                            (write_as, lo))
+                        removed = cur.rowcount or 0
+                        conn.commit()
+                        break
+                    except sqlite3.OperationalError:
+                        time.sleep(1.0 + attempt * 0.5)
+                else:
+                    print("  WARNING: could not prune (db stayed locked); "
+                          "old rows for %s remain" % write_as, file=sys.stderr)
+                if removed:
+                    print("  pruned %d row(s) older than %s" % (
+                        removed,
+                        time.strftime("%Y-%m-%d %H:%M", time.gmtime(lo))))
             _print_calendar(uniq)
     finally:
         try:
