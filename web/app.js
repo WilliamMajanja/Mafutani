@@ -1300,6 +1300,7 @@
     view().innerHTML = "<h2>Chart " + esc(sym) + "</h2><div id='ticker'></div>" +
       "<div id='qp' class='quote-grid'></div>" +
       "<div id='cstats' class='kpi-l'>loading…</div>" +
+      "<div id='c-regime' class='kpi-l'></div>" +
       "<div class='row'><label><input type='checkbox' id='ov-e9' checked style='width:auto'> EMA9</label>" +
       "<label><input type='checkbox' id='ov-e21' checked style='width:auto'> EMA21</label>" +
       "<label><input type='checkbox' id='ov-vw' checked style='width:auto'> VWAP</label>" +
@@ -1311,7 +1312,27 @@
       "<button id='c-go' type='button'>Reload</button></div>" +
       "<canvas class='chart' id='cv'></canvas><canvas class='rsi' id='rsi' style='margin-top:8px'></canvas>" +
       "<div id='cerr'></div><h3>News — " + esc(sym) + "</h3><div id='cnews' class='kpi-l'>loading…</div>";
-    var closes = [], vols = [], raw = [];
+    var closes = [], vols = [], raw = [], reg = null;
+    // Caption under the regime strip. It reports the *basis*, because a
+    // threshold drawn from a fallback constant and one estimated from this
+    // instrument's own history mean very different things, and a chart that
+    // looked identical either way would hide which one it was showing.
+    function regCaption(c) {
+      if (!c || !c.series || !c.series.length) return "";
+      var r = c.regime || {};
+      var flagged = c.series.filter(function (x) { return x.anomaly; }).length;
+      var state = r.basis === "estimated"
+        ? "cuts p95/p05 = " + (r.expansion || 0).toFixed(2) + " / " +
+          (r.compression || 0).toFixed(2) + " (estimated)"
+        : "cuts " + (r.expansion || 0).toFixed(2) + " / " +
+          (r.compression || 0).toFixed(2) + " (FALLBACK constants)";
+      return "<span class='dim'>regime strip: red = expansion, blue = " +
+        "compression · " + esc(state) + " · spike cut " +
+        (c.cut_z || 0).toFixed(2) + " sigma · " + flagged +
+        " flagged bar(s)" +
+        (c.kurtosis != null ? " · kurtosis " + (c.kurtosis).toFixed(2) : "") +
+        "</span>";
+    }
     function bbArr(vals, period) {
       var up = [], dn = [], i;
       for (i = 0; i < vals.length; i++) {
@@ -1333,7 +1354,8 @@
         bands = [{ data: bb.up, color: "#8b949e" }, { data: bb.dn, color: "#8b949e" }];
       }
       try {
-        drawCandles(document.getElementById("cv"), raw, e9, e21, vw, { title: sym, bands: bands });
+        drawCandles(document.getElementById("cv"), raw, e9, e21, vw,
+          { title: sym, bands: bands, regime: reg });
         if (document.getElementById("ov-rsi").checked) {
           document.getElementById("rsi").style.display = "";
           try { drawRSI(document.getElementById("rsi"), raw); }
@@ -1377,7 +1399,37 @@
             " · last=" + num(last) + " · chg=" + (chg >= 0 ? "+" : "") + num(chg) +
             " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · range " + num(lo) + "–" + num(hi) +
             " · avgVol=" + num(avgV, 0);
-          var q0 = raw[0];
+          // Regime + anomaly context. 1m only: the regime window (60) and the z
+      // window (20) are bar counts, so on daily bars they would mean 60 days
+      // and 20 days and the strip would be answering a different question
+      // than the thresholds behind it were asked. Refuse rather than lie --
+      // and the refusal is visible in the caption rather than silent.
+      if (used === "1m") {
+        api("GET", "/api/chart_context?symbol=" + encodeURIComponent(sym) +
+            "&limit=" + encodeURIComponent(lim))
+          .then(function (c) {
+            if (used !== tf) return;      // a slower response lost the race
+            reg = (c && c.series && c.series.length) ? c : null;
+            var host = document.getElementById("c-regime");
+            if (host) host.innerHTML = reg ? regCaption(reg) : "";
+            render();
+          })
+          .catch(function () {
+            reg = null;
+            var h2 = document.getElementById("c-regime");
+            if (h2) h2.innerHTML = "";
+          });
+      } else {
+        reg = null;
+        var h3 = document.getElementById("c-regime");
+        if (h3) {
+          h3.innerHTML = "<span class='dim'>regime strip: 1m only — " +
+            "the thresholds are per-minute. Not shown on " + esc(used) +
+            ".</span>";
+        }
+      }
+
+      var q0 = raw[0];
           var o0 = q0.o != null ? q0.o : q0.open;
           var totV = vols.reduce(function (a, b) { return a + b; }, 0);
           document.getElementById("qp").innerHTML =

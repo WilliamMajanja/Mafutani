@@ -1702,6 +1702,8 @@ class Router:
             return self._analysis(conn, h, qs)
         if path == "/api/anomalies" and method == "GET":
             return self._anomalies(conn, h, qs)
+        if path == "/api/chart_context" and method == "GET":
+            return self._chart_context(conn, h, qs)
         # arbitrage scanner (crypto / fx / commodity). Auth + tier gated.
         if path == "/api/arbitrage" and method == "GET":
             return self._arbitrage(conn, h, qs)
@@ -2443,6 +2445,47 @@ class Router:
                                   "table": table, "candles": out})
         except Exception as e:
             return _err(h, "candles failed: {}".format(e), 500)
+
+    def _chart_context(self, conn, h, qs):
+        """Per-bar regime + anomaly flags for the 1m chart.
+
+        Separate from /api/anomalies, which is a cross-symbol screener --
+        "which instruments look unusual right now" -- and cannot answer
+        "what was the regime on the bar under the cursor".
+
+        1m only, deliberately. The regime window and the z window are both
+        bar counts, so on daily bars they would mean 60 days and 20 days:
+        a different question from the one these thresholds answer. Serving
+        tf=1d from here would pair daily bars with 1m-shaped constants and
+        report the result as if it meant something.
+        """
+        symbol = (qs.get("symbol", [""])[0] or "").strip()
+        if not symbol:
+            return _err(h, "symbol required")
+        try:
+            limit = int(qs.get("limit", ["200"])[0])
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(30, min(limit, 2000))
+        try:
+            rows = conn.execute(
+                "SELECT ts, open, high, low, close, volume FROM candles_1m"
+                " WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
+                (symbol, limit)).fetchall()
+            candles = [_row_to_dict(r) for r in rows][::-1]
+        except Exception as e:
+            return _err(h, "chart context failed: {}".format(e), 500)
+        if not candles:
+            return _send_json(h, {"symbol": symbol, "n": 0, "series": [],
+                                  "basis": "no-data"})
+        try:
+            from engines.anomaly import chart_context
+            ctx = chart_context([c.get("close") for c in candles],
+                                candles=candles)
+        except Exception as e:
+            return _err(h, "chart context failed: {}".format(e), 500)
+        ctx["symbol"] = symbol
+        return _send_json(h, ctx)
 
     def _screener_rows(self, conn, min_vol=0.0, max_spread=1e9,
                       exchange=None, asset_type=None, region=None):

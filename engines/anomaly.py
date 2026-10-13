@@ -54,6 +54,14 @@ RECENT_BARS = 15              # how far back the radar looks for events
 # comparable with the fallback it replaces.
 SPIKE_P = 0.995
 
+# Bars used for the EWMA-vol / trailing-std ratio. Matches _regime_cuts.
+REGIME_WINDOW = 60
+
+# Observations needed before the regime cuts are estimated rather than
+# taken from the fallback constants. Lower than MIN_TAIL_OBS on purpose:
+# see _regime_cuts.
+MIN_REGIME_OBS = 150
+
 
 def _f(x, default=0.0):
     try:
@@ -168,7 +176,13 @@ def _regime_cuts(rets, window=60):
         except ImportError:
             return REGIME_RATIO, COMPRESS_RATIO
     series = _vol_ratio_series(rets, window=window)
-    if len(series) < MIN_TAIL_OBS:
+    # 150, not MIN_TAIL_OBS (400). The vol ratio is a far smoother statistic
+    # than a return, so its 5th and 95th percentiles settle well before 400
+    # observations -- and until they do, every bar falls inside the fallback
+    # band of 0.55..2.0 and the regime strip is blank. Measured on 300 real
+    # BTC bars the ratios span only 0.63..1.53, so the fallback band is
+    # wider than the data's entire range and can never classify anything.
+    if len(series) < MIN_REGIME_OBS:
         return REGIME_RATIO, COMPRESS_RATIO
     s = sorted(series)
     return (empirical_quantile(s, 0.95) or REGIME_RATIO,
@@ -178,10 +192,7 @@ def _regime_cuts(rets, window=60):
 def _regime_basis(rets, window=60):
     """Whether the cuts came from data or the fallback constants."""
     return ("estimated" if len(_vol_ratio_series(rets, window=window))
-            >= _MIN_RATIO_OBS else "fallback")
-
-
-_MIN_RATIO_OBS = 400
+            >= MIN_REGIME_OBS else "fallback")
 
 
 def _velocity(rets, pct):
@@ -636,4 +647,116 @@ def _scan_window(symbol, vals, candles=None, quote=None, meta=None,
     score = min(100.0, sum(weights.get(a["severity"], 0.0) for a in out["anomalies"]))
     out["anomaly_score"] = round(score, 1)
     out["anomalies"] = out["anomalies"][:6]
+    return out
+
+# --------------------------------------------------------------- chart context
+# Per-bar regime and anomaly flags for a chart, over a whole visible series.
+#
+# Why this is not just `detect_anomalies`
+# ---------------------------------------
+# `detect_anomalies` sweeps only the trailing RECENT_BARS (15) and keeps the
+# most recent sighting of each *kind*, because a radar is a "what is
+# happening now" instrument. A 200-bar chart needs the opposite: a value for
+# every bar on screen, so the regime can be read as a history rather than
+# inferred from the last quarter of an hour.
+#
+# The thresholds come from the FULL series, never from the visible window.
+# That distinction is the entire point of `engines/tails`: a percentile
+# needs hundreds of observations, so estimating from the bars on screen
+# would silently fall back to the Gaussian constants. `basis` is reported
+# per-series so the caller can say which happened.
+#
+# Resolution: this is written for 1-minute bars and is only wired to the 1m
+# chart. The regime window (60) and the z window (20) are bar counts, so on
+# daily data they mean 60 days and 20 days -- not wrong, but a different
+# question from the one the 1m thresholds answer.
+def chart_context(closes, candles=None, window=REGIME_WINDOW):
+    """Regime + anomaly flags for each bar. Cheap enough for a few hundred.
+
+    Returns:
+      {"n", "basis", "kurtosis", "cut_z", "n_threshold",
+       "regime": {"expansion", "compression", "basis"},
+       "series": [{"ts", "ret", "z", "ratio", "state", "anomaly", "severity"}]}
+
+    `state` is "expansion" | "compression" | None (inside the band).
+    `anomaly` is the anomaly kind for that bar, or None.
+    """
+    vals = [_f(c) for c in (closes or [])]
+    vals = [x for x in vals if x is not None and x > 0]
+    n = len(vals)
+    out = {"n": n, "basis": "fallback:no-history", "kurtosis": None,
+           "cut_z": SPIKE_Z, "n_threshold": 0, "series": [],
+           "regime": {"expansion": REGIME_RATIO,
+                      "compression": COMPRESS_RATIO,
+                      "basis": "fallback"}}
+    if n < 25:
+        return out
+
+    ts_list = []
+    for c in (candles or []):
+        ts_list.append(c.get("ts") if isinstance(c, dict) else None)
+
+    rets = _rets(vals)
+
+    # Thresholds from the whole visible series, not a trailing window.
+    try:
+        from engines.tails import spike_threshold as _thr
+    except ImportError:  # pragma: no cover - direct-path execution
+        try:
+            from tails import spike_threshold as _thr
+        except ImportError:
+            _thr = None
+    if _thr is not None:
+        t = _thr(rets, fallback=SPIKE_Z, p=SPIKE_P)
+        if t:
+            out["basis"] = t.get("basis")
+            out["cut_z"] = float(t.get("threshold") or SPIKE_Z)
+            out["kurtosis"] = t.get("kurtosis")
+            out["n_threshold"] = t.get("n") or 0
+
+    exp_cut, comp_cut = _regime_cuts(rets, window=window)
+    out["regime"] = {"expansion": exp_cut, "compression": comp_cut,
+                     "basis": _regime_basis(rets, window=window)}
+
+    # Rolling z, mirroring the detector's own gate.
+    zs = zscore(rets, 20) if len(rets) >= 20 else [0.0] * len(rets)
+    if len(zs) < len(rets):
+        zs = [0.0] * (len(rets) - len(zs)) + list(zs)
+
+    # Vol-ratio series is indexed from the first bar with a full window, so
+    # align it to the bars rather than assuming it starts at zero.
+    #
+    # `_vol_ratio_series` loops `for i in range(window, len(rets)+1)` and
+    # takes rets[i-window:i], whose LAST element is rets[i-1] -- the return
+    # ending on bar index i. So ratios[k] belongs to bar `window+k`, not
+    # `window+k+1`. Anchoring one higher shifted every band a bar to the
+    # right and dropped the final ratio entirely: 239 of 240 populated.
+    ratios = _vol_ratio_series(rets, window=window)
+    ratio_by_idx = {}
+    for k, v in enumerate(ratios):
+        ratio_by_idx[window + k] = v
+
+    cut_z = out["cut_z"]
+    series = []
+    for i, r in enumerate(rets):
+        bar_idx = i + 1
+        z = zs[i] if i < len(zs) else 0.0
+        ratio = ratio_by_idx.get(bar_idx)
+        state = None
+        if ratio is not None:
+            if ratio >= exp_cut:
+                state = "expansion"
+            elif ratio <= comp_cut:
+                state = "compression"
+        anomaly = None
+        severity = None
+        if abs(z) >= cut_z and abs(r) * 100.0 >= SPIKE_MIN_PCT:
+            anomaly = "price_spike"
+            severity = "high" if abs(z) >= max(4.0, cut_z + 1.0) else "medium"
+        series.append({
+            "ts": ts_list[bar_idx] if bar_idx < len(ts_list) else None,
+            "ret": r, "z": z, "ratio": ratio, "state": state,
+            "anomaly": anomaly, "severity": severity,
+        })
+    out["series"] = series
     return out

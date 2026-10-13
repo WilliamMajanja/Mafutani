@@ -145,6 +145,44 @@ function drawCandles(canvas, candles, ema9, ema21, vwap, opts) {
     ctx.closePath(); ctx.fill();
   });
 
+  // -- volatility regime strip ------------------------------------------
+  //
+  // A band along the bottom of the price pane: red where the EWMA/stdev
+  // ratio is in this instrument's top 5% (expansion), blue where it is in
+  // the bottom 5% (compression), empty elsewhere. The cut is *estimated per
+  // instrument*, so it is not comparable to a fixed number -- the caption
+  // reports which basis produced it.
+  //
+  // save/restore, because this sets globalAlpha and must not leak it into
+  // anything drawn afterwards.
+  var reg = opts.regime;
+  if (reg && reg.series && reg.series.length) {
+    var STRIP = 9, sy = PH + 2;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    for (var rb = 0; rb < n; rb++) {
+      var st = (reg.series[rb] || {}).state;
+      if (!st) continue;
+      ctx.fillStyle = st === "expansion" ? "#ff5470" : "#41c7ff";
+      ctx.fillRect(x(rb) - step / 2, sy, Math.max(1, step), STRIP);
+    }
+    ctx.restore();
+  }
+
+  // -- anomaly flags -----------------------------------------------------
+  //
+  // A tick above the bar that tripped the detector, so the operator sees
+  // *where* rather than only being told something fired. Colour is
+  // severity, not direction: a spike up and a spike down are both events.
+  if (reg && reg.series) {
+    for (var an = 0; an < n; an++) {
+      var pt = reg.series[an] || {};
+      if (!pt.anomaly) continue;
+      ctx.fillStyle = pt.severity === "high" ? "#ff5470" : "#ffeb3b";
+      ctx.fillRect(x(an) - 1, y(h(candles[an])) - 13, 2, 7);
+    }
+  }
+
   // last-price tag
   var last = cl(candles[n - 1]), ly = y(last);
   ctx.setLineDash([4, 3]);
