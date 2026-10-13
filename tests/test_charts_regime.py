@@ -174,6 +174,119 @@ class TestRegimeOverlay(unittest.TestCase):
                          "globalAlpha leaked at %s" % d["alphaAfter"])
 
 
+class TestPositionOverlay(unittest.TestCase):
+    """Entry line + profit/loss shading.
+
+    Direction is the thing that is easy to get backwards and hard to see in
+    a screenshot: a *profitable short* is falling price, so its shading must
+    follow the short, not the price. The colour assertions below pin that
+    rather than trusting a visual check.
+    """
+
+    def _drive(self, position):
+        drv = r"""
+        const calls = [];
+        function mkctx() {
+          const c = {
+            canvas: {
+              width: 900, height: 400, clientWidth: 900, clientHeight: 400,
+              getContext(k) { return k === '2d' ? c : null; },
+              addEventListener() {}, removeEventListener() {},
+              setAttribute() {}, style: {},
+              getBoundingClientRect() {
+                return { left: 0, top: 0, width: 900, height: 400 };
+              },
+            },
+            save() { calls.push({ op: 'save' }); },
+            restore() { calls.push({ op: 'restore' }); },
+            scale() {}, clearRect() {},
+            fillRect(...a) { calls.push({ op: 'fillRect', a, fill: this._f }); },
+            strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
+            closePath() {}, fill() {}, stroke() {},
+            setLineDash() {}, fillText(t) { calls.push({ op: 'text', t }); },
+            measureText: () => ({ width: 40 }),
+            set fillStyle(v) { this._f = v; }, get fillStyle() { return this._f; },
+            set strokeStyle(v) { this._s = v; }, get strokeStyle() { return this._s; },
+            set lineWidth(v) { this._w = v; }, get lineWidth() { return this._w; },
+            set font(v) { this._ft = v; }, get font() { return this._ft; },
+          };
+          return c;
+        }
+        const ctx = mkctx();
+        global.window = { devicePixelRatio: 1 };
+        global.document = { getElementById: () => ctx.canvas };
+        const mod = require(require('path').resolve(process.argv[2]));
+        const drawCandles = mod.drawCandles;
+
+        const c = [];
+        let p = 100;
+        for (let i = 0; i < 200; i++) { p *= 1.001; c.push({ o: p, h: p * 1.01, l: p * 0.99, c: p, v: 10 }); }
+        drawCandles(ctx.canvas, c, null, null, null, { position: POSITION });
+        console.log(JSON.stringify({
+          // The overlay shades at alpha 0.07; candle bodies use 0.35.
+          // Matching on hue alone matched every candle, so "nothing was
+          // drawn" assertions failed against the candles themselves.
+          shaded: calls.filter(x => x.op === 'fillRect' &&
+            /rgba\([^)]*,0\.07\)/.test(String(x.fill || ''))).map(x => x.fill),
+          texts: calls.filter(x => x.op === 'text').map(x => x.t),
+          depth: calls.filter(x => x.op === 'save').length -
+                 calls.filter(x => x.op === 'restore').length,
+        }));
+        """
+        pos_json = json.dumps(position)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(drv.replace("POSITION", pos_json))
+            path = f.name
+        try:
+            p = subprocess.run(
+                ["node", path, os.path.join(ROOT, "web", "charts.js")],
+                capture_output=True, text=True, cwd=ROOT, timeout=60)
+            self.assertEqual(p.returncode, 0,
+                             "position overlay threw:\n%s" % p.stderr[-1200:])
+            line = [l for l in p.stdout.splitlines() if l.startswith("{")]
+            return json.loads(line[-1])
+        finally:
+            os.unlink(path)
+
+    def test_long_shades_green_above_the_entry(self):
+        d = self._drive({"qty": 1.0, "avg_price": 100.0})
+        self.assertTrue(any("43,255,163" in s for s in d["shaded"]),
+                        "a long was not shaded green: %r" % d["shaded"])
+
+    def test_short_shades_red(self):
+        """The direction that is easy to invert: a short shades by position,
+        not by price direction."""
+        d = self._drive({"qty": -1.0, "avg_price": 100.0})
+        self.assertTrue(any("255,84,112" in s for s in d["shaded"]),
+                        "a short was not shaded red: %r" % d["shaded"])
+
+    def test_entry_line_is_labelled_with_side(self):
+        long_d = self._drive({"qty": 1.0, "avg_price": 100.0})
+        short_d = self._drive({"qty": -1.0, "avg_price": 100.0})
+        self.assertTrue(any("LONG" in t for t in long_d["texts"]))
+        self.assertTrue(any("SHORT" in t for t in short_d["texts"]))
+
+    def test_no_state_leak_from_the_shading(self):
+        d = self._drive({"qty": 1.0, "avg_price": 100.0})
+        self.assertEqual(d["depth"], 0, "save/restore unbalanced")
+
+    def test_entry_price_off_screen_draws_nothing(self):
+        """An entry far outside the visible range must not draw a line
+        across the chart at the wrong place."""
+        d = self._drive({"qty": 1.0, "avg_price": 999999.0})
+        self.assertEqual(d["shaded"], [], "shaded outside the visible range")
+        self.assertFalse(any("LONG" in t for t in d["texts"]))
+
+    def test_no_position_draws_nothing(self):
+        d = self._drive(None)
+        self.assertEqual(d["shaded"], [])
+
+    def test_zero_avg_price_draws_nothing(self):
+        """A flat row with avg_price 0 must not divide or draw at y=0."""
+        d = self._drive({"qty": 0.0, "avg_price": 0.0})
+        self.assertEqual(d["shaded"], [])
+
+
 class TestOverlayIsOptional(unittest.TestCase):
     def test_draws_without_a_regime(self):
         """Backwards compatibility: the older call shapes must still work.

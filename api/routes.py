@@ -1704,6 +1704,8 @@ class Router:
             return self._anomalies(conn, h, qs)
         if path == "/api/chart_context" and method == "GET":
             return self._chart_context(conn, h, qs)
+        if path == "/api/chart_position" and method == "GET":
+            return self._chart_position(conn, h, qs)
         # arbitrage scanner (crypto / fx / commodity). Auth + tier gated.
         if path == "/api/arbitrage" and method == "GET":
             return self._arbitrage(conn, h, qs)
@@ -2486,6 +2488,86 @@ class Router:
             return _err(h, "chart context failed: {}".format(e), 500)
         ctx["symbol"] = symbol
         return _send_json(h, ctx)
+
+    def _chart_position(self, conn, h, qs):
+        """Position + cost context for one symbol, for the chart overlay.
+
+        Deliberately narrow rather than reusing /api/portfolio. That
+        endpoint returns the whole book and needs a session; the chart
+        needs one row and its arithmetic. Fetching 30 positions to draw one
+        entry line is the same mistake /api/quotes fixed for the asset
+        table.
+
+        Returns null `position` when flat -- a flat book is a normal state,
+        not an error, and the caller draws nothing rather than a zero line.
+        """
+        symbol = (qs.get("symbol", [""])[0] or "").strip().upper()
+        if not symbol:
+            return _err(h, "symbol required")
+        pos = None
+        try:
+            rows = conn.execute(
+                "SELECT symbol, qty, avg_price, realized_pnl"
+                " FROM positions WHERE symbol = ?", (symbol,)).fetchall()
+            if rows:
+                r = rows[0]
+                qty = float(r["qty"] or 0.0)
+                # A zero-quantity row is flat, not a position. Reporting it
+                # as one draws an entry line at avg_price 0 (or a stale
+                # average) and labels it "LONG 0", which reads as an open
+                # position when the book is empty.
+                if qty:
+                    pos = {"symbol": r["symbol"],
+                           "qty": qty,
+                           "avg_price": float(r["avg_price"] or 0.0),
+                           "realized_pnl": float(r["realized_pnl"] or 0.0)}
+        except Exception:
+            pos = None
+
+        # Last traded price from the 1m tape. Fall back to the newest quote
+        # row so the P&L is not pinned to a stale bar when the feed is
+        # quiet.
+        last = None
+        try:
+            row = conn.execute(
+                "SELECT close FROM candles_1m WHERE symbol = ?"
+                " ORDER BY ts DESC LIMIT 1", (symbol,)).fetchone()
+            if row and row["close"]:
+                last = float(row["close"])
+        except Exception:
+            pass
+        if last is None:
+            try:
+                row = conn.execute(
+                    "SELECT last FROM quotes_l1 WHERE symbol = ?"
+                    " ORDER BY ts DESC LIMIT 1", (symbol,)).fetchone()
+                if row and row["last"]:
+                    last = float(row["last"])
+            except Exception:
+                pass
+
+        unreal = None
+        if pos and pos["avg_price"] and last is not None:
+            unreal = (last - pos["avg_price"]) * pos["qty"]
+
+        # Round-trip cost for this instrument's tier and mode. This is the
+        # number that decides whether a signal is a trade: a dislocation of
+        # a few basis points against a ~70 bps round trip is not a small
+        # edge, it is a reason not to trade.
+        cost_bps = None
+        try:
+            tier = (qs.get("tier", ["Free"])[0] or "Free")
+            mode = (qs.get("mode", ["paper"])[0] or "paper").strip().lower()
+            if mode not in ("paper", "live"):
+                mode = "paper"
+            from engines.fees import fee_bps
+            cost_bps = float(fee_bps(tier=tier, mode=mode)) * 2.0
+        except Exception:
+            cost_bps = None
+
+        return _send_json(h, {"symbol": symbol, "position": pos,
+                              "last": last, "unrealized_pnl": unreal,
+                              "round_trip_cost_bps": cost_bps})
 
     def _screener_rows(self, conn, min_vol=0.0, max_spread=1e9,
                       exchange=None, asset_type=None, region=None):

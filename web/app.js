@@ -1301,6 +1301,7 @@
       "<div id='qp' class='quote-grid'></div>" +
       "<div id='cstats' class='kpi-l'>loading…</div>" +
       "<div id='c-regime' class='kpi-l'></div>" +
+      "<div id='c-pos' class='kpi-l'></div>" +
       "<div class='row'><label><input type='checkbox' id='ov-e9' checked style='width:auto'> EMA9</label>" +
       "<label><input type='checkbox' id='ov-e21' checked style='width:auto'> EMA21</label>" +
       "<label><input type='checkbox' id='ov-vw' checked style='width:auto'> VWAP</label>" +
@@ -1312,7 +1313,36 @@
       "<button id='c-go' type='button'>Reload</button></div>" +
       "<canvas class='chart' id='cv'></canvas><canvas class='rsi' id='rsi' style='margin-top:8px'></canvas>" +
       "<div id='cerr'></div><h3>News — " + esc(sym) + "</h3><div id='cnews' class='kpi-l'>loading…</div>";
-    var closes = [], vols = [], raw = [], reg = null;
+    var closes = [], vols = [], raw = [], reg = null, posCtx = null;
+
+    // Position + cost line under the chart.
+    //
+    // The cost figure is the point of the panel. A signal that looks good
+    // on a chart is not a trade until it clears the round trip, and a
+    // dislocation of a few bps against a ~70 bps round trip is not a small
+    // edge -- it is a reason not to trade. Showing gross without the cost
+    // beside it invites exactly the mistake the significance engine exists
+    // to prevent.
+    function posCaption(c) {
+      if (!c) return "";
+      var bits = [];
+      var p = c.position;
+      if (p && p.qty) {
+        var side = p.qty >= 0 ? "LONG" : "SHORT";
+        var pnl = c.unrealized_pnl;
+        bits.push(side + " " + num(Math.abs(p.qty), 4) + " @ " +
+          num(p.avg_price));
+        bits.push("unrealised " +
+          (pnl == null ? "—" : ((pnl >= 0 ? "+" : "") + num(pnl) + " " +
+            (c.currency || ""))).trim());
+      } else {
+        bits.push("flat");
+      }
+      if (c.round_trip_cost_bps != null) {
+        bits.push("round-trip cost " + num(c.round_trip_cost_bps, 1) + " bps");
+      }
+      return "<span class='dim'>" + esc(bits.join(" · ")) + "</span>";
+    }
     // Caption under the regime strip. It reports the *basis*, because a
     // threshold drawn from a fallback constant and one estimated from this
     // instrument's own history mean very different things, and a chart that
@@ -1355,7 +1385,7 @@
       }
       try {
         drawCandles(document.getElementById("cv"), raw, e9, e21, vw,
-          { title: sym, bands: bands, regime: reg });
+          { title: sym, bands: bands, regime: reg, position: posCtx });
         if (document.getElementById("ov-rsi").checked) {
           document.getElementById("rsi").style.display = "";
           try { drawRSI(document.getElementById("rsi"), raw); }
@@ -1399,7 +1429,24 @@
             " · last=" + num(last) + " · chg=" + (chg >= 0 ? "+" : "") + num(chg) +
             " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · range " + num(lo) + "–" + num(hi) +
             " · avgVol=" + num(avgV, 0);
-          // Regime + anomaly context. 1m only: the regime window (60) and the z
+          // Position + round-trip cost. Independent of resolution: the entry
+      // price and the cost figure are properties of the position, not of
+      // the bar interval, so this runs for 1m and 1d alike.
+      api("GET", "/api/chart_position?symbol=" + encodeURIComponent(sym))
+        .then(function (c) {
+          if (used !== tf) return;      // a slower response lost the race
+          posCtx = (c && c.position) ? c : null;
+          var host = document.getElementById("c-pos");
+          if (host) host.innerHTML = posCaption(c);
+          render();
+        })
+        .catch(function () {
+          posCtx = null;
+          var h = document.getElementById("c-pos");
+          if (h) h.innerHTML = "";
+        });
+
+      // Regime + anomaly context. 1m only: the regime window (60) and the z
       // window (20) are bar counts, so on daily bars they would mean 60 days
       // and 20 days and the strip would be answering a different question
       // than the thresholds behind it were asked. Refuse rather than lie --

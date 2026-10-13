@@ -145,6 +145,47 @@ function drawCandles(canvas, candles, ema9, ema21, vwap, opts) {
     ctx.closePath(); ctx.fill();
   });
 
+  // -- position overlay -------------------------------------------------
+  //
+  // An entry line at the average price, shaded above it green and below it
+  // red: a long is in profit above the line, a short below. The colour is
+  // the *direction of the position*, not of the move, so a profitable short
+  // reads as the position it is rather than as a falling market.
+  //
+  // The shade is scaled to the visible range, not to the P&L, so it stays
+  // legible whether the position is 0.1% or 40% from entry.
+  var pos = opts.position;
+  if (pos && pos.avg_price > 0 && lo < pos.avg_price && pos.avg_price < hi) {
+    var py = y(pos.avg_price);
+    var long = pos.qty >= 0;
+    ctx.save();
+    ctx.fillStyle = long ? "rgba(43,255,163,0.07)"
+                         : "rgba(255,84,112,0.07)";
+    if (long) ctx.fillRect(0, 6, W - AXW, py - 6);
+    else ctx.fillRect(0, py, W - AXW, PH - py);
+    ctx.restore();
+
+    ctx.save();
+    ctx.setLineDash([5, 3]);
+    ctx.strokeStyle = long ? "rgba(43,255,163,0.75)"
+                           : "rgba(255,84,112,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(0, py);
+    ctx.lineTo(W - AXW, py);
+    ctx.stroke();
+    ctx.restore();
+
+    var lbl = (long ? "LONG " : "SHORT ") + fmt(pos.avg_price);
+    ctx.font = "11px ui-monospace,monospace";
+    var tw = ctx.measureText(lbl).width + 6;
+    ctx.fillStyle = "#0a1116";
+    ctx.fillRect(W - AXW + 1, py - 8, Math.min(tw, AXW - 2), 15);
+    ctx.strokeStyle = long ? C.up : C.down;
+    ctx.strokeRect(W - AXW + 1, py - 8, Math.min(tw, AXW - 2), 15);
+    ctx.fillStyle = long ? C.up : C.down;
+    ctx.fillText(lbl, W - AXW + 4, py + 3);
+  }
+
   // -- volatility regime strip ------------------------------------------
   //
   // A band along the bottom of the price pane: red where the EWMA/stdev
