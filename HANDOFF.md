@@ -1,3 +1,96 @@
+# Handoff — 2026-10-14 (resolution-aware regime overlays; B2)
+
+Picked up from `1a2521f`. Closed out A (done, `fc912bf`), B1 (`ffe59ab`), C
+(`1a2521f`) and B2 (`4cf7465`). Clean tree at `4cf7465`.
+
+## Green
+
+- **1573 tests pass** (~9 min). Clean tree.
+- App server `:8000` healthy, pid **1571413**, pidfile `/tmp/opencode/app.pid`.
+  **ML service `:8021` is down** (unchanged; `.venv-torch/bin/python
+  services/ml/server.py --port 8021`).
+- `data/trading.db` 266M. Pre-real-data backup intact at
+  `/tmp/opencode/trading.db.bak.pre_real_data` (213M).
+
+## B2 in one line
+
+Daily symbols get the regime strip and anomaly flags. It changes **no shipped
+number** — 1m output is byte-identical to before `4cf7465`.
+
+## The correction worth carrying forward
+
+I claimed `EWMA_LAMBDA = 0.94` was "arguably wrong" for 1-minute bars.
+Measured, that was overstated:
+
+```
+half-life = ln(0.5)/ln(0.94) = 11.2 BARS, whatever a bar is
+  1m: 11.2 minutes  vs a 60-bar window = 5.4x
+  1d: 11.2 days     vs a 60-bar window = 5.4x
+```
+
+Identical ratio at both, because both are counted in **bars**. 0.94 is
+RiskMetrics' daily constant and is self-consistent either way. B2 makes the
+resolution explicit and *reported* rather than changing numbers — a smaller and
+more honest change than I had implied.
+
+## Defects found while doing it
+
+- **The bug B2 existed to fix**: `_chart_context` hardcoded `candles_1m` while
+  `/api/candles` already served `candles_1d`, so the two panels could describe
+  different series. Now routed through the same `_CANDLE_TABLES` map.
+- **The no-data response had a different shape** — no `regime` key — so a
+  client reading `regime.basis` worked for a symbol with data and raised
+  `KeyError` for one without, i.e. only on symbols nobody tested.
+- **A bug I introduced mid-change**: the vol-ratio series used to *classify*
+  each bar was built with the module default lambda while the *cuts* were
+  quantiled from one built with `res.lamb`. Both profiles use 0.94 so nothing
+  shipped was wrong, but a differing profile would have put cuts on a
+  distribution never computed — every value plausible, all wrong. Found by
+  mutation testing, not by reading.
+
+## Two tests rewritten because they passed against broken code
+
+Recurring theme this session, so it is worth stating plainly: **asserting a
+value is present proves the text exists, not that it is used.**
+
+- A SQL check used `SELECT[^"]*FROM`, which matched **nothing** — the query is
+  assembled by concatenating string literals, so `[^"]*` never reaches `FROM`.
+  It passed while the route queried `candles_1d` for every `tf`. Now asserts on
+  the actual assembly (`+ table + " WHERE symbol`).
+- Frontend tests grepped app.js for `"ewma_half_life_hours"`. Setting
+  `var rs = {}` — deleting the resolution from the caption entirely — left every
+  grep passing. Now the real `regCaption` and `esc` are extracted by
+  brace-matching and **executed under node**, asserting on printed output.
+
+Route coverage also reads the source: the HTTP tests exercise the *running
+server*, which does not reload edited source. Proved by mutation — hardcoding
+`candles_1m` again left all 32 tests green until a restart, after which two
+failed.
+
+## Still true, still blocking
+
+- **No live equity/commodity execution venue.** `EquityPoller` returns HTTP 404
+  for every symbol (pre-existing; Stooq now serves an anti-bot page). Binance
+  and MT5 are the only paths. A broker account is required.
+- **MT5 runtime unverified.** The EA compiles clean, but needs a logged-in
+  terminal; neither terminal on this machine has a saved account.
+- **NICKEL, TIN, LEAD** have no Yahoo ticker. **ZINC** — `ZNC=F` is degenerate
+  (one distinct close across 1171 bars), refused rather than stored.
+- NICKEL/TIN/LEAD/ZINC are the 4 of 44 symbols without daily data (40 have it).
+
+## Operational
+
+- **Do not `pkill -f "python3 app.py"` or `kill $(pgrep -f "python3 app.py")`.**
+  The pattern matches the invoking shell's own command line and kills it — this
+  cost me two shells mid-session. Use the pidfile:
+  `kill $(cat /tmp/opencode/app.pid)`.
+- Restart after route changes: `setsid nohup python3 app.py > /tmp/opencode/app.log 2>&1 < /dev/null & echo $! > /tmp/opencode/app.pid`
+- `scripts/fetch_binance.py --days N` silently means "continue from the newest
+  stored row" when the symbol already exists — pass `--start` to backfill
+  deliberately. Cost a 90-day request that returned 16 days.
+
+---
+
 # Handoff — 2026-10-12 (venue-quote retention was unreachable)
 
 Second session on 2026-10-12. Picked up from `4d50922`.
