@@ -174,13 +174,27 @@ bool DoSubmit(const string command, string &dataJson, string &err)
    if(TradeContextBusy())
      { err = "trade context busy (retcode 10025)"; return false; }
 
-   string sym = ExtractCommandValue(command, "symbol");
-   string side = ExtractCommandValue(command, "side");
-   double qty  = StringToDouble(ExtractCommandValue(command, "qty"));
-   string type = ExtractCommandValue(command, "type");
-   double price = StringToDouble(ExtractCommandValue(command, "price"));
-   double stop  = StringToDouble(ExtractCommandValue(command, "stop_price"));
-   string coid  = ExtractCommandValue(command, "client_order_id");
+   // Order fields are nested under "order", not at the top level of the
+   // command. Extract that object first -- reading these keys off the
+   // command root returns "" for every one of them.
+   string order = ExtractValue(command, "order");
+   if(order == "")
+     { err = "submit command has no order object"; return false; }
+
+   string sym = ExtractValue(order, "symbol");
+   string side = ExtractValue(order, "side");
+   double qty  = StringToDouble(ExtractValue(order, "qty"));
+   string type = ExtractValue(order, "type");
+   double price = StringToDouble(ExtractValue(order, "price"));
+   double stop  = StringToDouble(ExtractValue(order, "stop_price"));
+   string coid  = ExtractValue(order, "client_order_id");
+
+   // A missing symbol is not a tradeable order. Refusing it here turns a
+   // silent EA-side default into a reported error the app can see.
+   if(sym == "")
+     { err = "order has no symbol"; return false; }
+   if(qty <= 0.0)
+     { err = "order has no positive qty"; return false; }
 
    if(MaxLots > 0 && qty > (double)MaxLots)
      { err = "qty " + DoubleToString(qty,2) + " exceeds EA cap "
@@ -265,22 +279,111 @@ bool DoOrders(const string command, string &dataJson, string &err)
 //| Minimal field extraction. The bridge always sends flat JSON, so   |
 //| this avoids pulling in a parser and its failure modes.            |
 //+------------------------------------------------------------------+
-string ExtractCommandValue(const string cmd, const string key)
+//+------------------------------------------------------------------+
+//| Pull a top-level scalar out of a JSON-ish string.                 |
+//|                                                                   |
+//| THE BUG THIS REPLACES                                            |
+//|                                                                   |
+//| The previous version located `"command":` and then cut the value   |
+//| at the first comma. The bridge sends                             |
+//|                                                                   |
+//|   {"ok":true,"command":{"op":"submit","order":{"symbol":"EURUSD"}}}|
+//|                                                                   |
+//| so the extracted "command" was `{"op":"submit"` -- 16 characters,  |
+//| truncated at the first comma inside the nested `order` object.     |
+//| The EA then read `op` from that fragment and found symbol, qty and |
+//| price EMPTY, because they live under `order`. Every submit failed.  |
+//|                                                                   |
+//| It compiled cleanly and every test passed, because the tests only  |
+//| ever exercised flat bodies like `{"op":"ping"}`.                   |
+//|                                                                   |
+//| Now: callers pass the WHOLE response and a key, and object values  |
+//| are matched with a brace counter so nesting is handled instead of   |
+//| truncated.                                                          |
+//+------------------------------------------------------------------+
+string ExtractValue(const string src, const string key)
   {
    string needle = "\"" + key + "\":";
-   int p = StringFind(cmd, needle);
+   int p = StringFind(src, needle);
    if(p < 0) return "";
    int s = p + StringLen(needle);
-   if(StringGetCharacter(cmd, s) == '"')
+
+   // Skip whitespace after the colon. json.dumps() emits `"command": {`
+   // with a space, and this parser originally assumed `"command":{`. With a
+   // space the first character is ' ', which matched none of the branches
+   // below, fell through to "bare scalar", and was cut at the next comma --
+   // reproducing the exact truncation this function was written to fix.
+   while(s < StringLen(src) && StringGetCharacter(src, s) == ' ')
+      s++;
+   if(s >= StringLen(src)) return "";
+
+   if(StringGetCharacter(src, s) == '"')
      {
-      int e = StringFind(cmd, "\"", s + 1);
-      if(e < 0) return "";
-      return StringSubstr(cmd, s + 1, e - s - 1);
+      // Quoted scalar: copy until the closing quote, honouring \" escapes
+      // so a value containing an escaped quote does not truncate.
+      string out = "";
+      for(int i = s + 1; i < StringLen(src); i++)
+        {
+         ushort c = StringGetCharacter(src, i);
+         if(c == '\\' && i + 1 < StringLen(src))
+           { i++; out += ShortToString(StringGetCharacter(src, i)); continue; }
+         if(c == '"') break;
+         out += ShortToString(c);
+        }
+      return out;
      }
-   int e = StringFind(cmd, ",", s);
-   if(e < 0) e = StringFind(cmd, "}", s);
-   if(e < 0) e = StringLen(cmd);
-   return StringSubstr(cmd, s, e - s);
+
+   if(StringGetCharacter(src, s) == '{' || StringGetCharacter(src, s) == '[')
+     {
+      // Nested object or array: copy to the matching close, counting
+      // depth. Strings are skipped so a brace inside a value cannot end
+      // the scan early.
+      int depth = 0;
+      bool inStr = false;
+      string out = "";
+      for(int i = s; i < StringLen(src); i++)
+        {
+         ushort c = StringGetCharacter(src, i);
+         if(c == '"' && (i == 0 || StringGetCharacter(src, i - 1) != '\\'))
+            inStr = !inStr;
+         if(!inStr)
+           {
+            if(c == '{' || c == '[') depth++;
+            else if(c == '}' || c == ']')
+              { depth--; if(depth == 0) { out += ShortToString(c); return out; } }
+           }
+         out += ShortToString(c);
+        }
+      return out;
+     }
+
+   // Bare scalar (number, true/false, null): to the next delimiter.
+   // Trim, because the whitespace skip above leaves " 0.1" rather than
+   // "0.1" and StringToDouble(" 0.1") is 0 on some builds.
+   int e = StringFind(src, ",", s);
+   if(e < 0) e = StringFind(src, "}", s);
+   if(e < 0) e = StringLen(src);
+   string raw = StringSubstr(src, s, e - s);
+   StringTrimLeft(raw);
+   StringTrimRight(raw);
+   return raw;
+  }
+
+//+------------------------------------------------------------------+
+//| The command object, found by matching braces rather than commas.   |
+//+------------------------------------------------------------------+
+string ExtractCommand(const string body)
+  {
+   return ExtractValue(body, "command");
+  }
+
+//+------------------------------------------------------------------+
+//| Backwards-compatible alias. Callers pass the full body; nesting is |
+//| handled by ExtractValue now, so this is just ExtractValue.        |
+//+------------------------------------------------------------------+
+string ExtractCommandValue(const string src, const string key)
+  {
+   return ExtractValue(src, key);
   }
 
 string ExtractCommandOp(const string cmd)
@@ -325,13 +428,17 @@ void OnTimer()
 
    string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
    if(StringFind(body, "\"command\":null") >= 0) return;   // idle
-   int p = StringFind(body, "\"command\":");
-   if(p < 0) return;
 
-   string command = ExtractCommandValue(body, "command");
-   // Re-extract the id from the command object itself: it was injected by
-   // the bridge and is what the result must be keyed by.
-   string id = ExtractCommandValue(command, "id");
+   // Extract the command object by brace-matching, then read fields from it.
+   // Previously the EA cut "command" at the first comma and read fields
+   // from that fragment, which truncated the nested `order` object and left
+   // symbol/qty/price empty -- every submit failed while still compiling
+   // cleanly and passing every test.
+   string command = ExtractCommand(body);
+   if(command == "") return;
+
+   // The id was injected by the bridge and is what the result is keyed by.
+   string id = ExtractValue(command, "id");
    if(id == "") return;
 
    string dataJson, err;

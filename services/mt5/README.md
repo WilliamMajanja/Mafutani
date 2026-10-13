@@ -133,6 +133,42 @@ trade context; the retcode is the mechanism — a second concurrent
 Also: `CTrade.SetExpertMagicNumber` returns **void**, so it cannot be used
 in an `if` statement.
 
+## A bug that compiled, passed every test, and was fatal
+
+The EA hand-rolls its JSON parsing (MQL5 gives us nothing dependable here).
+The original `ExtractCommandValue` found `"command":` and cut the value at
+the **first comma**. The bridge sends:
+
+```
+{"ok":true,"command":{"id":"cmd-1","op":"submit","order":{"symbol":"EURUSD",...}}}
+```
+
+so `"command"` extracted as `{"op": "submit"` — 16 characters, truncated at
+the comma inside the nested `order` object. `DoSubmit` then read `symbol`,
+`qty` and `price` off that fragment, found them **all empty**, and refused
+every order.
+
+A second layer compounded it: `json.dumps` emits `"command": {` *with a
+space*, and the parser assumed `"command":{`. The space sent the value down
+the bare-scalar branch and truncated it again.
+
+It compiled clean and the whole Python suite passed, because every test only
+ever fed the parser flat bodies like `{"op":"ping"}`. The preflight passes
+too — `SimEA` speaks the protocol from the Python side, so it never runs the
+MQL5 parser at all.
+
+Fixed by brace-matching nested objects with a depth counter, skipping
+strings so a brace inside a value cannot end the scan early, and reading
+order fields from the unwrapped `order` object.
+
+`tests/test_mt5_mql5_parser.py` ports the parser to Python and runs it
+against real bridge output — the truncated case, commas and braces inside
+string values, and a drift check that fails if the MQL5 and the port stop
+matching. A port that quietly diverges would be worse than no port.
+
+Same shape as two earlier bugs today: it compiled, the tests passed, and the
+component did not work.
+
 ## Safety properties
 
 | Property | Where |
