@@ -228,13 +228,11 @@ class TestCrossVenueBookSanity(unittest.TestCase):
 
 
 class TestConfiguredCrossesStillBehave(unittest.TestCase):
-    """All four shipped crosses, priced with internally consistent books."""
+    """Every shipped cross, priced with internally consistent books."""
 
     CASES = [
         ("EURUSD", "EURGBP", "GBPUSD", (1.11583, 1.11589, 0.85110, 0.85115, 1.31102, 1.31108)),
-        ("EURUSD", "EURJPY", "USDJPY", (1.11583, 1.11589, 175.43, 175.51, 157.20, 157.30)),
         ("EURGBP", "EURUSD", "GBPUSD", (0.85110, 0.85115, 1.11583, 1.11589, 1.31102, 1.31108)),
-        ("EURJPY", "EURUSD", "USDJPY", (175.43, 175.51, 1.11583, 1.11589, 157.20, 157.30)),
     ]
 
     def _price(self, case):
@@ -251,6 +249,60 @@ class TestConfiguredCrossesStillBehave(unittest.TestCase):
         for direct, out in map(self._price, self.CASES):
             self.assertTrue(out.get("ok"), "%s: %s" % (direct, out.get("reason")))
             self.assertLess(out["edge_bps"], 0, "%s reported an edge" % direct)
+
+
+class TestDormantCrossesAreExcludedNotForgotten(unittest.TestCase):
+    """The JPY crosses were dropped because kraken's JPY markets trade
+    about once an hour. That is a measured fact about a venue, not a
+    permanent truth, so it has to stay visible and stay justified rather
+    than quietly ageing into a mystery.
+    """
+
+    def test_active_set_excludes_the_jpy_triangles(self):
+        active = {s for d, (a, b) in arbitrage.FX_CROSSES for s in (d, a, b)}
+        self.assertNotIn("USDJPY", active)
+        self.assertNotIn("EURJPY", active)
+
+    def test_dormant_set_holds_exactly_what_was_removed(self):
+        dormant = {(d, a, b) for d, (a, b) in arbitrage.FX_CROSSES_DORMANT}
+        self.assertEqual(dormant, {
+            ("EURUSD", "EURJPY", "USDJPY"),
+            ("EURJPY", "EURUSD", "USDJPY"),
+        })
+
+    def test_the_two_sets_do_not_overlap(self):
+        active = {(d, a, b) for d, (a, b) in arbitrage.FX_CROSSES}
+        dormant = {(d, a, b) for d, (a, b) in arbitrage.FX_CROSSES_DORMANT}
+        self.assertEqual(active & dormant, set())
+
+    def test_every_dormant_cross_is_still_well_formed(self):
+        """Kept only because the venue still supports the pair. If kraken
+        drops USDJPY entirely, restore becomes a one-line deletion."""
+        for direct, (a, b) in arbitrage.FX_CROSSES_DORMANT:
+            self.assertIsNotNone(arbitrage._compose_op(direct, a, b),
+                                 "%s does not compose" % direct)
+
+    def test_every_dormant_leg_is_still_a_routed_pair(self):
+        """Restore has to stay a one-line move. If kraken drops a pair the
+        dormant set becomes dead weight rather than a reversible decision.
+
+        (An earlier version of this test asserted on the explanatory comment
+        instead -- that it contained "trades/hour" and so on. Asserting that
+        prose says a string exists, which is the same trap as the
+        `SELECT[^"]*FROM` regex; this checks behaviour instead.)
+        """
+        from data import venuebooks
+        for direct, (a, b) in arbitrage.FX_CROSSES_DORMANT:
+            for sym in (direct, a, b):
+                self.assertTrue(venuebooks.venues_for(sym),
+                                "%s is no longer routed; delete it from "
+                                "FX_CROSSES_DORMANT" % sym)
+
+    def test_scan_fx_does_not_walk_the_dormant_set(self):
+        import inspect
+        src = inspect.getsource(arbitrage.scan_fx)
+        self.assertIn("FX_CROSSES", src)
+        self.assertNotIn("FX_CROSSES_DORMANT", src)
 
 
 class TestRefusalsStillHold(unittest.TestCase):

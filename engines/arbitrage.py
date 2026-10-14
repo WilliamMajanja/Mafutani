@@ -983,8 +983,44 @@ def _expectancy(series_a, series_b, value, cost_bps, stop_z=2.5):
 # 324,000,000 bps "edge".
 FX_CROSSES = (
     ("EURUSD", ("EURGBP", "GBPUSD")),      # GBP/EUR x USD/GBP
-    ("EURUSD", ("EURJPY", "USDJPY")),      # JPY/EUR / JPY/USD
     ("EURGBP", ("EURUSD", "GBPUSD")),      # USD/EUR / USD/GBP
+)
+
+# Crosses kraken cannot price, kept here so the exclusion is a decision
+# someone can inspect rather than a pair quietly missing.
+#
+# Measured 2026-10-15 across every kraken pair this app routes:
+#
+#   pair     spread    1000 trades span    trades/hour
+#   EURUSD     0.3 bp        0.3 h            3919
+#   USDCHF     1.0 bp        0.4 h            2302
+#   GBPUSD     0.7 bp        0.8 h            1296
+#   USDCAD     0.4 bp        2.8 h             354
+#   XAUTUSD    0.5 bp        7.9 h             127
+#   AUDUSD     2.7 bp        8.0 h             125
+#   EURGBP     1.1 bp       35.3 h              28
+#   USDJPY   136.1 bp      537.7 h             1.9
+#   EURJPY    90.4 bp     1092.3 h             0.9
+#
+# USDJPY trades about once every 13 minutes and EURJPY once every 65. Their
+# top-of-book did not change at all across a 60-second sample (USDJPY
+# 158.823/160.999 and EURJPY 176.000/177.599 at every tick, while EURUSD
+# moved at 0.3-0.5 bps). `AssetPairs` reports both as `status: online`, so
+# this is not a halt -- the markets are simply near-untraded, and the wide
+# band is stale resting orders nobody has traded against.
+#
+# This is the same exclusion as GBPJPY above, for the same reason: kraken
+# cannot support the triangle. It is not a transient glitch that will clear,
+# so listing these would advertise two opportunities that can never exist.
+# The book-sanity guard would refuse them anyway -- this just stops the scan
+# spending its budget, and the operator's attention, on them.
+#
+# To restore: move the entry back into FX_CROSSES and re-measure. Do not
+# re-add on the assumption the liquidity has returned; check trades/hour
+# first, because a wide book on a market that trades once an hour is not a
+# spread that tightens, it is a book with nobody in it.
+FX_CROSSES_DORMANT = (
+    ("EURUSD", ("EURJPY", "USDJPY")),      # JPY/EUR / JPY/USD
     ("EURJPY", ("EURUSD", "USDJPY")),      # USD/EUR x JPY/USD
 )
 
