@@ -65,6 +65,53 @@ def _positive(x):
     return v if v > 0 else 0.0
 
 
+# -- book sanity ---------------------------------------------------------
+#
+# A book wider than this is not a two-sided market anybody can cross, and
+# pricing an edge against it invents one. This is not hypothetical: kraken
+# served USDJPY at a 155.8 bps spread with its ask 1.68% above the last
+# trade -- the ask side simply had nothing near the market -- while every
+# other FX pair on the same venue came in under 2 bps. EURJPY had the same
+# problem mirrored: 90.4 bps, with the bid ~1.3% under the last trade.
+#
+# The threshold is not a guess. Measured across kraken's book, healthy pairs
+# run 0.09-1.72 bps and the broken ones run 90+ bps, so the gap between them
+# is a regime nobody has observed here. It matches `engines/signals.py`'s
+# `max_spread_bps` default, which the signal layer has been refusing on for
+# the same reason -- the arbitrage scanner was the one place that did not.
+MAX_BOOK_SPREAD_BPS = 50.0
+
+
+def book_spread_bps(book):
+    """Width of ONE book: (ask - bid) / mid. None when unpriceable.
+
+    Deliberately the intra-book width, not a cross-venue gap. A wide spread
+    *between* two venues can be a genuine dislocation and is exactly what
+    cross_venue exists to find; a wide spread *within* one venue's book
+    means that venue is not quoting a market you can trade against.
+    """
+    bid, ask = _positive((book or {}).get("bid")), _positive((book or {}).get("ask"))
+    if bid <= 0 or ask <= 0 or ask < bid:
+        return None
+    mid = (bid + ask) / 2.0
+    if mid <= 0:
+        return None
+    return (ask - bid) / mid * 10000.0
+
+
+def _wide_book_names(legs, limit=None):
+    """[(label, spread_bps)] for legs whose own book is too wide to price."""
+    cap = MAX_BOOK_SPREAD_BPS if limit is None else _f(limit, MAX_BOOK_SPREAD_BPS)
+    out = []
+    for leg in legs or []:
+        leg = leg or {}
+        sp = book_spread_bps(leg)
+        if sp is not None and sp > cap:
+            out.append(("{}@{}".format(leg.get("symbol", "?"),
+                                       leg.get("venue", "") or "?"), sp))
+    return out
+
+
 def _synthetic_reasons(legs):
     """Names of legs whose venue book is synthetic (or missing)."""
     bad = []
@@ -104,6 +151,23 @@ def cross_venue(symbol, books, size=None):
     if len(usable) < 2:
         out["reason"] = ("need 2+ live venues for this symbol, have {}"
                          .format(len(usable)))
+        return out
+
+    # Each venue's *own* book must be crossable. A venue quoting a 2% band
+    # is not offering a price you can lift; treating its far touch as a
+    # liftable ask manufactures a gap between it and every healthy venue.
+    # Checked on all venues, not just the two the comparison picks, so the
+    # refusal names the real culprit instead of blaming whichever pair the
+    # min/max happened to select.
+    wide = _wide_book_names(
+        [dict(b, symbol=symbol, venue=v) for v, b in usable.items()])
+    if wide:
+        out["reason"] = ("book too wide to price against (max {} bps): {}"
+                         .format(MAX_BOOK_SPREAD_BPS,
+                                 ", ".join("{} {:.1f} bps".format(n, s)
+                                           for n, s in wide)))
+        out["wide_books"] = [{"leg": n, "spread_bps": round(s, 2)}
+                             for n, s in wide]
         return out
 
     # Best ask to lift, best bid to hit -- chosen independently, then
@@ -487,11 +551,25 @@ def fx_cross(direct_symbol, direct, legs):
       legs:          [{"symbol":"EURGBP","bid":..,"ask":..,"venue":..},
                       {"symbol":"GBPUSD","bid":..,"ask":..,"venue":..}]
 
-    The tradeable quantity is the *worst case* cross: the cheapest way to
-    synthesise the direct (pay the ask of every leg) and the best way to
-    unwind it (sell the bid of every leg). Comparing the dear synthetic
-    against the cheap direct is the opportunity; the reverse direction is
-    reported too, because it is a distinct -- and often better -- trade.
+    The tradeable quantity is the cost of each direction, and which side of
+    each book you cross depends on the operation -- this is the part that is
+    easy to get wrong in either direction.
+
+    For a `div` cross (EURUSD = EURJPY / USDJPY) the legs trade *opposite*
+    ways. Going long buys EURJPY (pay its ask) and sells USDJPY (hit its
+    bid), so the long price is ask1/bid2. Combining both legs on the same
+    side -- ask1/ask2 and bid1/bid2 -- prices a book that cannot be traded,
+    because it assumes liquidity on both sides of two books at once. On
+    live kraken books that reported +82.7 bps gross on EURUSD while both
+    real directions lost ~134 bps; the mids agreed to 0.6 bps, so there was
+    no dislocation at all.
+
+    For a `mul` cross (EURUSD = EURGBP x GBPUSD) the legs trade the *same*
+    way, because buying one leg supplies what the other needs: buying
+    EURGBP buys EUR and sells GBP, buying GBPUSD buys that GBP back and
+    sells USD. So the long price is ask1*ask2 and the short is bid1*bid2.
+    Applying the div rule here instead reintroduces the same phantom one
+    operation over.
 
     Both legs are priced at their own side. Using a mid for one leg and an
     ask for the other is the standard way cross-rate scanners invent free
@@ -526,6 +604,26 @@ def fx_cross(direct_symbol, direct, legs):
         return out
     out["op"] = op
 
+    # A leg whose own book is implausibly wide is not a market this edge can
+    # be crossed against. Checked before any pricing, and the direct counts
+    # as a book too -- a wide leg beside a tight direct is exactly how a
+    # scanner reports an opportunity that exists only in the wide leg.
+    #
+    # `dict(d, symbol=...)` rather than a bare label dict: the direct's own
+    # bid/ask must come along, or it is measured as having no book at all
+    # and silently skipped -- which is exactly what happened on the first
+    # version of this guard, caught by test_a_wide_direct_is_refused_too.
+    named = [dict(d or {}, symbol=direct_symbol)] + list(leg_list)
+    wide = _wide_book_names(named)
+    if wide:
+        out["reason"] = ("book too wide to price against (max {} bps): {}"
+                         .format(MAX_BOOK_SPREAD_BPS,
+                                 ", ".join("{} {:.1f} bps".format(n, s)
+                                           for n, s in wide)))
+        out["wide_books"] = [{"leg": n, "spread_bps": round(s, 2)}
+                             for n, s in wide]
+        return out
+
     venues = []
     for leg in leg_list:
         lb, la = _positive(leg.get("bid")), _positive(leg.get("ask"))
@@ -537,12 +635,39 @@ def fx_cross(direct_symbol, direct, legs):
         out["legs"].append({"symbol": sym, "venue": leg.get("venue", ""),
                             "bid": round(lb, 10), "ask": round(la, 10)})
 
-    def _combine(side):
-        a, b = leg_list[0][side], leg_list[1][side]
+    def _combine(side1, side2):
+        """Leg prices for a cross, each leg on its own side.
+
+        `side1` applies to leg 1 and `side2` to leg 2. Which sides those
+        are depends on the operation, and getting it wrong prices a book
+        that cannot be traded -- see fx_cross's docstring.
+        """
+        a, b = leg_list[0][side1], leg_list[1][side2]
         return a * b if op == "mul" else a / b
 
-    cross_buy = _combine("ask")     # synthesise: pay the dear side
-    cross_sell = _combine("bid")    # unwind: hit the cheap side
+    # The side pairing is NOT the same for both operations, which is the
+    # whole subtlety here.
+    #
+    # `mul`, e.g. EURUSD = EURGBP x GBPUSD. Going long buys EUR and sells
+    # USD; buying EURGBP does both halves at once (ask1: buy EUR, sell GBP),
+    # and buying GBPUSD supplies the USD (ask2: buy GBP, sell USD). Both
+    # legs are bought, so both are priced at the ask.
+    #
+    # `div`, e.g. EURUSD = EURJPY / USDJPY. Going long buys EURJPY (ask1:
+    # buy EUR) but must *sell* USDJPY to shed the USD (bid2). Opposite sides.
+    #
+    # Applying "opposite sides" everywhere -- or "same side" everywhere --
+    # prices one of the two operations on a position nobody can take. The
+    # first attempt at this fix used one rule for both and reintroduced the
+    # phantom edge on the mul crosses, which is how it was caught: the live
+    # scan printed a positive edge on EURJPY straight after it went away
+    # from EURUSD.
+    if op == "mul":
+        cross_buy = _combine("ask", "ask")     # long: buy both legs
+        cross_sell = _combine("bid", "bid")     # short: sell both legs
+    else:
+        cross_buy = _combine("ask", "bid")     # long: buy leg1, sell leg2
+        cross_sell = _combine("bid", "ask")    # short: sell leg1, buy leg2
     if cross_buy <= 0 or cross_sell <= 0:
         out["reason"] = "non-positive cross from {} legs".format(op)
         return out

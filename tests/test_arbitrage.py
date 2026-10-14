@@ -38,8 +38,8 @@ class TestCrossVenue(unittest.TestCase):
     def test_prices_edge_net_of_two_legs(self):
         # 12 bps gross, ~14 bps of fees (10 + a cheap venue).
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(99.0, 100.0, "binance"),
-            "kraken": _book(100.15, 100.30, "kraken"),
+            "binance": _book(100.00, 100.01, "binance"),
+            "kraken": _book(100.15, 100.16, "kraken"),
         })
         self.assertTrue(out["ok"])
         self.assertEqual(out["buy_venue"], "binance")
@@ -50,8 +50,8 @@ class TestCrossVenue(unittest.TestCase):
 
     def test_profitable_when_spread_beats_fees(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(99.0, 100.0, "binance"),
-            "kraken": _book(105.0, 105.5, "kraken"),
+            "binance": _book(100.00, 100.01, "binance"),
+            "kraken": _book(105.00, 105.01, "kraken"),
         })
         self.assertTrue(out["ok"])
         self.assertGreater(out["edge_bps"], 0)
@@ -83,22 +83,22 @@ class TestCrossVenue(unittest.TestCase):
     def test_ignores_crossed_books(self):
         out = arbitrage.cross_venue("BTCUSD", {
             "binance": _book(101.0, 100.0),      # ask < bid: garbage
-            "kraken": _book(99.0, 100.0),
+            "kraken": _book(100.00, 100.01),
         })
         self.assertFalse(out["ok"])
 
     def test_notional_capped_by_thinner_book(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(99.0, 100.0, "binance", ask_size=2.0),
-            "kraken": _book(105.0, 106.0, "kraken", bid_size=0.5),
+            "binance": _book(100.00, 100.01, "binance", ask_size=2.0),
+            "kraken": _book(105.00, 105.01, "kraken", bid_size=0.5),
         })
         self.assertTrue(out["ok"])
         self.assertAlmostEqual(out["max_size"], 0.5, places=6)
 
     def test_explicit_size_caps_notional(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(99.0, 100.0, "binance", ask_size=5.0),
-            "kraken": _book(105.0, 106.0, "kraken", bid_size=5.0),
+            "binance": _book(100.00, 100.01, "binance", ask_size=5.0),
+            "kraken": _book(105.00, 105.01, "kraken", bid_size=5.0),
         }, size=1.0)
         self.assertTrue(out["ok"])
         self.assertLessEqual(out["notional"], 1.0)
@@ -549,7 +549,11 @@ class TestVenueRegistry(unittest.TestCase):
                                   dict(_book(158.03, 158.04, "kraken"), symbol="USDJPY")])
         self.assertTrue(out["ok"], out["reason"])
         self.assertEqual(out["op"], "div")
-        self.assertAlmostEqual(out["cross_buy"], 177.80 / 158.04, places=5)
+        # ask1/bid2 and bid1/ask2 -- opposite sides, because a cross is
+        # traded opposite ways. This assertion previously read ask1/ask2,
+        # which is the untradeable price, and passed against the defect.
+        self.assertAlmostEqual(out["cross_buy"], 177.80 / 158.03, places=5)
+        self.assertAlmostEqual(out["cross_sell"], 177.79 / 158.04, places=5)
         self.assertLess(out["edge_bps"], 0)
 
     def test_fx_crosses_only_name_routed_pairs(self):
@@ -643,8 +647,8 @@ class TestScannerIntegration(unittest.TestCase):
         conn, path = self._db()
         try:
             _fxm.install(conn)
-            self._seed_books(conn, [("BTCUSD", "binance", 99.0, 100.0),
-                                    ("BTCUSD", "coinbase", 105.0, 106.0)])
+            self._seed_books(conn, [("BTCUSD", "binance", 100.00, 100.01),
+                                    ("BTCUSD", "coinbase", 105.00, 105.01)])
             out = _engine_arbitrage(conn, {"tier": "Pro"}, asset_class="crypto")
             cross = [r for r in out["opportunities"] if r["model"] == "cross_venue"]
             self.assertTrue(cross)
@@ -669,8 +673,8 @@ class TestScannerIntegration(unittest.TestCase):
         conn, path = self._db()
         try:
             old = int(__import__("time").time()) - 10_000
-            for venue, bid, ask in (("binance", 99.0, 100.0),
-                                    ("coinbase", 105.0, 106.0)):
+            for venue, bid, ask in (("binance", 100.00, 100.01),
+                                    ("coinbase", 105.00, 105.01)):
                 conn.execute(
                     "INSERT OR IGNORE INTO venue_quotes"
                     " (symbol, venue, ts, bid, ask, source)"
@@ -691,8 +695,8 @@ class TestScannerIntegration(unittest.TestCase):
         # Kept and visible, but never sold as an edge someone can trade.
         from engines.arbitrage import cross_venue
         out = cross_venue("BTCUSD", {
-            "binance": dict(_book(99.0, 100.0), age_s=900, stale=True),
-            "coinbase": dict(_book(105.0, 106.0), age_s=900, stale=True),
+            "binance": dict(_book(100.00, 100.01), age_s=900, stale=True),
+            "coinbase": dict(_book(105.00, 105.01), age_s=900, stale=True),
         })
         self.assertFalse(out["ok"])
         self.assertIsNone(out["edge_bps"])
@@ -746,8 +750,8 @@ class TestScannerIntegration(unittest.TestCase):
         from api.routes import _engine_arbitrage
         conn, path = self._db()
         try:
-            self._seed_books(conn, [("BTCUSD", "binance", 99.0, 100.0),
-                                    ("BTCUSD", "coinbase", 105.0, 106.0)])
+            self._seed_books(conn, [("BTCUSD", "binance", 100.00, 100.01),
+                                    ("BTCUSD", "coinbase", 105.00, 105.01)])
             wide = _engine_arbitrage(conn, {"tier": "Pro"}, asset_class="crypto")
             narrow = _engine_arbitrage(conn, {"tier": "Pro"},
                                        asset_class="crypto", min_edge_bps=10_000)
