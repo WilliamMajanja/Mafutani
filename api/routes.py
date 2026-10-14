@@ -88,6 +88,46 @@ def _send_json(handler, obj, status=200, extra_headers=None):
     return True
 
 
+def _csv_field(v):
+    """One CSV cell, neutralising spreadsheet formula injection.
+
+    Audit rows carry operator-supplied strings -- a `details_json` with a
+    free-text reason, an email, a client IP. Excel and LibreOffice treat a
+    cell beginning with = + - @ as a formula and evaluate it on open, so an
+    audit export is an injection vector aimed at whoever reads the file
+    last. Prefixing a single quote makes the cell inert text without
+    changing the value a human sees.
+    """
+    s = "" if v is None else str(v)
+    if s[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        s = "'" + s
+    return s
+
+
+def _send_csv(handler, columns, rows, filename="export.csv"):
+    """Text/csv download. Mirrors _send_json's response shape."""
+    out = [",".join('"{}"'.format(c) for c in columns)]
+    for row in rows:
+        out.append(",".join('"{}"'.format(_csv_field(row.get(c)))
+                            .replace('"', '""') for c in columns))
+    body = ("\r\n".join(out) + "\r\n").encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/csv; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    # RFC 6266: the filename is quoted and stripped of quotes/CR/LF so a
+    # caller cannot inject a second header through it.
+    safe_fn = "".join(ch for ch in str(filename)
+                      if ch.isalnum() or ch in "-_. ").strip() or "export.csv"
+    handler.send_header("Content-Disposition",
+                        'attachment; filename="{}"'.format(safe_fn))
+    handler.end_headers()
+    try:
+        handler.wfile.write(body)
+    except Exception:
+        pass
+    return True
+
+
 # -- per-symbol total volume cache -------------------------------------
 # Summing candles_1m per request (43k rows x 36 symbols) is ~10s on slow
 # filesystems (WSL /mnt/c). Cache the aggregate and refresh lazily.
@@ -1786,6 +1826,18 @@ class Router:
             return self._admin_users(conn, h)
         if path == "/api/admin/audit" and method == "GET":
             return self._admin_audit(conn, h, qs)
+        if path == "/api/admin/audit.csv" and method == "GET":
+            return self._admin_audit_csv(conn, h, qs)
+        # Admin write paths. Both columns (users.disabled, symbols.enabled)
+        # have been read by the enforcement queries since the schema landed,
+        # but nothing could ever set them, so RFF-005's "admin can disable
+        # symbol/user" was unreachable.
+        if path.startswith("/api/admin/users/") and path.endswith("/disable") \
+                and method == "POST":
+            return self._admin_user_disable(conn, h, path)
+        if path.startswith("/api/admin/symbols/") and path.endswith("/disable") \
+                and method == "POST":
+            return self._admin_symbol_disable(conn, h, path)
         _err(h, "not found: {} {}".format(method, path), 404)
         return True
 
@@ -4343,3 +4395,148 @@ class Router:
             return _send_json(h, {"users": users})
         except Exception as e:
             return _err(h, "users failed: {}".format(e), 500)
+
+    def _admin_user_disable(self, conn, h, path):
+        """POST /api/admin/users/<id>/disable  {"disabled": true|false}
+
+        RFF-005 acceptance: "Admin can disable symbol/user."
+
+        The read side already existed -- the session lookup filters on
+        `disabled = 0` (see _session_user), so flipping this column logs the
+        user out of every device on their next request without touching the
+        sessions table. What was missing was any way to set it.
+        """
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        try:
+            target_id = int(path.split("/")[4])
+        except (TypeError, ValueError, IndexError):
+            return _err(h, "bad user id in path", 400)
+        body, berr = _read_json(h)
+        if berr:
+            return _err(h, berr, 400)
+        body = body or {}
+        # Default to disabling when the flag is absent: an operator clicking
+        # "disable" should not have to remember to also send the value, and
+        # an explicit re-enable passes {"disabled": false}.
+        want = bool(body.get("disabled", True))
+        admin_id = _row_to_dict(user).get("id")
+        if target_id == admin_id and want:
+            # Self-disable would remove the last way back in: the session
+            # filter rejects a disabled user, so the request that disabled
+            # them is also the one that ends their access. Refuse rather than
+            # let an admin lock the deployment out of its own admin page.
+            return _err(h, "cannot disable your own account", 409)
+        row = conn.execute("SELECT id, email, tier, disabled FROM users WHERE id = ?",
+                           (target_id,)).fetchone()
+        if row is None:
+            return _err(h, "no such user: {}".format(target_id), 404)
+        before = _row_to_dict(row)
+        try:
+            conn.execute("UPDATE users SET disabled = ? WHERE id = ?",
+                         (1 if want else 0, target_id))
+            conn.commit()
+        except Exception as e:
+            return _err(h, "disable failed: {}".format(e), 500)
+        _audit(conn, admin_id, "admin.user.disable" if want else "admin.user.enable",
+               tier=_row_to_dict(user).get("tier", ""),
+               details={"user_id": target_id, "email": before.get("email"),
+                        "was_disabled": before.get("disabled")})
+        return _send_json(h, {"user_id": target_id,
+                              "email": before.get("email"),
+                              "disabled": 1 if want else 0})
+
+    def _admin_symbol_disable(self, conn, h, path):
+        """POST /api/admin/symbols/<symbol>/disable  {"enabled": true|false}
+
+        Three read paths already honour `symbols.enabled` (screener,
+        live quotes, symbol listing), so disabling hides a symbol from the
+        UI and the pollers without dropping its history. Default is to
+        disable, matching the user endpoint.
+        """
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        raw = path[len("/api/admin/symbols/"):-len("/disable")]
+        symbol = str(raw or "").strip().upper()
+        if not symbol:
+            return _err(h, "bad symbol in path", 400)
+        body, berr = _read_json(h)
+        if berr:
+            return _err(h, berr, 400)
+        body = body or {}
+        want = bool(body.get("enabled", False))  # inverse flag: default off
+        row = conn.execute("SELECT symbol, name, enabled FROM symbols WHERE symbol = ?",
+                           (symbol,)).fetchone()
+        if row is None:
+            return _err(h, "no such symbol: {}".format(symbol), 404)
+        before = _row_to_dict(row)
+        try:
+            conn.execute("UPDATE symbols SET enabled = ? WHERE symbol = ?",
+                         (1 if want else 0, symbol))
+            conn.commit()
+        except Exception as e:
+            return _err(h, "disable failed: {}".format(e), 500)
+        _audit(conn, _row_to_dict(user).get("id"),
+               "admin.symbol.enable" if want else "admin.symbol.disable",
+               tier=_row_to_dict(user).get("tier", ""),
+               details={"symbol": symbol, "name": before.get("name"),
+                        "was_enabled": before.get("enabled")})
+        return _send_json(h, {"symbol": symbol, "name": before.get("name"),
+                              "enabled": 1 if want else 0})
+
+    def _admin_audit_csv(self, conn, h, qs):
+        """GET /api/admin/audit.csv -- RFF-005's "export audit CSV".
+
+        Deliberately not the JSON endpoint with a different Accept header.
+        An export is a different job from a page read: it is unbounded by
+        the 500-row UI cap and it is filed, forwarded and opened in a
+        spreadsheet, which is why the cells are formula-injection guarded.
+        """
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        try:
+            limit = int(qs.get("limit", ["10000"])[0])
+        except (TypeError, ValueError):
+            limit = 10000
+        limit = max(1, min(limit, 100000))
+        action = (qs.get("action", [""])[0] or "").strip()
+        try:
+            if action:
+                rows = conn.execute(
+                    "SELECT id, ts, actor_user_id, action, tier, paper_live,"
+                    " details_json FROM audit_log WHERE action = ?"
+                    " ORDER BY id DESC LIMIT ?", (action, limit)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, ts, actor_user_id, action, tier, paper_live,"
+                    " details_json FROM audit_log ORDER BY id DESC LIMIT ?",
+                    (limit,)).fetchall()
+            out = []
+            for r in rows:
+                d = _row_to_dict(r)
+                # Render the timestamp as ISO-8601 UTC rather than an epoch
+                # integer: the epoch is correct but forces a conversion step
+                # on whoever is actually reading the export.
+                ts = d.get("ts")
+                try:
+                    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ts)))
+                except (TypeError, ValueError, OSError):
+                    ts = ""
+                d["ts"] = ts
+                out.append(d)
+            return _send_csv(
+                h,
+                ["id", "ts", "actor_user_id", "action", "tier", "paper_live",
+                 "details_json"],
+                out, filename="audit-export.csv")
+        except Exception as e:
+            return _err(h, "audit export failed: {}".format(e), 500)
