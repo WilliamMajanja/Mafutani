@@ -33,9 +33,24 @@ except ImportError:
 
 try:
     from core.rate_limit import RateLimiter
+    # Anonymous traffic keeps the original flat per-IP cap. This is the
+    # abuse/DDoS control and it is deliberately NOT raised.
     _limiter = RateLimiter(600)
+    # Authenticated traffic is throttled against the caller's own tier
+    # instead (see _dispatch). These two backstops bound a single IP that
+    # holds many sessions, which a per-user bucket alone would not.
+    _auth_user_limiter = RateLimiter(600)
+    _auth_ip_limiter = RateLimiter(600)
 except Exception:
     _limiter = None
+    _auth_user_limiter = None
+    _auth_ip_limiter = None
+
+# A single IP may spend at most this multiple of its own tier allowance
+# across *all* of its sessions. Without it, one address running many
+# accounts is bounded by nothing but the sum of those accounts' tiers.
+AUTH_IP_BACKSTOP_MULTIPLE = 4
+AUTH_IP_BACKSTOP_FLOOR = 1200
 
 _ROUTER = None
 
@@ -148,13 +163,84 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return parsed.path or "/"
 
-    def _dispatch(self, method):
-        if _limiter is not None:
+    def _session_tier(self):
+        """(user_id, api_rate) for this request's session, or (None, None).
+
+        RFC-001's api_rate, resolved from the session cookie. Returns None
+        for anonymous traffic, which is throttled on the flat IP cap
+        instead -- an unauthenticated caller has no tier to honour, and
+        looking one up per request for them would be a wasted query on
+        exactly the traffic most likely to be hostile.
+        """
+        try:
+            from data.db import connect as _c
+            from routes import _get_user_and_session
+            from core.tiers import get_entitlements
+        except Exception:
+            return None, None
+        conn = None
+        try:
+            conn = _c()
+            user, _sess = _get_user_and_session(conn, self)
+            if user is None:
+                return None, None
+            from routes import _row_to_dict
+            ud = _row_to_dict(user)
+            uid = ud.get("id")
+            rate = int(get_entitlements(ud.get("tier", "Free")).get("api_rate", 0))
+            if not uid or rate <= 0:
+                return None, None
+            return int(uid), rate
+        except Exception:
+            return None, None
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _enforce_rate(self, uid, tier_rate):
+        """Apply whichever limit applies to this request. True if allowed.
+
+        Split out of _dispatch so the cheap adversarial checks below can run
+        first: resolving a session costs a database round trip, and a
+        scanner walking honeypot paths should not be able to make the
+        server do one per probe.
+        """
+        if uid is None:
+            # Anonymous: the original flat per-IP cap, unchanged.
+            if _limiter is not None:
+                try:
+                    if not _limiter.allowed(_client_ip(self)):
+                        return False
+                except Exception:
+                    return True
+            return True
+        # Authenticated: this user's tier allowance binds first, so a Free
+        # user is held to 60 rather than the anonymous 600, and an
+        # Institutional user is not clipped by a limit that was never meant
+        # to describe them.
+        if _auth_user_limiter is not None:
             try:
-                if not _limiter.allowed(_client_ip(self)):
-                    return self._send_json({"error": "rate limited"}, 429)
+                if not _auth_user_limiter.allowed("u:%s" % uid, tier_rate):
+                    return False
             except Exception:
                 pass
+        # ...but one IP running many sessions is still bounded, at 4x the
+        # account's own allowance. This is what stops per-user buckets from
+        # multiplying into an unbounded per-IP rate.
+        if _auth_ip_limiter is not None:
+            backstop = max(AUTH_IP_BACKSTOP_FLOOR,
+                           tier_rate * AUTH_IP_BACKSTOP_MULTIPLE)
+            try:
+                if not _auth_ip_limiter.allowed(_client_ip(self), backstop):
+                    return False
+            except Exception:
+                pass
+        return True
+
+    def _dispatch(self, method):
         parsed = urllib.parse.urlparse(self.path or "/")
         path = parsed.path or "/"
 
@@ -182,6 +268,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"error": "rate limited"}, 429)
         except Exception:
             # A fingerprinting failure must never block a request.
+            pass
+
+        # -- rate limiting -------------------------------------------------
+        # After the adversarial checks, because honouring a tier needs a
+        # session lookup and a database round trip, and a scanner walking
+        # honeypot paths must not be able to make the server do one per
+        # probe. The fingerprinting block above already throttles those
+        # clients outright, so nothing is lost by ordering it first.
+        _uid, _rate = self._session_tier()
+        try:
+            if not self._enforce_rate(_uid, _rate):
+                payload = {"error": "rate limited"}
+                if _uid is not None:
+                    payload["limit_per_min"] = _rate
+                return self._send_json(payload, 429)
+        except Exception:
             pass
 
         if path == "/stream/quotes" and method == "GET":
