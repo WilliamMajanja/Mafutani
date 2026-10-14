@@ -2941,7 +2941,17 @@ class Router:
             except Exception:
                 syms = [syms]
         syms = list(syms or [])
-        uid = _row_to_dict(user)["id"]
+        ud = _row_to_dict(user)
+        uid = ud["id"]
+        # RFC-001's max_symbols, enforced. Declared in ENTITLEMENTS since the
+        # schema landed and read by nothing until now.
+        from core.tiers import check_symbol_budget, max_symbols, tracked_symbols
+        ok, why = check_symbol_budget(conn, uid, ud.get("tier", "Free"), syms)
+        if not ok:
+            return _err(h, why, 403, extra={
+                "max_symbols": max_symbols(ud.get("tier", "Free")),
+                "tracked": len(tracked_symbols(conn, uid)),
+            })
         cur = conn.execute("INSERT INTO watchlists (user_id, name, symbols_json)"
                            " VALUES (?, ?, ?)", (uid, name, json.dumps(syms)))
         conn.commit()
