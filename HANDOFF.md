@@ -1,3 +1,310 @@
+# Handoff — 2026-10-14 (plan-set gap analysis; RFF-005 admin write paths)
+
+Picked up from `4360d86`. Clean tree at start; the plan set that built this
+project lives outside the repo at `~/.opencode/plan/` — **RFC-001..005 and
+RFF-001..005**. Searching only the repo finds nothing, which is how I first
+concluded "nothing outstanding" and was wrong.
+
+## Green
+
+- **1573 tests pass** at `4360d86` (864s, not the "~9 min" this file claimed
+  in an earlier entry — it is ~14).
+- 71 new tests this session; full-suite re-run in flight at time of writing.
+- App `:8000` healthy. ML `:8021` still down.
+
+## What the plan set actually is
+
+The project is **not** short of the RFCs/RFFs — it is past them.
+
+| | state |
+|---|---|
+| RFF-001..005 | all implemented; every table, route, script and test file present |
+| RFC-001 | 4 tiers in DB, `require_entitlement` used for live/arb/methods |
+| RFC-002 | Binance live yes; **Alpaca never built** (no `brokers/alpaca.py`) |
+| RFC-003 | spec says 3 wired + 4 stubs; DB has **8 wired, 3 stub** |
+| RFC-004 | all 8 risk rules present in `core/risk.py` + `engines/risk_check.py` |
+| RFC-005 | strict stdlib holds; torch confined to `services/ml/` |
+
+Every RFC still reads `Status: proposed` with an unresolved "Decision
+needed" line. Four are settled de facto by the code. Left for the owner to
+ratify — I did not rewrite their status fields.
+
+## Implemented: RFF-005's admin write paths
+
+RFF-005 acceptance says *"Admin can disable symbol/user and export audit
+CSV"*. The **reads** existed since the schema landed (`users.disabled = 0`
+in the session lookup, `symbols.enabled = 1` in three queries) but **nothing
+could set either column**, and audit was JSON-only behind a 500-row cap.
+
+- `POST /api/admin/users/<id>/disable`
+- `POST /api/admin/symbols/<symbol>/disable`
+- `GET /api/admin/audit.csv` — unbounded, ISO timestamps
+
+Self-disable refused (409): the session filter rejects disabled users, so it
+would remove the last admin's own access. CSV cells are formula-injection
+guarded (`= + - @` execute on open in Excel) and `Content-Disposition` is
+stripped of CR/LF.
+
+## Implemented: `max_symbols`
+
+The other half of "enforce both". `max_symbols` was in `ENTITLEMENTS` from
+the first commit, advertised by `/api/me/entitlements`, and read by nothing.
+
+Enforced at **watchlist creation** — the only place a user asserts a symbol
+set. Capping *reads* would hide quotes from a Free user and break their
+dashboard over a number nobody priced. Counts **distinct** symbols across
+**all** watchlists, so neither a repeated symbol nor a second list buys
+extra slots.
+
+Five mutations of `core/tiers.py` and three wiring mutations of the call
+site were all caught. The "delete the call site" mutation is the one a
+source-grep test cannot catch — hence `test_tiers_symbol_budget.py` drives
+`POST /api/watchlists` for real rather than asserting the string exists.
+
+## Implemented: `api_rate` (the deferred one)
+
+Resolved: keep the anonymous cap at 600 and let the *authenticated* path be
+bounded by the caller's tier, with a per-IP backstop so one address cannot
+multiply its allowance by opening sessions.
+
+- `core/rate_limit.py` — `allowed(key, max_per_min=None)`; added key
+  eviction (`MAX_KEYS`), because `_hits` was never pruned and is now keyed
+  by user id. Also fixed a latent bug: the module-level `allowed(ip,
+  max_per_min)` built a **fresh** limiter per call, so any non-default limit
+  limited nothing.
+- `app.py` — anonymous keeps flat 600/min. Authenticated gets its tier's
+  `api_rate` (Free 60, Pro 300, Institutional 1200, Admin 3600) plus a
+  per-IP backstop of `max(1200, 4 x tier rate)`.
+
+Two ordering decisions worth keeping:
+
+1. **Tier resolution runs after the fingerprinting block**, not before. It
+   costs a DB round trip, and a scanner walking honeypot paths must not be
+   able to force one per probe. The fingerprint block already throttles
+   those clients outright.
+2. **The anonymous bucket is never touched by authenticated traffic**, so
+   raising a tier cannot raise the abuse ceiling.
+
+### Two bad tests caught while proving this
+
+- `assertIn("_limiter = RateLimiter(600)")` also matched
+  `_auth_user_limiter = RateLimiter(600)`. It stayed **green while the
+  anonymous cap was raised to 6000** — the assertion was matching the two
+  lines added by the change it was supposed to police. Same shape as the
+  `SELECT[^"]*FROM` regex that matched nothing.
+- `test_zero_and_negative_fall_back` asserted that later calls are
+  *refused*. Dropping the `cand > 0` guard does not remove the throttle, it
+  makes the limiter refuse **everything**, which that assertion accepted
+  happily. It now asserts the early calls succeed.
+
+## Still true, still blocking
+
+- No live equity/commodity venue; **Alpaca adapter never written**, and
+  `EquityPoller` 404s against stooq. Needs a broker account.
+- MT5 runtime unverified; neither terminal has a saved account.
+- NICKEL, TIN, LEAD have no Yahoo ticker; ZINC is degenerate.
+- **`fx_cross` prices trades that cannot be placed** — see below. Found this
+  session, unfixed, not in any plan document.
+- 47 of 49 symbols still have synthetic 1m data (BTCUSD/ETHUSD are real).
+
+## Fixed: `fx_cross` priced trades that cannot be placed
+
+`engines/arbitrage.py` combined both legs on the **same** side — `ask1/ask2`
+for the long price and `bid1/bid2` for the short. A cross trades *opposite*
+ways on its two legs, so those are not executable: selling both legs at once
+assumes liquidity on both sides of two books simultaneously.
+
+The scanner reported a **tradeable FX dislocation** on live kraken books:
+
+```
+before:  EURUSD  EURJPY / USDJPY   gross +82.74  cost 78.0  edge +5.11
+after:   EURUSD  EURJPY / USDJPY   gross -90.44  cost 78.0  edge -168.44
+```
+
+Both real directions lose ~90-116 bps, and the mids agreed to 0.6 bps, so
+there was no dislocation at all — the whole "edge" was the untradeable
+price, amplified by USDJPY quoting a 2.19% spread where a liquid pair runs
+~0.1%. The engine's figure now matches an independent recomputation exactly.
+
+### The side pairing depends on the operation — do not unify it
+
+The fix is **not** "always use opposite sides". That was the first attempt,
+and it reintroduced the phantom on the `mul` crosses. It was caught by the
+live scan: EURJPY printed +2.66 bps immediately after EURUSD went negative.
+
+| op | example | long | short |
+|---|---|---|---|
+| `div` | EURUSD = EURJPY / USDJPY | ask1 / **bid2** | bid1 / **ask2** |
+| `mul` | EURUSD = EURGBP x GBPUSD | ask1 * **ask2** | bid1 * **bid2** |
+
+For `div` the legs trade opposite ways — long buys EURJPY (ask) and sells
+USDJPY (bid). For `mul` you buy **both**: buying EURGBP buys EUR and sells
+GBP, and buying GBPUSD takes that GBP back and sells USD, so the legs close
+against each other and both are priced at the ask.
+
+A test asserting the uniform rule was written alongside that mistake and
+pinned it; it is now `test_the_two_operations_use_different_pairings`.
+
+### The test that hid it
+
+`test_division_cross_is_priced_correctly` asserted
+`cross_buy == ask1/ask2` — **pinned to the defect**. With near-zero spreads
+on synthetic books the two formulas differ in the fifth decimal, so nothing
+looked wrong. Rewritten, and `tests/test_fx_cross_sides.py` added: the
+phantom live case, a universal band invariant for div crosses
+(`b1/a2 <= mid1/mid2 <= a1/b2`), and coverage of all four configured crosses
+with internally consistent books.
+
+Two of those new tests were themselves wrong on first run — a
+`cross_buy > cross_sell` "invariant" that only holds when leg 1's relative
+spread exceeds leg 2's, and an EURGBP fixture priced at EURJPY scale. Both
+are noted in the file.
+
+**Still unexplained:** — resolved below, and the answer changes what to do
+about it.
+
+## kraken's JPY markets are dormant, not broken — and will not "clear"
+
+Measured across every kraken pair this app routes:
+
+| pair | spread | 1000 trades span | trades/hour |
+|---|---|---|---|
+| EURUSD | 0.3 bp | 0.3 h | 3919 |
+| USDCHF | 1.0 bp | 0.4 h | 2302 |
+| GBPUSD | 0.7 bp | 0.8 h | 1296 |
+| USDCAD | 0.4 bp | 2.8 h | 354 |
+| AUDUSD | 2.7 bp | 8.0 h | 125 |
+| XAUTUSD | 0.5 bp | 7.9 h | 127 |
+| EURGBP | 1.1 bp | 35.3 h | 28 |
+| **USDJPY** | **136.1 bp** | **537.7 h** | **1.9** |
+| **EURJPY** | **90.4 bp** | **1092.3 h** | **0.9** |
+
+USDJPY trades roughly **once every 13 minutes** and EURJPY once every **65
+minutes**. Their top-of-book did not move at all across a 60s sample
+(USDJPY 158.823/160.999 and EURJPY 176.000/177.599 at every tick; EURUSD
+moved, at 0.3–0.5 bps). So the "2.19% spread" is **stale resting orders
+nobody has traded against**, not a live quote and not a transient glitch.
+
+`AssetPairs` reports both as `status: online`, so this is not a halt — the
+markets are simply near-untraded. Traded range over the sample window:
+USDJPY 153.218–162.948, EURJPY 171.714–186.059.
+
+**Consequence: this will not clear.** The right response is not to wait for
+the spread to normalise. The spread guard already refuses these correctly,
+and the honest product position is that **kraken cannot support the JPY
+crosses** — FX_CROSSES loses EURUSD×EURJPY/USDJPY and EURJPY×EURUSD/USDJPY
+in practice, leaving the two crosses through EURGBP/GBPUSD as the only
+priceable FX opportunities. Nothing is wrong with the scanner; the venue
+does not quote a market for those triangles.
+
+Do not "fix" this by loosening `MAX_BOOK_SPREAD_BPS` — the 1.9 and 0.9
+trades/hour are the real signal, and a threshold that admits a book sitting
+unchanged for a minute is admitting a book with no market in it.
+
+## Fixed: no book-sanity check in the arbitrage engine
+
+Root cause of the phantom. `engines/signals.py` has always refused a book
+wider than `max_spread_bps` (default 50); `engines/arbitrage.py` had **no
+spread check at all**, so it priced an edge against any book the venue
+happened to return.
+
+Measured across kraken's book at the time:
+
+| pair | intra-book spread | ask vs last trade |
+|---|---|---|
+| AUDUSD / EURGBP / EURUSD / GBPUSD / USDCAD / USDCHF / XAUUSD | 0.09–1.72 bps | ~0.00% |
+| **USDJPY** | **155.8 bps** | **+1.68%** — ask side has nothing near market |
+| **EURJPY** | **90.4 bps** | −0.09% — bid side thin, ~1.3% under last |
+
+`Depth?pair=USDJPY` shows the bid ladder normal (158.510, 157.311, 157.310,
+157.300 …) and the ask ladder starting at 160.999 and climbing — 1.7% above
+the last trade of 158.333. Not a parsing bug; kraken genuinely has no ask
+liquidity in that pair right now.
+
+Added `MAX_BOOK_SPREAD_BPS = 50.0`, `book_spread_bps()` and
+`_wide_book_names()`, wired into `fx_cross` and `cross_venue`. It measures
+**intra-book** width only — a wide spread *between* venues is the genuine
+dislocation `cross_venue` exists to find, and conflating the two would
+silence the model. The direct is checked too, not just the legs.
+
+The 50 bps cap is not a guess: healthy pairs measure 0.09–1.72 bps and the
+broken ones 90+, so it separates two observed regimes rather than guessing
+inside the healthy range.
+
+Live effect — the two crosses through the broken pair now refuse instead of
+pricing:
+
+```
+EURUSD  EURGBP x GBPUSD     ok       cross tracks direct within fees
+EURUSD  EURJPY / USDJPY     REFUSED  book too wide to price against (max 50.0 bps)
+EURGBP  EURUSD / GBPUSD     ok       cross tracks direct within fees
+```
+
+### A bug in the guard itself, caught by its own test
+
+The first version built the direct's entry as `{"symbol", "venue"}` with no
+bid/ask, so `book_spread_bps` returned `None` and the **direct was never
+actually checked** — only the legs. `test_a_wide_direct_is_refused_too`
+caught it. Now `dict(d, symbol=direct_symbol)`.
+
+### Test fixtures that had to be corrected, and how that was verified
+
+Seven existing arbitrage tests seeded books like `_book(99.0, 100.0)` — a
+**100 bps** intra-book spread on BTCUSD, where the real market is 1–10 bps.
+The new guard correctly refused them. The fixtures were wrong, not the guard,
+so they were tightened to ~1 bps while preserving each test's actual
+property (the cross-venue gap, the fee netting, the size caps, the
+threshold, the stale-book persistence).
+
+Because editing tests to accommodate a change is exactly the failure mode
+this project keeps hitting, every one of those edited tests was
+mutation-checked afterwards: breaking each property still fails. Six
+guard mutations were also confirmed caught, including
+`named = [dict(d, symbol=...)]` → dropping the direct again.
+
+## New this session, still open
+
+- `venue_quotes` is **empty** (0 rows). The 2026-10-12 entry below said 727
+  stale rows sat on disk pending an operator go-ahead. They are gone —
+  confirm that was deliberate.
+- **13 stray `\tmp\mt5build-*` dirs in the repo root**, invisible to
+  `git status` because `*.log`/`*.ex5` are gitignored. Cause is the
+  backslash fallback in `scripts/build_mt5_ea.py:123-128`.
+- **NOTHING IS COMMITTED.** 7 modified files + 4 new test files at time of
+  writing. First action next session should be to review and commit.
+
+## GitHub PAT — moved, ROTATION STILL NEEDED
+
+Was at `Documents/Projects/github_pat_11CPGTOQQ0bh9lkOFVxyM5_S.txt`: a
+93-char fine-grained PAT sitting in a shared folder on `/mnt/c` at mode
+**777** (world-readable) since 2026-09-22.
+
+**`chmod` cannot fix this.** `/mnt/c` has no `metadata` mount option, so WSL
+cannot represent POSIX permissions on NTFS — a `chmod 600` is silently a
+no-op there. Any secret on `/mnt/c` is world-readable and will stay that
+way. The only real fix is to keep credentials on the ext4 filesystem.
+
+Moved to `/home/Sunny/.config/mafutani/github_pat.txt`, mode **600**, in a
+**700** directory. Nothing in the codebase read the file; a scan of the
+Projects tree found no other live-credential patterns.
+
+**This is exposure reduction, not remediation.** The token was readable by
+any process on the machine for ~3 weeks and must still be rotated at
+github.com/settings/tokens. Do that, then delete the file.
+
+### A note on the scan
+
+The first secret scan used `grep -rIl` and reported clean — while failing
+to find the very file it was written to find. `grep -r` misbehaves on this
+mount. The working version walks with `find -print0 | xargs -0 grep -Il`
+and was verified against the known positive before its result was trusted.
+Same family as the `SELECT[^"]*FROM` regex that matched nothing, and as
+claiming the DB was "untouched" based on an mtime that changes constantly:
+an instrument that cannot detect what it claims to detect is worse than
+none.
+
+---
+
 # Handoff — 2026-10-14 (resolution-aware regime overlays; B2)
 
 Picked up from `1a2521f`. Closed out A (done, `fc912bf`), B1 (`ffe59ab`), C
