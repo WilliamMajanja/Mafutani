@@ -273,7 +273,7 @@ guard mutations were also confirmed caught, including
 - **NOTHING IS COMMITTED.** 7 modified files + 4 new test files at time of
   writing. First action next session should be to review and commit.
 
-## GitHub PAT — moved, ROTATION STILL NEEDED
+## GitHub PAT — moved; owner has decided to stop here
 
 Was at `Documents/Projects/github_pat_11CPGTOQQ0bh9lkOFVxyM5_S.txt`: a
 93-char fine-grained PAT sitting in a shared folder on `/mnt/c` at mode
@@ -288,9 +288,10 @@ Moved to `/home/Sunny/.config/mafutani/github_pat.txt`, mode **600**, in a
 **700** directory. Nothing in the codebase read the file; a scan of the
 Projects tree found no other live-credential patterns.
 
-**This is exposure reduction, not remediation.** The token was readable by
-any process on the machine for ~3 weeks and must still be rotated at
-github.com/settings/tokens. Do that, then delete the file.
+**Owner decision 2026-10-16: stop here.** Not rotating further. Recorded so
+this is not re-raised as a fresh finding next session — the exposure
+reduction stands and the residual risk is accepted knowingly. If it ever
+needs revisiting, the path above is the only copy.
 
 ### A note on the scan
 
