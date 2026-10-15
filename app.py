@@ -49,8 +49,24 @@ except Exception:
 # A single IP may spend at most this multiple of its own tier allowance
 # across *all* of its sessions. Without it, one address running many
 # accounts is bounded by nothing but the sum of those accounts' tiers.
+# A single IP may spend at most this multiple of a session's own tier
+# allowance across *all* of its sessions. Without it, one address running
+# many accounts is bounded by nothing but the sum of those accounts' tiers.
+#
+# There was also a floor here (1200), on the theory that a house or small
+# office behind one NAT needs room for several people. It did not work: the
+# lowest tier's rate times this multiple is 60 x 4 = 240, so any floor at or
+# below 240 is dead code, and any floor above it stops being a floor and
+# becomes the limit -- which handed a Free account a 1200/min ceiling, 20x
+# its own 60/min allowance, while Pro sat at the same number with a 4x
+# headroom it had earned. A constant like that is either inert or a bug; this
+# one was mostly the second.
+#
+# The NAT case is real but is not what this bound is for. A user behind a
+# shared IP is still limited by their own per-user bucket; only the aggregate
+# across *accounts* is bounded here. If shared-IP traffic ever complains, the
+# lever is the multiple -- not a floor that silently overrides it.
 AUTH_IP_BACKSTOP_MULTIPLE = 4
-AUTH_IP_BACKSTOP_FLOOR = 1200
 
 _ROUTER = None
 
@@ -231,8 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         # account's own allowance. This is what stops per-user buckets from
         # multiplying into an unbounded per-IP rate.
         if _auth_ip_limiter is not None:
-            backstop = max(AUTH_IP_BACKSTOP_FLOOR,
-                           tier_rate * AUTH_IP_BACKSTOP_MULTIPLE)
+            backstop = tier_rate * AUTH_IP_BACKSTOP_MULTIPLE
             try:
                 if not _auth_ip_limiter.allowed(_client_ip(self), backstop):
                     return False

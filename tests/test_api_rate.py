@@ -249,17 +249,42 @@ class TestIpBackstop(unittest.TestCase):
         self.appmod = appmod
         self.Handler = appmod.Handler
 
-    def test_backstop_constants_exist(self):
-        self.assertGreaterEqual(self.appmod.AUTH_IP_BACKSTOP_MULTIPLE, 2)
-        self.assertGreaterEqual(self.appmod.AUTH_IP_BACKSTOP_FLOOR, 600)
+    def test_backstop_scales_with_the_tier(self):
+        """The property the old floor broke.
 
-    def test_backstop_is_the_tighter_of_floor_and_multiple(self):
+        AUTH_IP_BACKSTOP_FLOOR was 1200, chosen for NAT headroom. The lowest
+        tier times the multiple is 60 x 4 = 240, so a 1200 floor is not a
+        floor at all -- it becomes the limit, and Free got a 1200/min
+        ceiling against its own 60/min allowance. A 20x aggregate bound for
+        the smallest tier is not a bound.
+        """
         for tier, ent in ENTITLEMENTS.items():
             rate = ent["api_rate"]
-            backstop = max(self.appmod.AUTH_IP_BACKSTOP_FLOOR,
-                           rate * self.appmod.AUTH_IP_BACKSTOP_MULTIPLE)
+            backstop = rate * self.appmod.AUTH_IP_BACKSTOP_MULTIPLE
+            self.assertEqual(backstop, rate * self.appmod.AUTH_IP_BACKSTOP_MULTIPLE,
+                             "%s backstop does not scale with its tier" % tier)
             self.assertGreaterEqual(backstop, rate,
-                                    "%s backstop is below its own tier rate" % tier)
+                                    "%s backstop is below its own rate" % tier)
+
+    def test_the_ratio_is_the_same_for_every_tier(self):
+        """If one tier gets a proportionally larger IP budget than
+        another, the multiple is doing nothing."""
+        ratios = {t: (e["api_rate"] * self.appmod.AUTH_IP_BACKSTOP_MULTIPLE)
+                     / float(e["api_rate"]) for t, e in ENTITLEMENTS.items()}
+        self.assertEqual(len(set(ratios.values())), 1,
+                         "IP headroom varies by tier: %s" % ratios)
+
+    def test_no_floor_constant_remains(self):
+        """A floor below the computed minimum is inert; above it, it
+        overrides. Neither is worth keeping."""
+        self.assertFalse(hasattr(self.appmod, "AUTH_IP_BACKSTOP_FLOOR"))
+
+    def test_free_is_not_given_a_disproportionate_ip_budget(self):
+        free = ENTITLEMENTS["Free"]["api_rate"]
+        backstop = free * self.appmod.AUTH_IP_BACKSTOP_MULTIPLE
+        self.assertLessEqual(backstop, 500,
+                             "Free's IP ceiling is %.0f/min against a %.0f/min "
+                             "allowance" % (backstop, free))
 
     def test_many_users_from_one_ip_still_hit_a_ceiling(self):
         appmod = self.appmod
@@ -271,8 +296,7 @@ class TestIpBackstop(unittest.TestCase):
         h.command = "GET"
         h._fake_ip = "10.0.0.9"
         rate = 60
-        backstop = max(appmod.AUTH_IP_BACKSTOP_FLOOR,
-                       rate * appmod.AUTH_IP_BACKSTOP_MULTIPLE)
+        backstop = rate * appmod.AUTH_IP_BACKSTOP_MULTIPLE
         allowed = 0
         # 60 distinct users, each well within their own 60/min allowance.
         for uid in range(60):
@@ -281,8 +305,15 @@ class TestIpBackstop(unittest.TestCase):
                     allowed += 1
         self.assertLessEqual(allowed, backstop,
                              "one IP exceeded its backstop via many users")
-        self.assertGreater(allowed, 600,
-                           "backstop binds before the old 600 cap even for 60 users")
+        # Previously asserted `allowed > 600`, reasoning that the backstop
+        # should only bind for genuinely heavy multi-account use. With the
+        # floor gone it binds at 240 for Free -- deliberately *tighter* than
+        # the old anonymous cap, because 60 accounts each within their own
+        # allowance is exactly the case this bound exists for. So the
+        # expectation now is that the ceiling is reached and respected, not
+        # that it is generous.
+        self.assertEqual(allowed, backstop,
+                         "expected the per-IP ceiling to bind at %d" % backstop)
 
 
 class TestSessionTierResolution(unittest.TestCase):

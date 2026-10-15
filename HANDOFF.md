@@ -74,7 +74,19 @@ multiply its allowance by opening sessions.
   limited nothing.
 - `app.py` — anonymous keeps flat 600/min. Authenticated gets its tier's
   `api_rate` (Free 60, Pro 300, Institutional 1200, Admin 3600) plus a
-  per-IP backstop of `max(1200, 4 x tier rate)`.
+  per-IP backstop of `4 x tier rate`.
+
+  There was also an `AUTH_IP_BACKSTOP_FLOOR = 1200`, added for NAT headroom.
+  **It was inert or a bug, never anything in between:** the lowest tier times
+  the multiple is `60 x 4 = 240`, so a floor at or below 240 is dead code,
+  and any floor above it stops being a floor and becomes the limit — which
+  gave Free a 1200/min IP ceiling against its own 60/min allowance, 20x,
+  while Pro sat at the same 1200 having earned 4x. Removed; the multiple now
+  scales cleanly and every tier gets the same 4x.
+
+  A constant like that is either dead code or a bug. The smell is not the
+  number, it is the `max(...)` that lets a safety constant quietly become the
+  limit it was supposed to sit under.
 
 Two ordering decisions worth keeping:
 
