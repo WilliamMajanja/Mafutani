@@ -29,3 +29,13 @@ env/
 # the .mq5 source is tracked.
 *.ex5
 *.ex4
+
+# Build artifacts that escaped into the repo root as literal-backslash
+# filenames, e.g. "\tmp\mt5build-1_5b8aw2\build.log". On Linux that is one
+# file whose name contains backslashes, not a path -- the Windows fallback in
+# scripts/build_mt5_ea.py that produced them has since been removed, but
+# *.log and *.ex5 below would hide them from `git status` again if one ever
+# reappears. Listed explicitly so a stray artifact can never present as a
+# clean tree.
+*\tmp\mt5build-*
+*mt5build-*

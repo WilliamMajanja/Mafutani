@@ -121,11 +121,34 @@ def compile_ea(metaeditor, src=EA_SRC, keep_artifacts=False):
     log_win = os.path.join(workdir, "build.log")
 
     def _win(p):
+        """POSIX path -> Windows path, via wslpath.
+
+        There used to be a fallback here: `p.replace("/", "\\\\")` on any
+        exception. That is worse than having no fallback. On Linux a string
+        of backslashes is a single filename, not a path, so `/tmp/x` became
+        one file literally called `\\tmp\\x` -- which is how 13 build
+        artifacts ended up littering the repository root with names like
+        `\\tmp\\mt5build-1_5b8aw2\\build.log`. MetaEditor, reading that as a
+        Windows path, would have resolved it against its own drive instead.
+
+        So this now fails loudly. A wrong path handed to MetaEditor produces
+        a confusing compile error, or worse, a successful build of the wrong
+        file; a raised exception produces a message naming the actual cause.
+        """
         try:
             return subprocess.check_output(["wslpath", "-w", p],
                                           text=True).strip()
-        except Exception:
-            return p.replace("/", "\\")
+        except FileNotFoundError:
+            raise RuntimeError(
+                "wslpath not found; cannot translate %r for MetaEditor. "
+                "Run the build from WSL, or pass a Windows path directly."
+                % p)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                "wslpath -w %r failed (%s); refusing to guess a Windows path"
+                % (p, e))
+        except Exception as e:
+            raise RuntimeError("wslpath -w %r failed: %s" % (p, e))
 
     cmd = [metaeditor, "/compile:" + _win(staged),
            "/log:" + _win(log_win)]

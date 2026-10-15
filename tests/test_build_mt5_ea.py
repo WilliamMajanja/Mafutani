@@ -103,7 +103,13 @@ class TestResultParsing(unittest.TestCase):
         orig_run, orig_co = subprocess.run, subprocess.check_output
         fake = FakeMetaEditor(log_bytes, make_ex5)
         subprocess.run = fake
-        subprocess.check_output = fake
+        # check_output returns stdout as a *string*, not a CompletedProcess.
+        # Assigning `fake` directly returned the wrong type, and the old
+        # backslash fallback in compile_ea caught the resulting AttributeError
+        # and carried on -- which is how both a broken mock and the real path
+        # bug it was hiding stayed invisible. Wrapping keeps one fake for two
+        # entry points while honouring each one's contract.
+        subprocess.check_output = lambda *a, **k: fake(*a, **k).stdout
         try:
             return B.compile_ea("/nonexistent/MetaEditor64.exe")
         finally:
@@ -290,6 +296,71 @@ class TestCliSurface(unittest.TestCase):
             self.assertEqual(out.returncode, 0, "*.ex5 is not actually ignored")
         except Exception:
             self.skipTest("git not available")
+
+
+class TestPathTranslationFailsLoudly(unittest.TestCase):
+    """compile_ea used to fall back to `p.replace("/", "\\\\")` whenever
+    wslpath failed.
+
+    That fallback is what produced the 13 literal-backslash artifacts in the
+    repository root: on Linux a string of backslashes is one filename, not a
+    path, so `/tmp/x` became a single file named `\\tmp\\x`. Handing that to
+    MetaEditor does not fail -- Windows resolves it against its own drive --
+    so the build quietly targeted the wrong location.
+
+    These pin that the failure is now loud, because "guessing a path" is the
+    failure mode, not an inconvenience.
+    """
+
+    def _compile_with(self, co_exc):
+        import subprocess as sp
+        orig_run, orig_co = sp.run, sp.check_output
+        fake = FakeMetaEditor(metaeditor_log("compiling 'x.mq5'"), True)
+
+        def boom(*a, **k):
+            raise co_exc
+        sp.run = fake
+        sp.check_output = boom
+        try:
+            return B.compile_ea("/nonexistent/MetaEditor64.exe")
+        finally:
+            sp.run = orig_run
+            sp.check_output = orig_co
+
+    def test_missing_wslpath_raises_rather_than_guessing(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._compile_with(FileNotFoundError("wslpath"))
+        self.assertIn("wslpath", str(ctx.exception))
+
+    def test_wslpath_failure_raises_rather_than_guessing(self):
+        import subprocess as sp
+        with self.assertRaises(RuntimeError) as ctx:
+            self._compile_with(sp.CalledProcessError(1, "wslpath"))
+        self.assertIn("refusing to guess", str(ctx.exception))
+
+    def test_an_unexpected_wslpath_error_also_fails_loudly(self):
+        """The generic `except` branch is where the fallback used to live.
+
+        Restoring `return p.replace("/", chr(92))` there left every test
+        green, because the other two raise FileNotFoundError and
+        CalledProcessError -- both of which have their own handlers, so the
+        branch that actually contained the bug was never entered. This raises
+        something matching neither.
+        """
+        with self.assertRaises(RuntimeError):
+            self._compile_with(ValueError("something else entirely"))
+
+    def test_the_message_names_the_tool(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._compile_with(FileNotFoundError("wslpath"))
+        self.assertIn("wslpath", str(ctx.exception).lower())
+
+    # An earlier version of this class also asserted the offending literal
+    # was absent from the source text. It failed immediately -- because the
+    # docstring added alongside the fix *quotes* that literal while explaining
+    # why it was removed. Asserting on source text cannot tell code from the
+    # comment about it. The three runtime tests above are what actually pin
+    # the behaviour, so the text scan was dropped rather than repaired.
 
 
 if __name__ == "__main__":
