@@ -647,20 +647,31 @@ answer instead of an assumption. `tests/test_venue_depth.py` asserts the
 measured 37-row case fails the usability floor, which is why the retention
 changed rather than the gate.
 
-## Torch, without depending on it
+## Torch: removed 2026-10-16
 
-The app is stdlib-only. PyTorch runs in `services/ml/`, in its own
-virtualenv, and is reached over plain HTTP by `engines/mlclient.py` — which
-imports `urllib` and nothing else.
+This section previously described PyTorch running in `services/ml/` in its own
+virtualenv, reached over HTTP by `engines/mlclient.py`, with callers
+degrading gracefully when the service was down.
 
-```bash
-python3 -m venv .venv-torch
-.venv-torch/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
-.venv-torch/bin/python services/ml/server.py --port 8021    # optional
-```
+**There were no callers.** `mlclient` was never invoked from any route,
+engine, feed or script — the only references to it anywhere were comments
+*inside* `services/ml/` itself. So the documented behaviour ("if the service is
+down, callers degrade") described a fallback path with nothing to fall back,
+and the service on `:8021` had been down throughout without that mattering to
+anything.
 
-Nothing in the trading path imports it. If the service is down, `mlclient`
-raises `MLUnavailable` and callers degrade; the app carries on unchanged.
+`RFC-005` ratified this as "the escape hatch used exactly once, properly
+isolated". The isolation was real — no application import ever touched torch —
+but an escape hatch nothing routes through is not an escape hatch. It is an
+899 MB virtualenv and a 34-test suite that made every full run roughly ten
+minutes longer than it needed to be.
+
+Removed: `services/ml/`, `engines/mlclient.py`, `tests/test_ml_bridge.py`.
+`RFC-005` is amended accordingly. The `.venv-torch/` virtualenv is left on
+disk locally and is gitignored; delete it when convenient (899 MB).
+
+The strict-stdlib constraint of `RFC-005` is now unconditionally true rather
+than true-with-one-exception.
 
 | Env | Default | |
 |---|---|---|

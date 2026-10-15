@@ -1,3 +1,60 @@
+# Handoff — 2026-10-16 (torch removed; per-IP backstop floor dropped)
+
+Picked up from `29b03f5`.
+
+## Torch was never wired — removed
+
+`engines/mlclient.py` had **zero call sites**. An AST scan of the application
+tree (excluding `services/` and `tests/`) found no file importing it; the only
+references anywhere were comments *inside* `services/ml/`. No route exposed it,
+no frontend referenced it, the Dockerfile never mentioned it, and the service
+on `:8021` was never auto-started.
+
+So the README's claim that "if the service is down, callers degrade" described
+a fallback path with nothing to fall back — and the service had been down for
+weeks without that mattering to anything.
+
+Removed: `services/ml/`, `engines/mlclient.py`, `tests/test_ml_bridge.py`
+(34 tests). `RFC-005` ratified this as "the escape hatch used exactly once,
+properly isolated"; the isolation was genuine, but an escape hatch nothing
+routes through is an 899 MB virtualenv plus a test suite that made every full
+run ~10 minutes longer. `RFC-005` amended. `.venv-torch/` left on disk,
+gitignored.
+
+**Known pattern, now twice.** Same shape as the unwired entitlements: code
+written, tested and documented with nothing calling it. The ML client had 34
+passing tests and zero callers. The suite was evidence of correctness *given a
+caller*, and no evidence that a caller existed.
+
+Expected effect: full suite drops from ~15 min to ~5, since `test_ml_bridge`
+spawned a torch subprocess per test.
+
+## Per-IP backstop floor removed
+
+`AUTH_IP_BACKSTOP_FLOOR = 1200` was either dead code or a bug — the lowest
+tier's rate times the multiple is `60 x 4 = 240`, so at or below 240 it did
+nothing and above it it *became* the limit. At 1200 it gave a Free account a
+20x per-IP ceiling against its own 60/min allowance, while Pro sat at the same
+1200 having earned 4x. Removed; every tier now gets the same 4x.
+
+## Still true, still blocking
+
+- **No live equity/commodity venue.** Alpaca adapter never built; stooq 404s.
+  Needs a broker account.
+- MT5 runtime unverified; neither terminal has a saved account.
+- NICKEL/TIN/LEAD no Yahoo ticker; ZINC degenerate.
+- 47 of 49 symbols still on synthetic 1m data.
+- `venue_quotes` empty — confirm the 727-row deletion was deliberate.
+- Plan set at `~/.opencode/plan/` is **not in git**. Ratified, but the design
+  record can still drift from the code it describes.
+
+## Note on the entry below
+
+Left as written — it records what was true when written. Its `:8021` /
+`.venv-torch` references are now stale.
+
+---
+
 # Handoff — 2026-10-14 (plan-set gap analysis; RFF-005 admin write paths)
 
 Picked up from `4360d86`. Clean tree at start; the plan set that built this
