@@ -9,9 +9,92 @@ import csv
 import json
 import os
 import random
+import threading
 import time
 import urllib.parse
 import urllib.request
+
+
+# -- feed health log ------------------------------------------------------
+#
+# RFC-002's acceptance criterion -- "poller failure isolates per symbol,
+# logs to risk_events" -- was only half implemented. The isolation exists
+# (every poller wraps each symbol in its own try/except); nothing was ever
+# written down. A feed that dies quietly is indistinguishable from one that
+# was never configured, which is the failure this project has been bitten by
+# repeatedly -- and `VenuePoller` was the worst case, because it discarded
+# failed books outright rather than returning them with an error.
+#
+# Goes to `feed_health`, not `risk_events`: that table is both user-scoped
+# and order-scoped, and a dead feed is neither. See the schema comment.
+#
+# Transitions, not per-poll. The pollers run every 5-10 seconds over ~50
+# symbols; logging every failure would write tens of thousands of identical
+# rows an hour and bury the one event that matters. So a symbol writes one
+# `down` row when it first fails and one `recovered` when it comes back.
+_FEED_LOCK = threading.Lock()
+_FEED_DOWN = set()
+
+
+def _write_feed_event(symbol, venue, kind, reason, detail=None):
+    """One row. Best-effort: feed logging must never fail a poll."""
+    try:
+        from data.db import connect as _c
+        conn = _c()
+    except Exception:
+        return
+    try:
+        conn.execute(
+            "INSERT INTO feed_health (ts, symbol, venue, kind, reason, detail_json)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (int(_now()), str(symbol or ""), str(venue or ""), str(kind),
+             str(reason or "")[:500], json.dumps(detail or {})))
+        conn.commit()
+    except Exception:
+        # A missing table (pre-migration DB) must not raise into the caller.
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _note_feed_health(rows):
+    """Record down/recovered transitions for one poll's result.
+
+    `rows` is a poll_once output. The two shapes differ: CryptoPoller and
+    EquityPoller key by symbol, VenuePoller by (symbol, venue) tuple. Both are
+    handled, because a feed that only reported for one poller would be the
+    same silent-swallow problem in a new place.
+    """
+    for k, row in (rows or {}).items():
+        row = row or {}
+        if isinstance(k, tuple):
+            sym = k[0]
+            venue = str(row.get("venue") or (k[1] if len(k) > 1 else ""))
+        else:
+            sym, venue = k, str(row.get("venue") or "")
+        key = "%s|%s" % (sym, venue)
+        err = row.get("error")
+        with _FEED_LOCK:
+            was_down = key in _FEED_DOWN
+            now_down = bool(err)
+            if now_down == was_down:
+                continue
+            if now_down:
+                _FEED_DOWN.add(key)
+            else:
+                _FEED_DOWN.discard(key)
+        _write_feed_event(sym, venue, "down" if now_down else "recovered",
+                          err or "", {"venue": venue})
+
+
+def reset_feed_health_state():
+    """Forget what is currently marked down. For tests, and for an operator
+    who has just fixed a feed and wants the next failure to log again."""
+    with _FEED_LOCK:
+        _FEED_DOWN.clear()
 
 try:
     from data.normalize import normalize_candle, normalize_quote, spread_bps
@@ -268,6 +351,7 @@ class CryptoPoller:
                 out[sym] = self.fetch_one(sym)
             except Exception as e:  # never let one symbol kill the poll
                 out[sym] = {"symbol": sym, "ts": _now(), "error": str(e)}
+        _note_feed_health(out)
         return out
 
 class VenuePoller:
@@ -345,21 +429,43 @@ class VenuePoller:
         pool = ThreadPoolExecutor(max_workers=min(self.workers, len(jobs)))
         try:
             futures = [pool.submit(_run, job) for job in jobs]
+            # Which job each future came from. ThreadPoolExecutor futures
+            # carry no reference to their arguments, so without this a failure
+            # cannot be attributed to a (symbol, venue) -- which is the entire
+            # thing being logged.
+            which = {f: (job[0], job[1]) for f, job in zip(futures, jobs)}
             # One shared deadline for the whole batch. Per-book timeouts
             # would make a tick's wall clock the sum of every venue's
             # latency, which is the stall this batching exists to avoid.
-            done, _pending = _wait(futures, timeout=self.timeout)
+            done, pending = _wait(futures, timeout=self.timeout)
             for fut in done:
                 try:
                     key, quote = fut.result()
-                except Exception:
+                except Exception as e:
+                    # Returned as an error row rather than skipped. A venue
+                    # book that fails used to vanish from the result with no
+                    # trace, which is indistinguishable from one that was
+                    # never routed -- and this is the feed cross-venue
+                    # arbitrage depends on, where a silently missing book
+                    # looks like a narrower opportunity set rather than a
+                    # broken one.
+                    key = which[fut]
+                    out[key] = {"symbol": key[0], "venue": key[1],
+                                "ts": _now(), "error": str(e) or repr(e)}
                     continue
                 if quote:
                     out[key] = quote
+            for fut in pending:
+                # Still blocked on a dead socket at the batch deadline.
+                # Previously discarded without a trace.
+                key = which[fut]
+                out[key] = {"symbol": key[0], "venue": key[1], "ts": _now(),
+                            "error": "venue timeout after %ss" % self.timeout}
         finally:
             # wait=False: a book still blocked on a dead socket must not
             # hold up the tick. Its result is discarded.
             pool.shutdown(wait=False)
+        _note_feed_health(out)
         return out
 
 
@@ -650,6 +756,7 @@ class EquityPoller:
                 out[sym] = self.fetch_one(sym)
             except Exception as e:
                 out[sym] = {"symbol": sym, "ts": _now(), "error": str(e)}
+        _note_feed_health(out)
         return out
 
 

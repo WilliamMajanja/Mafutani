@@ -387,6 +387,40 @@ CREATE TABLE IF NOT EXISTS risk_events (
 );
 CREATE INDEX IF NOT EXISTS idx_risk_events_user ON risk_events(user_id);
 
+-- ---------------------------------------------------------------- feed_health
+-- Poll and venue failures, per (symbol, venue).
+--
+-- Deliberately NOT `risk_events`. That table is an order-risk audit trail:
+-- `user_id INTEGER NOT NULL REFERENCES users(id)` with foreign keys enforced
+-- (data/db.py), plus an `order_payload_json` column. A dead feed has neither
+-- a user nor an order. Recording one there means inventing a user id, and
+-- the only reader is an admin COUNT(*) -- which would then answer "how many
+-- risk rejections have we had" with a number that also includes feed
+-- outages. A figure answering two questions cannot answer either.
+--
+-- RFC-002's acceptance line says poller failures should "log to
+-- risk_events". The intent -- a failure must be durable and visible, not
+-- swallowed by the isolation handler -- is what this table serves. The
+-- wording conflated feed health with order risk; that is recorded in the
+-- ratified RFC rather than quietly obeyed.
+--
+-- Rows are transitions, not per-poll. The pollers run every 5-10s over ~50
+-- symbols; logging every failure would write tens of thousands of identical
+-- rows an hour and bury the one event that matters. A symbol writes one
+-- `down` row when it first fails and one `recovered` when it comes back.
+-- See data/feeds.py:_note_feed_health.
+CREATE TABLE IF NOT EXISTS feed_health (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts          INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+  symbol      TEXT NOT NULL DEFAULT '',
+  venue       TEXT NOT NULL DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT 'down',
+  reason      TEXT NOT NULL DEFAULT '',
+  detail_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_feed_health_symbol ON feed_health(symbol, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_health_kind ON feed_health(kind, ts DESC);
+
 -- ---------------------------------------------------------------- journal
 CREATE TABLE IF NOT EXISTS journal (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,

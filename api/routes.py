@@ -4359,6 +4359,17 @@ class Router:
             "fills": _count("SELECT COUNT(*) FROM fills"),
             "backtests": _count("SELECT COUNT(*) FROM backtests"),
             "risk_events": _count("SELECT COUNT(*) FROM risk_events"),
+            "feed_health": _count("SELECT COUNT(*) FROM feed_health"),
+            # How many books are down *right now*. The raw count above is
+            # cumulative and only grows, so on a long-lived deployment it
+            # stops saying anything about whether the feeds currently work --
+            # which is the question an operator opens this page to answer.
+            # "Latest row per (symbol, venue) is a down" is the transition
+            # semantics from data/feeds.py expressed as a query.
+            "feeds_down": _count(
+                "SELECT COUNT(DISTINCT symbol || '|' || venue) FROM feed_health"
+                " WHERE id IN (SELECT MAX(id) FROM feed_health"
+                "               GROUP BY symbol, venue) AND kind = 'down'"),
             "audit": _count("SELECT COUNT(*) FROM audit_log"),
         })
 
