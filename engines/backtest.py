@@ -46,6 +46,11 @@ BACKTEST_MAX_BARS = BACKTEST_WINDOW_DAYS * BARS_PER_DAY   # 259,200
 # nobody reads at that resolution.
 EQUITY_MAX_POINTS = 5000
 
+# Default bars between a signal's deciding bar and its fill bar. 1 is the
+# earliest fill that is actually reachable. See run_backtest for why this
+# is not zero, and why zero remains available.
+DEFAULT_ENTRY_DELAY_BARS = 1
+
 
 def _num(v, default=0.0):
     try:
@@ -439,6 +444,26 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
         warmup = 1
     quote_spread = _num(params.get("quote_spread_bps", 1.0), 1.0)
 
+    # Bars between the bar whose close produced a signal and the bar whose
+    # close fills it.
+    #
+    # This is not a modelling nicety. A strategy sees bar i's close and then
+    # trades at bar i's close: it fills at a price that only became knowable
+    # at the instant it was filled. Live, the earliest possible fill is the
+    # next bar. The difference is not a rounding error -- one public
+    # multi-agent system recorded exactly this as a bug it found in itself,
+    # where deciding and executing on the same close "inflated returns", and
+    # it materially changed the headline once fixed.
+    #
+    # Default 1. `entry_delay_bars=0` reproduces the old same-bar fill and
+    # exists so the bias stays measurable and auditable rather than being
+    # merely asserted; it must not be used to quote a result.
+    entry_delay = int(_num(params.get("entry_delay_bars",
+                                      DEFAULT_ENTRY_DELAY_BARS),
+                           DEFAULT_ENTRY_DELAY_BARS))
+    if entry_delay < 0:
+        entry_delay = 0
+
     n = len(candles)
     closes = [_c(c) for c in candles]
     if n == 0 or any(x <= 0 for x in closes):
@@ -454,6 +479,9 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
     equity = []
     realized = 0.0
     pos = None  # {side, entry, qty, entry_idx, entry_ts, fees}
+    # An order decided on this bar, awaiting the bar it fills on.
+    # See `entry_delay` below for why it exists.
+    pending = None
     # Only COT-gated strategies get a gate. Handing one to `ema_trend`
     # would be harmless (it ignores the argument) but it would attach a
     # `cot_gate` report to a run that never consulted COT, which is a
@@ -488,6 +516,23 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
             "reason": reason,
         })
         pos = None
+
+    def fill(order, i, ts):
+        """Execute `order` at bar `i`'s close. Returns True if it filled."""
+        nonlocal pos
+        direction = 1.0 if order["side"] == "buy" else -1.0
+        if order["kind"] == "exit":
+            if pos is None:
+                return False
+            close_pos(closes[i] * (1.0 - direction * slip), i, ts,
+                      order["reason"])
+            return True
+        if pos is not None:
+            return False
+        entry_px = closes[i] * (1.0 + direction * slip)
+        pos = {"side": order["side"], "entry": entry_px, "qty": qty,
+               "entry_idx": i, "entry_ts": ts, "fees": fee_for(entry_px * qty)}
+        return True
 
     start = min(warmup, n - 1)
     # Rolling signal window: indicators (EMA/ATR/VWAP) only need the most
@@ -547,21 +592,52 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
                 if hit:
                     close_pos(sl_px, i, ts, "stop-loss")
                     exited = True
-            if not exited and side is not None and side != pos["side"]:
-                exit_px = closes[i] * (1.0 - direction * slip)
-                close_pos(exit_px, i, ts, "opposite-signal")
-                exited = True
-            if not exited and (i - pos["entry_idx"]) >= max_hold:
-                exit_px = closes[i] * (1.0 - direction * slip)
-                close_pos(exit_px, i, ts, "time-stop")
-                exited = True
+            # Signal- and time-driven exits are *decisions*, not fills: they
+            # are scheduled here and executed `delay` bars below. Filling on
+            # the deciding bar's close is the look-ahead this parameter
+            # exists to remove.
+            #
+            # Only schedule when nothing is already working. Refreshing a
+            # pending order's bar index on every bar its condition stays true
+            # pushes the fill out forever -- the order can never mature, so
+            # the position never closes. That bug cost 2,556 of 2,558 trades.
+            if pending is None:
+                if not exited and side is not None and side != pos["side"]:
+                    pending = {"i": i, "kind": "exit", "side": pos["side"],
+                               "reason": "opposite-signal"}
+                elif not exited and (i - pos["entry_idx"]) >= max_hold:
+                    pending = {"i": i, "kind": "exit", "side": pos["side"],
+                               "reason": "time-stop"}
 
-        if pos is None and side in ("buy", "sell"):
-            direction = 1.0 if side == "buy" else -1.0
-            entry_px = closes[i] * (1.0 + direction * slip)
-            fee_e = fee_for(entry_px * qty)
-            pos = {"side": side, "entry": entry_px, "qty": qty,
-                   "entry_idx": i, "entry_ts": ts, "fees": fee_e}
+        # Schedule an entry from the signal just computed, for a later bar.
+        # No fill happens on the bar that produced the signal.
+        if pos is None and pending is None and side in ("buy", "sell"):
+            pending = {"i": i, "kind": "entry", "side": side,
+                       "reason": "signal"}
+
+        # Execute whatever was decided `entry_delay` bars ago, at THIS bar's
+        # close.
+        #
+        # This sits after the intrabar TP/SL checks on purpose. A position
+        # entered at this bar's close did not exist during this bar, so
+        # testing its high/low for a take-profit here would be reading a
+        # price range that elapsed before the entry.
+        #
+        # Runs twice so that `entry_delay_bars=0` reproduces the pre-fix
+        # engine exactly, including its same-bar flip (exit and re-enter at
+        # one close). That mode is kept only so the bias stays measurable.
+        if pending is not None and (i - pending["i"]) >= entry_delay:
+            fill(pending, i, ts)
+            pending = None
+
+        # Schedule an entry from the signal just computed. No fill happens on
+        # the bar that produced the signal.
+        if pos is None and pending is None and side in ("buy", "sell"):
+            pending = {"i": i, "kind": "entry", "side": side,
+                       "reason": "signal"}
+            if entry_delay == 0:
+                fill(pending, i, ts)
+                pending = None
 
         if pos is None:
             equity.append(start_eq + realized)
@@ -570,6 +646,10 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
             mtm = (closes[i] - pos["entry"]) * direction * pos["qty"]
             equity.append(start_eq + realized + mtm - pos["fees"])
 
+    # A decision made on the final bar has no bar left to fill on, so it
+    # simply never fills. That is the honest outcome, not a gap to paper over
+    # by filling at a price the run cannot reach.
+    unclosed_pending = pending is not None
     if pos is not None:  # liquidate at final close
         direction = 1.0 if pos["side"] == "buy" else -1.0
         exit_px = closes[-1] * (1.0 - direction * slip)
