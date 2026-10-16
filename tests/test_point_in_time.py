@@ -338,5 +338,49 @@ class TestStdlibOnly(unittest.TestCase):
                          "non-stdlib import: %s" % sorted(found))
 
 
+class TestProvenanceIsRecorded(unittest.TestCase):
+    """A stored result must carry the convention that produced it.
+
+    The fill convention changed once already, silently. Every run recorded
+    before it describes a different experiment from every run after, and
+    nothing in the row said so. That is what the stamp is for.
+    """
+
+    def _run(self, delay=None):
+        candles = _candles([100.0 + i for i in range(40)])
+        p = {"side": "buy", "warmup_bars": 2, "max_hold_bars": 3}
+        if delay is not None:
+            p["entry_delay_bars"] = delay
+        return B.run_backtest(candles, "manual", p, fee_bps=0.0,
+                              slippage_bps=0.0)
+
+    def test_every_result_carries_an_engine_stamp(self):
+        for delay in (None, 0, 1, 5):
+            eng = self._run(delay)["engine"]
+            self.assertIn("version", eng)
+            self.assertIn("entry_delay_bars", eng)
+            self.assertIn("fill", eng)
+
+    def test_the_stamp_records_the_actual_delay(self):
+        self.assertEqual(self._run(0)["engine"]["entry_delay_bars"], 0)
+        self.assertEqual(self._run(3)["engine"]["entry_delay_bars"], 3)
+
+    def test_the_stamp_flags_a_same_bar_fill_as_such(self):
+        self.assertTrue(self._run(0)["engine"]["same_bar_fill"])
+        self.assertFalse(self._run(1)["engine"]["same_bar_fill"])
+
+    def test_an_empty_tape_is_still_stamped(self):
+        """The degenerate run is exactly the one whose provenance is
+        easiest to forget and hardest to infer later."""
+        eng = B.run_backtest([], "manual", {})["engine"]
+        self.assertIn("version", eng)
+
+    def test_the_stamp_survives_json_serialisation(self):
+        """It is stored in metrics_json, so it has to be plain data."""
+        import json
+        eng = json.loads(json.dumps(self._run(1)["engine"]))
+        self.assertEqual(eng["version"], B.BACKTEST_ENGINE_VERSION)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

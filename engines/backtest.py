@@ -51,6 +51,12 @@ EQUITY_MAX_POINTS = 5000
 # is not zero, and why zero remains available.
 DEFAULT_ENTRY_DELAY_BARS = 1
 
+# Bumped when a change would alter results for identical inputs. Stored with
+# every run, because a number without the convention that produced it cannot
+# be audited -- and the fill convention changed once already, silently
+# invalidating every run recorded before it.
+BACKTEST_ENGINE_VERSION = 2
+
 
 def _num(v, default=0.0):
     try:
@@ -466,10 +472,21 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
 
     n = len(candles)
     closes = [_c(c) for c in candles]
+    # Stamped on every result. A stored run without this block predates the
+    # stamp and was computed with the same-bar fill, which is a different
+    # number -- so its provenance is recoverable from the row itself rather
+    # than from someone's memory.
+    engine = {
+        "version": BACKTEST_ENGINE_VERSION,
+        "entry_delay_bars": entry_delay,
+        "fill": "close of bar %d after the deciding bar" % entry_delay,
+        "same_bar_fill": entry_delay == 0,
+    }
     if n == 0 or any(x <= 0 for x in closes):
         metrics = {"trades": 0, "wins": 0, "win_rate": 0.0, "pf": 0.0,
                    "maxDD": 0.0, "sharpe": 0.0, "cagr": 0.0, "avg_hold": 0.0}
         return {"trades": [], "metrics": metrics, "equity": [],
+                "engine": engine,
                 "significance": significance_for_trades(
                     [], _sig_params(params, fee_bps, slippage_bps,
                                     strategy_kind))}
@@ -694,6 +711,7 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
     # equity-curve ratio and is NOT significance-tested: the tests run on
     # per-trade bps, on a different sample, with deflation applied.
     out = {"trades": trades, "metrics": metrics, "equity": equity,
+           "engine": engine,
            "significance": significance_for_trades(
                trades,
                _sig_params(params, fee_bps, slippage_bps, strategy_kind))}

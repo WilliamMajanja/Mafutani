@@ -3808,6 +3808,7 @@ class Router:
             rows = conn.execute("SELECT * FROM backtests WHERE user_id = ? ORDER BY id DESC LIMIT ?",
                                 (ud["id"], limit)).fetchall()
         items = []
+        superseded = 0
         for r in rows:
             d = _row_to_dict(r)
             for k in ("params_json", "metrics_json", "equity_json"):
@@ -3815,8 +3816,32 @@ class Router:
                     d[k.replace("_json", "")] = json.loads(d.get(k, "{}") if k != "equity_json" else d.get(k, "[]"))
                 except Exception:
                     pass
+            # Provenance, and it is recoverable from the row rather than from
+            # memory: a run with no `engine` block predates the fill stamp,
+            # so it was computed filling on the deciding bar's close. That
+            # is a different number from the current convention and about
+            # 40% more trades, so quoting it as comparable would be wrong.
+            # The rows are left exactly as recorded; rewriting them would
+            # destroy the only evidence of what was actually run.
+            eng = (d.get("metrics") or {}).get("engine")
+            if isinstance(eng, dict):
+                d["engine"] = eng
+            else:
+                superseded += 1
+                d["engine"] = None
+                d["superseded"] = (
+                    "computed before the fill stamp: this run filled on the "
+                    "deciding bar's close, which is not comparable with "
+                    "current results. Re-run to refresh.")
             items.append(d)
-        return _send_json(h, {"backtests": items})
+        out = {"backtests": items}
+        if superseded:
+            out["superseded"] = superseded
+            out["superseded_note"] = (
+                "%d of these %d runs predate the fill-convention stamp and "
+                "were computed with a same-bar fill. Their metrics are "
+                "retained as recorded." % (superseded, len(items)))
+        return _send_json(h, out)
 
     def _bt_get(self, conn, h, path):
         user, _s = self._require_user(conn, h)
