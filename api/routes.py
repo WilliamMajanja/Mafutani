@@ -1763,6 +1763,12 @@ class Router:
             return self._strategies(conn, h)
         if path == "/api/signals/preview" and method == "POST":
             return self._signals_preview(conn, h)
+        if path == "/api/macro" and method == "GET":
+            return self._macro(conn, h, qs)
+        if path == "/api/macro/series" and method == "GET":
+            return self._macro_series(conn, h, qs)
+        if path == "/api/macro/fetch" and method == "POST":
+            return self._macro_fetch(conn, h)
         # CFTC Commitments of Traders
         if path == "/api/cot" and method == "GET":
             return self._cot_markets(conn, h, qs)
@@ -3037,6 +3043,125 @@ class Router:
                 it["allowed"] = True
         return _send_json(h, {"strategies": items, "tier": tier})
 
+    # -- macro (FRED) ----------------------------------------------------
+    #
+    # Read-only and stored-data-only. `fetch` is a separate explicit POST,
+    # because a GET that blocks on an upstream is the behaviour this project
+    # has spent the session removing -- and FRED is a third-party host that
+    # can be slow or down without any warning.
+    def _macro(self, conn, h, qs):
+        """GET /api/macro -- latest stored value per series + the regime.
+
+        Returns `regime: null` rather than a default when nothing is stored
+        or all of it is stale. See engines/macro.py for why a gate that
+        silently defaults to neutral is worse than no gate.
+        """
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        try:
+            from data import fred
+            from engines import macro as macro_engine
+        except Exception as e:
+            return _err(h, "macro unavailable: {}".format(e), 503)
+        try:
+            max_age = int(qs.get("max_age_days", [7])[0])
+        except (TypeError, ValueError):
+            max_age = 7
+        series = fred.latest_stored(conn)
+        reg = macro_engine.regime(conn, max_age_days=max_age)
+        catalogue = [
+            {"series_id": sid, "title": m["title"], "units": m["units"],
+             "category": m["category"]}
+            for sid, m in sorted(fred.SERIES.items())
+        ]
+        return _send_json(h, {
+            "series": series,
+            "catalogue": catalogue,
+            "regime": reg["regime"],
+            "confidence": reg["confidence"],
+            "reason": reg["reason"],
+            "inputs": reg["inputs"],
+            "max_age_days": max_age,
+            "source": "FRED (fredgraph.csv, keyless)",
+            "disclaimer": ("Macro context only. Not an execution signal and "
+                           "not investment advice."),
+        })
+
+    def _macro_series(self, conn, h, qs):
+        """GET /api/macro/series?series=DGS10&limit=N -- stored history."""
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        try:
+            from data import fred
+        except Exception as e:
+            return _err(h, "macro unavailable: {}".format(e), 503)
+        series = (qs.get("series", qs.get("id", [""]))[0] or "").strip().upper()
+        if not series:
+            return _err(h, "series parameter required", 400)
+        try:
+            limit = int(qs.get("limit", ["250"])[0])
+        except (TypeError, ValueError):
+            limit = 250
+        limit = max(1, min(limit, 5000))
+        start = (qs.get("start", [""])[0] or "").strip() or None
+        end = (qs.get("end", [""])[0] or "").strip() or None
+        rows = fred.load_series(conn, series, limit=limit, start=start, end=end)
+        return _send_json(h, {
+            "series_id": series,
+            "meta": fred.meta(series),
+            "observations": rows,
+            "count": len(rows),
+            "stored_only": ("this endpoint never calls FRED; use "
+                            "/api/macro/fetch to refresh"),
+        })
+
+    def _macro_fetch(self, conn, h):
+        """POST /api/macro/fetch -- pull from FRED and persist.
+
+        Admin-only. It writes to the shared database and makes outbound
+        requests to a third party, so it is not something any authenticated
+        user can trigger. FRED's CSV endpoint needs no key and no credential.
+        """
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        if not self._require_csrf(conn, h, _s):
+            return True
+        data, err = _read_json(h)
+        if err:
+            return _err(h, err)
+        data = data or {}
+        wanted = data.get("series")
+        if isinstance(wanted, str):
+            wanted = [wanted]
+        wanted = [str(s).strip().upper() for s in (wanted or []) if str(s).strip()]
+        try:
+            from data import fred
+        except Exception as e:
+            return _err(h, "macro unavailable: {}".format(e), 503)
+        unknown = [s for s in wanted if s not in fred.SERIES]
+        if unknown:
+            return _err(h, "unregistered series: %s (see /api/macro catalogue)"
+                        % ", ".join(unknown), 400)
+        batch = fred.fetch_many(wanted or None)
+        stored = fred.persist_many(conn, batch)
+        results = {}
+        for sid, res in batch["results"].items():
+            results[sid] = {"ok": res.get("ok"), "rows": len(res.get("rows") or []),
+                            "missing": res.get("missing", 0),
+                            "error": res.get("error", ""),
+                            "url": res.get("url", "")}
+        return _send_json(h, {
+            "ok": batch["ok"], "count": batch["count"], "failed": batch["failed"],
+            "stored_rows": stored["stored"], "results": results,
+            "note": ("FRED CSV endpoint needs no API key. Its '.' missing "
+                     "marker is dropped, never stored as zero."),
+        })
+
     def _signals_preview(self, conn, h):
         user, sess = self._require_user(conn, h)
         if user is None:
@@ -3093,6 +3218,27 @@ class Router:
         prev = _engine_preview(conn, sname, symbol, params or {})
         prev.setdefault("strategy", sname)
         prev.setdefault("symbol", symbol)
+        # Macro context, attached rather than enforced.
+        #
+        # This reports the regime beside the signal; it does not suppress the
+        # signal. A preview that silently returned "flat" because macro was
+        # risk-off would be indistinguishable from a strategy that found no
+        # setup, and nobody could tell which happened. Gating belongs at the
+        # risk layer, where a reject is recorded in risk_events -- that is the
+        # enforcement point, not a preview endpoint.
+        try:
+            from engines import macro as _macro_engine
+            reg = _macro_engine.regime(conn)
+            g = _macro_engine.gate(params or {}, reg)
+            prev["macro"] = {"regime": reg["regime"],
+                             "confidence": reg["confidence"],
+                             "reason": reg["reason"],
+                             "gate": {"allowed": g["allowed"],
+                                      "reason": g["reason"]}}
+        except Exception as e:
+            prev["macro"] = {"regime": None, "confidence": 0.0,
+                             "reason": "macro context unavailable: %s" % e,
+                             "gate": {"allowed": True, "reason": "not applied"}}
         return _send_json(h, prev)
 
     # -- openterminal ---------------------------------------------------
