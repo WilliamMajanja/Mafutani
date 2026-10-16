@@ -73,7 +73,7 @@ UNKNOWN = "unknown"
 PROD_BASE = "https://api.binance.com"
 TESTNET_BASE = "https://testnet.binance.vision"
 
-USER_AGENT = "mafutani-tcc/1.1"
+USER_AGENT = "mafutani-cta/1.1"
 
 # Venue error code -> exception class. Codes are Binance's own and are
 # stable; the two that matter most are -2015 (rejected by filters: dust,

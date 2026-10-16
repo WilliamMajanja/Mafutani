@@ -1511,8 +1511,8 @@ def _candle_row_total(conn):
 def _status_payload(conn):
     """Verbose service snapshot: uptime, table counts, feed freshness."""
     now = int(time.time())
-    out = {"ok": True, "service": "mafutani-tcc",
-           "name": "Mafutani Trading Consolidation and Consortium",
+    out = {"ok": True, "service": "mafutani-cta",
+           "name": "Mafutani Consolidation Trading Application",
            "version": "1.1.0", "time": now,
            "uptime_s": int(now - _BOOT_TS), "tables": {}, "feeds": []}
     # candles_1m is excluded from the naive COUNT(*) loop: it holds ~1.5M

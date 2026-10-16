@@ -1,4 +1,4 @@
-/* Mafutani TCC SPA. Zero deps: fetch + EventSource + hash router. */
+/* Mafutani CTA SPA. Zero deps: fetch + EventSource + hash router. */
 "use strict";
 (function () {
   var csrfToken = null;

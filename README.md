@@ -1,11 +1,14 @@
-# Mafutani Trading Consolidation and Consortium (zero-deps, stdlib only)
+# Mafutani Consolidation Trading Application (zero-deps, stdlib only)
 
-> **The app is stdlib-only and this is enforced by a test, not a promise.**
-> PyTorch is used by one optional service that runs *outside* the app, in its
-> own virtualenv, reached over plain HTTP. `tests/test_ml_bridge.py` fails if
-> any module the app imports can reach `torch`, and fails if `torch` ever
-> becomes importable from the system Python. See
-> [Torch, without depending on it](#torch-without-depending-on-it).
+> **The app is stdlib-only.** No third-party import appears anywhere in the
+> application tree (`app.py`, `core/`, `data/`, `api/`, `engines/`,
+> `brokers/`, `scripts/`), and the repository ships no dependency manifest.
+> Enforced app-wide by `tests/test_zero_dependency.py`, which parses every
+> file with `ast` and fails on any absolute import that is neither stdlib
+> nor the project's own. This restored the whole-tree sweep that was lost
+> when `tests/test_ml_bridge.py` (and its subject, the torch ML service)
+> was removed on 2026-10-16. See
+> [Torch: removed 2026-10-16](#torch-removed-2026-10-16).
 
 > **Disclaimer: not financial advice. Paper trading is the default. Live trading
 > is disabled unless `LIVE_TRADING_ENABLED=1` + eligible tier + explicit confirm.**
@@ -29,8 +32,8 @@ python3 scripts/ingest_csv.py data.csv --symbol BTCUSD
 Docker:
 
 ```bash
-docker build -t mafutani-tcc .
-docker run -p 8000:8000 mafutani-tcc
+docker build -t mafutani-cta .
+docker run -p 8000:8000 mafutani-cta
 ```
 
 ## API (JSON, cookie session + `X-CSRF` on POST/DELETE)
@@ -745,8 +748,15 @@ that starts writing a second market-data table, so it has not been flipped.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 1283 tests, stdlib only
+python3 scripts/seed.py                 # first: tests read the live DB
+python3 app.py &                        # a few tests drive the running server
+python3 -m unittest discover -s tests   # 1884 tests, ~3.3 min, stdlib only
 ```
+
+A handful of tests in `tests/test_api_candles_tf.py` make real HTTP requests
+and skip themselves when no server is listening on `:8000`
+(`MAFUTANI_TEST_BASE` overrides the URL). `tests.test_mt5_preflight` is
+flaky under load — a subprocess timing assertion — and passes in isolation.
 
 ## Workspace standard
 

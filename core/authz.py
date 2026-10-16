@@ -205,7 +205,7 @@ def verify_recovery_code(stored_json, provided):
         return True, "[]"
 
 
-def otpauth_url(secret, email, issuer="Mafutani TCC"):
+def otpauth_url(secret, email, issuer="Mafutani CTA"):
     """otpauth:// URI for authenticator apps (shown once at setup)."""
     import urllib.parse
     label = urllib.parse.quote("{}:{}".format(issuer, email))

@@ -27,7 +27,7 @@ import urllib.request
 from .base import (BrokerAuthError, BrokerRateLimitError, BrokerUnavailableError,
                    BrokerValidationError, BrokerError)
 
-USER_AGENT = "MafutaniTCC-Broker/1.0 (zero-dep)"
+USER_AGENT = "MafutaniCTA-Broker/1.0 (zero-dep)"
 
 # How many times to retry, and the backoff schedule.
 DEFAULT_RETRIES = 3

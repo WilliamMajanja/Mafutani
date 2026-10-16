@@ -132,7 +132,7 @@ def _http_get(url, timeout=8):
 
 
 def _urllib_get(url, timeout=8):
-    req = urllib.request.Request(url, headers={"User-Agent": "mafutani-tcc/1.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "mafutani-cta/1.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
 

@@ -51,7 +51,7 @@ import urllib.request
 # trials each:
 #
 #     no UA header            ok 5.4s / 2.3s / 2.6s   (269,059 bytes each)
-#     UA: mafutani-tcc/1.1    TimeoutError 12.4s / 12.4s / 13.2s
+#     UA: mafutani-cta/1.1    TimeoutError 12.4s / 12.4s / 13.2s
 #     UA: Mozilla/5.0         TimeoutError 12.6s / 12.2s / 12.4s
 #
 # Reproducible, and not a UA-content filter -- a browser UA is refused exactly

@@ -59,7 +59,7 @@ class TestStatus(unittest.TestCase):
             from api.routes import _status_payload
             st = _status_payload(conn)
             self.assertTrue(st["ok"])
-            self.assertEqual(st["service"], "mafutani-tcc")
+            self.assertEqual(st["service"], "mafutani-cta")
             self.assertIn("users", st["tables"])
             self.assertIn("feeds", st)
             self.assertGreaterEqual(st["uptime_s"], 0)

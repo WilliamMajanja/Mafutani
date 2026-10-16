@@ -59,7 +59,7 @@ import time
 import urllib.error
 import urllib.request
 
-USER_AGENT = "mafutani-tcc/1.1"
+USER_AGENT = "mafutani-cta/1.1"
 
 # Venues are the hosts worth routing through a proxy. Everything else
 # (localhost, the app's own loopback) must not be.
