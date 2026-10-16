@@ -387,6 +387,46 @@ CREATE TABLE IF NOT EXISTS risk_events (
 );
 CREATE INDEX IF NOT EXISTS idx_risk_events_user ON risk_events(user_id);
 
+-- ---------------------------------------------------------------- macro
+-- FRED macro series (rates, curve, risk, economy).
+--
+-- Provenance follows cot_fetches: every fetch records where it came from and
+-- what happened, so a stored number can be traced and a truncated series is
+-- visible rather than silent.
+--
+-- Primary key is (series_id, obs_date) because FRED restates history -- a
+-- CPI revision replaces the stored value for a past date, and ON CONFLICT
+-- upsert is the correct semantic. Deliberately NOT a log: storing both the
+-- old and new value for a restated month would make "what did we believe on
+-- date X" impossible to answer, because nothing else records when we learned
+-- it. macro_fetches carries that "when".
+CREATE TABLE IF NOT EXISTS macro_observations (
+  series_id   TEXT    NOT NULL,
+  obs_date    TEXT    NOT NULL,   -- ISO YYYY-MM-DD
+  value       REAL    NOT NULL,   -- '.' from FRED is dropped upstream, never 0
+  units       TEXT    NOT NULL DEFAULT '',
+  category    TEXT    NOT NULL DEFAULT '',
+  title       TEXT    NOT NULL DEFAULT '',
+  source      TEXT    NOT NULL DEFAULT 'fred',
+  fetched_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+  PRIMARY KEY (series_id, obs_date)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_obs_date ON macro_observations(obs_date DESC);
+
+CREATE TABLE IF NOT EXISTS macro_fetches (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts          INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+  series_id   TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'series',   -- single | batch
+  url         TEXT NOT NULL DEFAULT '',
+  rows_ok     INTEGER NOT NULL DEFAULT 0,
+  missing     INTEGER NOT NULL DEFAULT 0,       -- '.' observations dropped
+  latest_date TEXT NOT NULL DEFAULT '',
+  ok          INTEGER NOT NULL DEFAULT 0,
+  error       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_macro_fetches_ts ON macro_fetches(ts DESC);
+
 -- ---------------------------------------------------------------- feed_health
 -- Poll and venue failures, per (symbol, venue).
 --
