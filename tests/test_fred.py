@@ -241,6 +241,16 @@ class TestPersistence(unittest.TestCase):
                         [{"date": "2026-10-13", "value": 5.1},
                          {"date": "2026-10-14", "value": 5.19}]}
 
+    def _seed_daily(self, sid, n, start="2026-01-01"):
+        """`n` consecutive daily observations, oldest first."""
+        import datetime
+        d0 = datetime.date.fromisoformat(start)
+        rows = [{"date": (d0 + datetime.timedelta(days=i)).isoformat(),
+                 "value": 5.0 + i * 0.01}
+                for i in range(n)]
+        fred.persist_series(self.conn, self._result(sid=sid, rows=rows))
+        return rows
+
     def test_observations_are_written_with_declared_metadata(self):
         w = fred.persist_series(self.conn, self._result())
         self.assertEqual(w["stored"], 2)
@@ -317,6 +327,53 @@ class TestPersistence(unittest.TestCase):
 
     def test_load_series_on_empty_db_is_empty_not_an_error(self):
         self.assertEqual(fred.load_series(self.conn, "DGS10"), [])
+
+    def test_load_series_limit_returns_the_NEWEST_rows(self):
+        """Regression: `limit` used to return the oldest rows.
+
+        The ORDER BY was built ascending, then " DESC LIMIT ?" was appended
+        and the clause rewritten back to "ORDER BY obs_date" -- leaving LIMIT
+        with no ordering, so SQLite returned the first N rows ascending.
+        Every "last N" read was therefore reaching back to 1990.
+        """
+        self._seed_daily("DGS10", 40)
+        rows = fred.load_series(self.conn, "DGS10")
+        self.assertEqual(len(rows), 40)
+        newest = rows[-1]["obs_date"]
+        oldest = rows[0]["obs_date"]
+
+        tail = fred.load_series(self.conn, "DGS10", limit=3)
+        self.assertEqual(len(tail), 3)
+        self.assertEqual(tail[-1]["obs_date"], newest,
+                         "limit=3 did not end at the newest observation")
+        self.assertEqual([r["obs_date"] for r in tail],
+                         [r["obs_date"] for r in rows[-3:]],
+                         "limit=3 did not match the tail of the full series")
+
+        # ...and it must not have walked back to the start of the series.
+        self.assertNotEqual(tail[0]["obs_date"], oldest,
+                            "limit reached the oldest observation")
+
+    def test_load_series_limit_is_larger_than_the_series(self):
+        """Asking for more rows than exist returns what exists, not an error."""
+        self._seed_daily("DGS10", 8)
+        rows = fred.load_series(self.conn, "DGS10")
+        big = fred.load_series(self.conn, "DGS10", limit=len(rows) + 500)
+        self.assertEqual([r["obs_date"] for r in big],
+                         [r["obs_date"] for r in rows])
+
+    def test_load_series_limit_composes_with_start_and_end(self):
+        """A window plus a limit must apply to the window, not to the whole
+        series. Getting this wrong returns out-of-window rows as though they
+        had been filtered."""
+        self._seed_daily("DGS10", 40)
+        rows = fred.load_series(self.conn, "DGS10")
+        pivot = rows[len(rows) // 2]["obs_date"]
+        windowed = fred.load_series(self.conn, "DGS10", start=pivot, limit=2)
+        self.assertEqual(len(windowed), 2)
+        self.assertGreaterEqual(windowed[0]["obs_date"], pivot)
+        self.assertEqual([r["obs_date"] for r in windowed],
+                         [r["obs_date"] for r in rows[-2:]])
 
     def test_latest_stored_is_one_row_per_series_and_carries_age(self):
         fred.persist_series(self.conn, self._result(sid="DGS10"))

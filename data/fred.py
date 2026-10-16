@@ -392,20 +392,31 @@ def load_series(conn, series_id, limit=None, start=None, end=None):
     sid = str(series_id or "").strip().upper()
     if not sid:
         return []
-    sql = ("SELECT series_id, obs_date, value, units, category, title,"
-           " source, fetched_at FROM macro_observations WHERE series_id = ?")
+    inner = ("SELECT series_id, obs_date, value, units, category, title,"
+             " source, fetched_at FROM macro_observations WHERE series_id = ?")
     params = [sid]
     if start:
-        sql += " AND obs_date >= ?"
+        inner += " AND obs_date >= ?"
         params.append(str(start))
     if end:
-        sql += " AND obs_date <= ?"
+        inner += " AND obs_date <= ?"
         params.append(str(end))
-    sql += " ORDER BY obs_date"
     if limit:
-        sql += " DESC LIMIT ?"
+        # Take the NEWEST `limit` rows, then present them ascending.
+        #
+        # The DESC has to survive into the query that LIMIT applies to.
+        # Building "... ORDER BY obs_date" then appending " DESC LIMIT ?"
+        # and rewriting the clause back to "ORDER BY obs_date" left LIMIT
+        # with no ordering to work from, so it took the *oldest* N rows and
+        # the caller got 1990 data when it asked for the latest. Every
+        # "last N" read was silently reaching back to the start of the
+        # series -- including the credit median labelled "30d", which was a
+        # median of the first 30 observations ever stored.
+        sql = ("SELECT * FROM (" + inner + " ORDER BY obs_date DESC LIMIT ?)"
+               " ORDER BY obs_date")
         params.append(int(limit))
-        sql = sql.replace("ORDER BY obs_date DESC", "ORDER BY obs_date")
+    else:
+        sql = inner + " ORDER BY obs_date"
     try:
         return [_row(r) for r in conn.execute(sql, params).fetchall()]
     except Exception:
