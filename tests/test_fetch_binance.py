@@ -94,12 +94,19 @@ class TestIngestValidation(unittest.TestCase):
     """Impossible bars corrupt every downstream return. Refuse them."""
 
     def setUp(self):
-        import sqlite3
-        self.conn = sqlite3.connect(":memory:")
-        self.conn.execute(
-            "CREATE TABLE candles_1m (symbol TEXT, ts INTEGER, open REAL,"
-            " high REAL, low REAL, close REAL, volume REAL,"
-            " UNIQUE(symbol, ts))")
+        # Built from the real schema via init_db, not hand-written. The
+        # original hand-made table omitted `source` -- which does not live
+        # in schema.sql at all but is added by data.db._migrate on boot.
+        # ingest() writes that column, so every batch raised
+        # `no column named source`, the retry loop in ingest slept
+        # 1.0 + attempt*0.5 for all 20 attempts (~115s) and then errored.
+        # A fixture that drifts from what init_db actually produces turns a
+        # fast unit test into a two-minute failure.
+        from data.db import init_db
+        self.conn = init_db(":memory:")
+
+    def tearDown(self):
+        self.conn.close()
 
     def _good(self, ts):
         return {"ts": ts, "open": 100.0, "high": 101.0, "low": 99.0,

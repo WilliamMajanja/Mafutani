@@ -104,7 +104,7 @@ class _Socks5Server(threading.Thread):
                 conn, _ = self.sock.accept()
             except OSError:
                 return
-            threading.Thread(target=self._handle, args=(conn,),
+            threading.Thread(target=self._serve_conn, args=(conn,),
                              daemon=True).start()
 
     def _recv(self, conn, n):
@@ -116,7 +116,13 @@ class _Socks5Server(threading.Thread):
             buf += c
         return buf
 
-    def _handle(self, conn):
+    # Named _serve_conn, not _handle: since Python 3.13
+    # threading.Thread.start() writes self._handle (a _thread._ThreadHandle)
+    # to start a joinable thread. A Thread subclass method called _handle is
+    # clobbered by that assignment, so run() ends up calling a ThreadHandle
+    # as the target -- TypeError, the connection is never served, and every
+    # proxied request times out. Rename it back and this breaks on 3.13+.
+    def _serve_conn(self, conn):
         try:
             ver, nmethods = self._recv(conn, 2)
             methods = self._recv(conn, nmethods)
@@ -211,10 +217,10 @@ class _HttpProxyServer(threading.Thread):
                 conn, _ = self.sock.accept()
             except OSError:
                 return
-            threading.Thread(target=self._handle, args=(conn,),
+            threading.Thread(target=self._serve_conn, args=(conn,),
                              daemon=True).start()
 
-    def _handle(self, conn):
+    def _serve_conn(self, conn):
         try:
             data = b""
             while b"\r\n\r\n" not in data:

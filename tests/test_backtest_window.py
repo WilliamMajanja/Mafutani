@@ -189,7 +189,7 @@ class TestRunHonoursTheWindow(unittest.TestCase):
     def _load(self, n):
         self.conn.executemany(
             "INSERT INTO candles_1m (symbol, ts, open, high, low, close,"
-            " volume) VALUES ('AAA',?,?,?,?,?,1000.0)",
+            " volume, source) VALUES ('AAA',?,?,?,?,?,1000.0,'binance')",
             [(1_700_000_000 + i * 60, 100.0, 100.2, 99.8, 100.0)
              for i in range(n)])
         self.conn.commit()

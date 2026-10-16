@@ -238,8 +238,12 @@ def print_accounts(conn):
 
 
 def main():
-    from data.db import connect
-    conn = connect()
+    # init_db, not connect: this is the documented first step of the
+    # runbook, so it has to create the schema when it does not exist
+    # yet. connect() only opens the file, which left a fresh checkout
+    # failing with `no such table: users` before a single row was written.
+    from data.db import init_db
+    conn = init_db()
     seed_users(conn)
     seed_symbols(conn)
     seed_candles(conn)

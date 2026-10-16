@@ -27,9 +27,12 @@ def fresh_db():
     base = 1700000000
     for i in range(60):
         px = 100.0 + (i % 10) * 0.5
+        # source='binance' so the tape is citable: the provenance gate
+        # (engines/dataprov.py) blanks the backtest verdict for a
+        # 'synthetic' tape, and these fixtures stand in for real bars.
         conn.execute(
-            "INSERT INTO candles_1m (symbol, ts, open, high, low, close, volume)"
-            " VALUES ('AAPL', ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO candles_1m (symbol, ts, open, high, low, close,"
+            " volume, source) VALUES ('AAPL', ?, ?, ?, ?, ?, ?, 'binance')",
             (base + i * 60, px, px + 0.3, px - 0.3, px + 0.1, 1000 + i))
     conn.execute(
         "INSERT INTO quotes_l1 (symbol, ts, bid, ask, bid_size, ask_size, last)"
