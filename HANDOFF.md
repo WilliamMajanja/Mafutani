@@ -1,3 +1,62 @@
+# Handoff — 2026-10-16 (macro routes; `venue_quotes` batch-poisoning fixed)
+
+Picked up from `30fd4f8`.
+
+## `venue_quotes` was empty by design — but its write path was broken
+
+Two questions were open on this table: why the 727 stale rows vanished, and
+whether the emptiness was a fault. Both answered.
+
+**The vanishing was correct, and documented.** `_prune_stale_venue_quotes`
+runs from the feed tick *regardless* of whether persistence is enabled, and the
+rows it removed were 10.6 days old against a 3-day `MAFUTANI_VQ_MAX_AGE_S`.
+The docstring on that function names the 727 rows and the measurement. It was
+retention doing the job it was written to do.
+
+**The emptiness is the opt-in default.** `venue_persist_enabled()` returns
+false unless `MAFUTANI_ARB_PERSIST=1`, and the running server has no
+`MAFUTANI_*` variables set. The scanner does not need the history —
+`live_venue_books()` fetches on demand — so persisting is opt-in and the
+default writes nothing. With the flag on, 20 routes produce 20 rows per tick.
+
+That is the design. What was *not* the design is what `persist_venue_quotes`
+did when a write failed.
+
+### One bad symbol destroyed the whole tick
+
+`venue_quotes.symbol` is a foreign key onto `symbols`. A single book for a
+symbol the deployment does not list fails its `INSERT`, and because the batch
+went through `executemany`, that exception skipped the `commit` — so **every
+good book in the same tick was discarded too**. Measured: a batch of one
+unknown symbol plus one real book stored zero rows. One stray symbol silently
+emptied the tick.
+
+The only trace was `return 0`, which `_venue_quotes` hands to a call site that
+ignores it. `VenuePoller` had been given the `feed_health` treatment in
+`RFC-002`; the persist step never was.
+
+Now: symbols are pre-checked against `symbols` for a specific reason, rows are
+written individually so one failure costs one row, and rejections and failures
+are written to `feed_health` as `persist_error` — after the commit, since
+logging first would deadlock against the lock this function holds.
+
+If the catalogue lookup itself cannot run, its answer is treated as *unknown*,
+not as *nothing is known*; failing closed there would throw away every book on
+a transient database error, which is worse than the failure being fixed.
+
+Verified on a copy of the real database: bad-symbol-plus-good now stores 2 of
+3 rows instead of 0; a missing table records
+`OperationalError: no such table: venue_quotes` instead of returning silence.
+
+**Known pattern, now three.** Code that was correct under the happy path and
+wrong under failure: the ML client (34 tests, zero callers), the unwired
+entitlements, and this. The 727-row prune was right; what was untested was
+what happens when an `INSERT` fails rather than when it succeeds.
+
+Full suite 1794 tests, ~3.5 min. 37 in `test_venue_depth.py`; all three
+mutations (restore `executemany`, fail the catalogue lookup closed, drop the
+case normalisation) are caught.
+
 # Handoff — 2026-10-16 (torch removed; per-IP backstop floor dropped)
 
 Picked up from `29b03f5`.
