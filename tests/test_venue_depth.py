@@ -510,5 +510,179 @@ class TestDepthGateIsHonest(_Db):
         self.assertGreaterEqual(r["span_s"], 86400)
 
 
+class TestPersistIsolatesFailures(_Db):
+    """A bad row must not take the tick's whole market picture with it.
+
+    `venue_quotes.symbol` is a foreign key onto `symbols`. A single book for
+    a symbol the deployment does not list therefore fails its INSERT, and
+    that used to take the whole batch with it: `executemany` raised, the
+    commit was skipped, and every good book in the same tick was discarded
+    as well. One unknown symbol silently emptied the tick.
+    """
+
+    def setUp(self):
+        self.conn.execute("DELETE FROM venue_quotes")
+        self.conn.execute("DELETE FROM feed_health")
+        self.conn.commit()
+
+    def book(self, symbol, venue="binance", bid=100.0, ask=101.0):
+        return (symbol, venue), {"bid": bid, "ask": ask, "venue": venue,
+                                 "symbol": symbol}
+
+    def stored(self):
+        return sorted(r[0] for r in self.conn.execute(
+            "SELECT symbol FROM venue_quotes").fetchall())
+
+    def test_one_unknown_symbol_does_not_discard_the_good_books(self):
+        feeds.persist_venue_quotes(self.conn, dict([
+            self.book("NOT_A_SYMBOL"),
+            self.book("BTCUSD"),
+        ]))
+        self.assertEqual(self.stored(), ["BTCUSD"],
+                         "a rejected symbol cost the batch its good books")
+
+    def test_the_good_rows_are_committed_not_left_pending(self):
+        """The old path skipped the commit on failure, so nothing landed at
+        all. The good rows must actually be durable."""
+        feeds.persist_venue_quotes(self.conn, dict([
+            self.book("NOT_A_SYMBOL"),
+            self.book("BTCUSD"),
+        ]))
+        self.conn.rollback()
+        self.assertEqual(self.stored(), ["BTCUSD"],
+                         "good books were visible but never committed")
+
+    def test_return_value_counts_rows_actually_written(self):
+        n = feeds.persist_venue_quotes(self.conn, dict([
+            self.book("NOT_A_SYMBOL"),
+            self.book("BTCUSD"),
+            self.book("BTCUSD", venue="coinbase"),
+        ]))
+        self.assertEqual(n, 2, "return value claimed the whole batch")
+
+    def test_a_rejected_symbol_is_recorded_with_a_reason(self):
+        feeds.persist_venue_quotes(self.conn, dict([
+            self.book("NOT_A_SYMBOL")]))
+        rows = self.conn.execute(
+            "SELECT symbol, kind, reason FROM feed_health").fetchall()
+        self.assertEqual(len(rows), 1, "the rejection left no trace")
+        self.assertEqual(rows[0]["kind"], "persist_error")
+        self.assertIn("symbols", rows[0]["reason"])
+
+    def test_a_missing_table_is_recorded_rather_than_silently_zero(self):
+        self.conn.execute("ALTER TABLE venue_quotes RENAME TO vq_gone")
+        self.conn.commit()
+        try:
+            n = feeds.persist_venue_quotes(self.conn, dict([self.book("BTCUSD")]))
+            self.assertEqual(n, 0)
+            ev = self.conn.execute(
+                "SELECT reason FROM feed_health WHERE kind='persist_error'"
+            ).fetchall()
+            self.assertTrue(ev, "a missing table was swallowed")
+            self.assertIn("venue_quotes", ev[0]["reason"])
+        finally:
+            self.conn.execute("ALTER TABLE vq_gone RENAME TO venue_quotes")
+            self.conn.commit()
+
+    def test_a_fully_clean_batch_writes_everything_and_logs_nothing(self):
+        feeds.persist_venue_quotes(self.conn, dict([
+            self.book("BTCUSD"), self.book("BTCUSD", venue="coinbase"),
+        ]))
+        self.assertEqual(self.count(), 2)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM feed_health").fetchone()[0], 0,
+            "a clean batch logged a failure")
+
+    def test_error_quotes_are_not_stored_and_are_not_reported_as_rejected(self):
+        """A failed fetch is not a price. It is also already accounted for by
+        the poller's own down/recovered transitions, so it must not appear
+        here as a second, differently-worded complaint."""
+        feeds.persist_venue_quotes(self.conn, {
+            ("BTCUSD", "kraken"): {"bid": 0, "ask": 0, "error": "timeout",
+                                   "venue": "kraken", "symbol": "BTCUSD"}})
+        self.assertEqual(self.count(), 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM feed_health").fetchone()[0], 0)
+
+    def test_inverted_or_zero_books_are_still_rejected_silently(self):
+        """These are malformed data, not a feed failure, and recording each
+        one per tick would drown the signal in noise."""
+        for bad in ({"bid": 0, "ask": 0}, {"bid": 101.0, "ask": 100.0},
+                    {"bid": -1.0, "ask": 1.0}):
+            feeds.persist_venue_quotes(self.conn, {
+                ("BTCUSD", "binance"): dict(bad, venue="binance",
+                                            symbol="BTCUSD")})
+        self.assertEqual(self.count(), 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM feed_health").fetchone()[0], 0)
+
+    def test_lower_case_symbol_still_matches_the_catalogue(self):
+        """FK matching is case-sensitive, so the pre-check must not reject a
+        book for a symbol that exists under a different case -- that would
+        turn the check into a new way to lose good rows."""
+        self.conn.execute("INSERT OR IGNORE INTO symbols (symbol)"
+                          " VALUES ('ethusd')")
+        self.conn.commit()
+        feeds.persist_venue_quotes(self.conn, {
+            ("ethusd", "binance"): {"bid": 5.0, "ask": 6.0, "venue": "binance",
+                                    "symbol": "ethusd"}})
+        self.assertEqual(self.stored(), ["ethusd"])
+
+    def test_a_row_failing_for_an_unanticipated_reason_still_spares_the_batch(self):
+        """The pre-check catches the *predictable* rejection, so on its own it
+        hides the batch-rollback defect: the bad row is gone before the
+        INSERT runs, and executemany never sees it.
+
+        This is the residual case the per-row loop exists for -- a row that
+        fails at the SQL layer for a reason no pre-check can anticipate. A
+        trigger stands in for any such cause. With executemany, one trigger
+        failure again discarded every good book in the tick.
+        """
+        self.conn.execute(
+            "CREATE TRIGGER boom BEFORE INSERT ON venue_quotes"
+            " WHEN NEW.venue = 'coinbase' BEGIN"
+            " SELECT RAISE(ABORT, 'simulated per-row failure'); END")
+        self.conn.commit()
+        try:
+            n = feeds.persist_venue_quotes(self.conn, dict([
+                self.book("BTCUSD", venue="binance"),
+                self.book("BTCUSD", venue="coinbase"),
+            ]))
+        finally:
+            self.conn.execute("DROP TRIGGER boom")
+            self.conn.commit()
+        self.assertEqual(n, 1, "the surviving row was not committed")
+        self.assertEqual(self.stored(), ["BTCUSD"],
+                         "a failed row took the good one with it")
+        self.assertTrue(self.conn.execute(
+            "SELECT COUNT(*) FROM feed_health WHERE kind='persist_error'"
+        ).fetchone()[0], "the row failure was not recorded")
+
+    def test_unreadable_symbols_table_does_not_discard_everything(self):
+        """If the pre-check cannot run, its answer is "unknown", not
+        "nothing is known". Losing every book on a broken lookup would be
+        a worse failure than the one the check was added to prevent."""
+        real = self.conn.execute
+
+        class _BrokenSymbols:
+            """Forwards everything except the catalogue lookup."""
+
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, *a, **k):
+                if "FROM symbols" in sql:
+                    raise RuntimeError("symbols table unavailable")
+                return real(sql, *a, **k)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        n = feeds.persist_venue_quotes(_BrokenSymbols(self.conn),
+                                        dict([self.book("BTCUSD")]))
+        self.assertEqual(n, 1, "a broken lookup discarded every good book")
+        self.assertEqual(self.stored(), ["BTCUSD"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

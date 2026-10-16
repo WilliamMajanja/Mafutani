@@ -469,6 +469,26 @@ class VenuePoller:
         return out
 
 
+def _known_symbols(conn, wanted):
+    """Which of `wanted` exist in `symbols`, the venue_quotes FK target.
+
+    Returns None when the check itself cannot run, so the caller falls back
+    to attempting the write. An unreadable `symbols` table must not read as
+    "nothing is known", which would silently discard every book.
+    """
+    wanted = [w for w in (wanted or []) if w]
+    if not wanted:
+        return set()
+    try:
+        marks = ",".join("?" * len(wanted))
+        rows = conn.execute(
+            "SELECT symbol FROM symbols WHERE symbol IN (%s)" % marks,
+            list(wanted)).fetchall()
+    except Exception:
+        return None
+    return {str(r[0]).strip().upper() for r in rows}
+
+
 def persist_venue_quotes(conn, books):
     """Write a {(symbol, venue): quote} batch to venue_quotes.
 
@@ -479,6 +499,22 @@ def persist_venue_quotes(conn, books):
     `INSERT OR IGNORE` on (symbol, venue, ts) makes a re-poll within the
     same second idempotent, which matters because the feed loop and the
     scanner can both write in the same tick.
+
+    Failures are isolated and recorded
+    ----------------------------------
+    `venue_quotes.symbol` is a foreign key onto `symbols`. A single book for
+    a symbol the deployment does not list therefore fails its INSERT, and
+    that used to take the entire batch with it: `executemany` raised, the
+    commit was skipped, and every *good* book in the same tick was discarded
+    too. One unknown symbol cost the tick its whole market picture, and the
+    only trace was a return value nobody logs.
+
+    Rows are now written individually so one bad row costs one row. Symbols
+    are pre-checked against `symbols` to give the common case a specific
+    reason rather than a bare "FOREIGN KEY constraint failed", and anything
+    still rejected is written to `feed_health` after the commit -- logging
+    before committing would deadlock against the lock this function is
+    holding.
     """
     rows = []
     now = _now()
@@ -502,15 +538,59 @@ def persist_venue_quotes(conn, books):
                      str(quote.get("source") or quote.get("venue") or "venue")))
     if not rows:
         return 0
+
+    # Pre-check so a symbol the deployment does not list is dropped with a
+    # reason worth having, instead of surfacing as a constraint error that
+    # loses the rows either side of it.
+    known = _known_symbols(conn, [r[0].strip().upper() for r in rows])
+    rejected = []
+    if known is not None:
+        kept = []
+        for r in rows:
+            if r[0].strip().upper() in known:
+                kept.append(r)
+            else:
+                rejected.append((r, "symbol not in `symbols`"))
+        rows = kept
+        if not rows:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    written = 0
+    failures = list(rejected)
+    sql = ("INSERT OR IGNORE INTO venue_quotes"
+           " (symbol, venue, ts, bid, ask, bid_size, ask_size, last, source)"
+           " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
     try:
-        conn.executemany(
-            "INSERT OR IGNORE INTO venue_quotes"
-            " (symbol, venue, ts, bid, ask, bid_size, ask_size, last, source)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-        conn.commit()
-    except Exception:
-        return 0
-    return len(rows)
+        for r in rows:
+            try:
+                conn.execute(sql, r)
+                written += 1
+            except Exception as e:
+                # One row's problem is one row's problem.
+                failures.append((r, "%s: %s" % (type(e).__name__, e)))
+        try:
+            conn.commit()
+        except Exception as e:
+            written = 0
+            failures.append((None, "commit failed: %s" % e))
+    except Exception as e:
+        # A connection-level failure (locked, closed, missing table) loses
+        # everything, so the batch is not reported as written.
+        written = 0
+        failures.append((None, "%s: %s" % (type(e).__name__, e)))
+
+    for row, reason in failures:
+        try:
+            _write_feed_event(row[0] if row else "", row[1] if row else "",
+                              "persist_error", reason,
+                              {"stage": "persist_venue_quotes",
+                               "written": written, "dropped": len(failures)})
+        except Exception:
+            pass
+    return written
 
 
 def venue_persist_enabled():
