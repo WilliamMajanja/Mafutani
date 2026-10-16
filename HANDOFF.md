@@ -1,3 +1,100 @@
+# Handoff — 2026-10-16 (point-in-time, evidence ledger, forward shadow)
+
+Picked up from `fed16ee`.
+
+## Every stored backtest was computed with a look-ahead
+
+The signal was computed from `candles[lo:i+1]` and the entry filled at
+`closes[i]` — the same bar's close. That fills at a price that only became
+knowable at the instant of the fill; live, the earliest reachable fill is the
+next bar.
+
+One public multi-agent system recorded this as a bug it found in itself,
+where deciding and executing on the same close "inflated returns".
+
+Measured on 60k BTCUSD 1m bars, `ema_trend` @2bps:
+
+| | trades | pf | sharpe |
+|---|---:|---:|---:|
+| `delay=0` (old) | 2809 | 0.349 | **+3.92** |
+| `delay=1` (now) | 1678 | 0.360 | **−2.44** |
+
+~40% of all trades were same-bar churn: exit and re-enter at one close. That
+reaches past the headline — the significance tests score per-trade returns
+and count trials, so an inflated trade count changes those statistics too.
+
+`entry_delay_bars` defaults to 1. Zero remains available *solely* to keep the
+bias measurable, and is verified to reproduce the pre-fix engine exactly
+(trades, pf, sharpe, maxDD bit-identical across every strategy and parameter
+combination), so the old number stays reproducible rather than asserted.
+
+**All 33 stored backtests on this deployment are pre-fix** and therefore not
+comparable with current output. They are flagged `superseded` on read and
+left exactly as recorded — rewriting them would destroy the only evidence of
+what was actually run. Every new result carries an `engine` block (version,
+delay, fill description), because a number without the convention that
+produced it cannot be audited.
+
+Two bugs found while writing the fix: a pending order was re-scheduled on
+every bar its condition held, pushing its own fill forward until it never
+matured (cost 2,556 of 2,558 trades); and execution had to move *after* the
+intrabar TP/SL checks, since a position entered at bar i's close did not
+exist during bar i.
+
+**The tape is synthetic for 47 of 49 symbols.** These figures describe the
+engine, not the strategies. Every configuration measured has pf < 1 — these
+strategies show no edge on this data either way.
+
+## Edges are now a recorded claim, not a code flag
+
+`strategies.mode` is `wired`/`stub` — a statement about whether code exists. A
+wired strategy with no edge and one with a deflated Sharpe of 0.99 were the
+same row.
+
+`engines/edgeledger.py` appends what was measured, when, under which engine
+version, and how many trials had run by then. The gate requires four
+independent conditions and reports **every** failing one, because a gate
+that needs four runs to explain gets bypassed:
+
+1. an evidence row exists
+2. verdict is `edge likely real` (DSR ≥ 0.95 after deflation) — not
+   `edge plausible, unproven`, the verdict that exists to be read and then
+   not acted on
+3. walk-forward degradation ≥ 0.7
+4. enough forward shadow cycles — a backtest is evidence about the past
+
+Evidence rows are never rewritten. Nothing promotes itself:
+`set_stage(..., 'promoted')` re-checks and refuses, per `gods.py`. A refusal
+is recorded as an *event*, not the `rejected` stage — short of cycles is
+unproven, not rejected. Evidence from a superseded engine version cannot
+promote anything.
+
+`engines/shadow.py` is the forward stage. It measures and records; it holds
+no credentials and has no path to an exchange. Four states stay distinct:
+never run / observed-but-no-signal / too few cycles / assessed. Decay is
+reported, never acted on.
+
+Six mutations run. Five caught immediately; the sixth — widening the
+shadow-count query to any row kind — passed and exposed a real gap: an
+evidence row's `shadow_cycles` could seed the total, so enough forward cycles
+could be manufactured with no observation at all. Two tests now pin it.
+
+## Also
+
+- `data/feeds.py`: one rejected symbol no longer discards the whole tick's
+  books (FK violation rolled back the batch), and failures are recorded in
+  `feed_health` as `persist_error`.
+- `load_series(limit=N)` returned the **oldest** N rows, not the newest —
+  every "last N" read was reaching back to 1990. The credit median labelled
+  "30d" was computed from 1990–91. Fixing it flips the live macro read.
+- `docs/research-subagent-trading.md`: survey of multi-agent trading
+  architectures. The transferable parts are point-in-time discipline and
+  return decomposition, not the bull/bear debate.
+
+Full suite 1880 tests, ~3.8 min. `tests.test_mt5_preflight` is flaky under
+load (`muted-ea-warns: did not time out`, a real-subprocess timing
+assertion); it passes in isolation.
+
 # Handoff — 2026-10-16 (macro routes; `venue_quotes` batch-poisoning fixed)
 
 Picked up from `30fd4f8`.
