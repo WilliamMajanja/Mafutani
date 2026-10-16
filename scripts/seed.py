@@ -162,7 +162,14 @@ BASE_PRICE.update({sym: px for (sym, _n, _b, _q, _v, _s, _t, _l, px) in FX_SYMBO
 
 def seed_candles(conn, bars_per_symbol=1440):
     """Backfill the last ~24h of 1m bars for symbols that have no candles.
-    Deterministic per symbol (seeded RNG). No-op on populated databases."""
+    Deterministic per symbol (seeded RNG). No-op on populated databases.
+
+    These rows are written with `source='synthetic'`, and the backtest
+    refuses to report a figure from them without saying so. A seeded random
+    walk is useful for exercising a code path and worthless as evidence about
+    a market, and the failure mode is silent: the Sharpe comes out plausible
+    and the trades look real.
+    """
     now = int(time.time())
     empty = [r[0] for r in conn.execute(
         "SELECT symbol FROM symbols WHERE NOT EXISTS"
@@ -217,8 +224,8 @@ def seed_candles(conn, bars_per_symbol=1440):
         # the seeder time out; executemany is the standard bulk-load fix.
         conn.executemany(
             "INSERT OR IGNORE INTO candles_1m"
-            " (symbol, ts, open, high, low, close, volume)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            " (symbol, ts, open, high, low, close, volume, source)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, 'synthetic')", rows)
         conn.commit()
         print("  candles: backfilled {} - {} bars".format(sym, bars_per_symbol))
 

@@ -130,6 +130,29 @@ def _migrate(conn):
             conn.commit()
     except Exception:
         pass
+    # -- candle provenance: which feed produced each bar
+    #
+    # `quotes_l1` got this treatment already and the reasoning applies
+    # verbatim to candles. `scripts/seed.py` writes 1-minute bars from a
+    # seeded RNG for any symbol with no history, and they land in the same
+    # table as a Binance backfill. Nothing downstream could tell them apart,
+    # so a backtest over AAPL read a random walk and reported its Sharpe as
+    # though it measured a strategy.
+    #
+    # Default 'synthetic' is the honest description of existing rows: they
+    # were generated unless something says otherwise. Real writers must pass
+    # their source explicitly.
+    for tbl in ("candles_1m", "candles_1d"):
+        try:
+            ccols = [r[1] for r in conn.execute(
+                "PRAGMA table_info(%s)" % tbl).fetchall()]
+            if "source" not in ccols:
+                conn.execute(
+                    "ALTER TABLE %s ADD COLUMN source"
+                    " TEXT NOT NULL DEFAULT 'synthetic'" % tbl)
+                conn.commit()
+        except Exception:
+            pass
     # -- orders remember the exchange's own order id
     #
     # A live cancel has to reach the venue, and a venue cancel needs the

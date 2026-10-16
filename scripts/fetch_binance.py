@@ -235,7 +235,7 @@ def ingest(conn, symbol, rows):
             bad += 1
             continue
         batch.append((symbol, r["ts"], r["open"], r["high"], r["low"],
-                      r["close"], r["volume"]))
+                      r["close"], r["volume"], "binance"))
     if batch:
         # Retried on lock contention with the live feed: a 259k-row insert is
         # long enough to collide with a server tick, and losing the whole
@@ -245,8 +245,8 @@ def ingest(conn, symbol, rows):
             try:
                 conn.executemany(
                     "INSERT OR REPLACE INTO candles_1m"
-                    " (symbol, ts, open, high, low, close, volume)"
-                    " VALUES (?,?,?,?,?,?,?)", batch)
+                    " (symbol, ts, open, high, low, close, volume, source)"
+                    " VALUES (?,?,?,?,?,?,?,?)", batch)
                 conn.commit()
                 written = len(batch)
                 break

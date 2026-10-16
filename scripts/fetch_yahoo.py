@@ -263,7 +263,7 @@ def fetch_daily(ticker, rng="5y", timeout=25, retries=3):
 def ingest(conn, symbol, rows):
     """Upsert daily bars. Returns (written, rejected)."""
     batch = [(symbol, r["ts"], r["open"], r["high"], r["low"], r["close"],
-              r["volume"]) for r in rows]
+              r["volume"], "yahoo-chart") for r in rows]
     if not batch:
         return 0, 0
     last = None
@@ -271,8 +271,8 @@ def ingest(conn, symbol, rows):
         try:
             conn.executemany(
                 "INSERT OR REPLACE INTO candles_1d"
-                " (symbol, ts, open, high, low, close, volume)"
-                " VALUES (?,?,?,?,?,?,?)", batch)
+                " (symbol, ts, open, high, low, close, volume, source)"
+                " VALUES (?,?,?,?,?,?,?,?)", batch)
             conn.commit()
             break
         except sqlite3.OperationalError as e:

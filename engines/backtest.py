@@ -28,7 +28,12 @@ try:
 except ImportError:  # pragma: no cover - direct-path execution
     import significance as sig
 
-ANNUALIZATION_1M = math.sqrt(252 * 390)  # 1-minute bars
+PERIODS_PER_YEAR_1M = 252 * 390
+PERIODS_PER_YEAR_1D = 252
+ANNUALIZATION_PERIODS_1M = PERIODS_PER_YEAR_1M
+# Kept for callers that imported it. This is the sqrt the old code used and
+# the one number in the engine that silently assumed 1-minute bars.
+ANNUALIZATION_1M = math.sqrt(PERIODS_PER_YEAR_1M)
 SEC_PER_YEAR = 365 * 24 * 3600
 SEC_PER_DAY = 24 * 3600
 
@@ -109,7 +114,7 @@ def _quote_for(close, ts, spread_bps=1.0):
             "ts": ts}
 
 
-def _sharpe_from_equity(equity):
+def _sharpe_from_equity(equity, periods_per_year=ANNUALIZATION_PERIODS_1M):
     if len(equity) < 3:
         return 0.0
     rets = []
@@ -124,7 +129,7 @@ def _sharpe_from_equity(equity):
     sd = math.sqrt(var)
     if sd <= 0:
         return 0.0
-    return (m / sd) * ANNUALIZATION_1M
+    return (m / sd) * math.sqrt(max(1, int(periods_per_year)))
 
 
 def _trade_bps(t):
@@ -253,18 +258,26 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else 0.0
 
 
-def _sig_params(params, fee_bps, slippage_bps, strategy_kind):
+def _sig_params(params, fee_bps, slippage_bps, strategy_kind,
+                periods_per_year=None):
     """Params plus the cost schedule the loop actually charged.
 
     `significance_for_trades` needs the fee and slippage the run used, and
     they arrive as arguments to run_backtest rather than in params. Threading
     them through here keeps the significance helper's signature about
     verdicts rather than about plumbing.
+
+    The resolution rides along for the same reason: `edge_report`'s default
+    of 252 is a daily constant, and annualising a per-minute return series
+    at 252 understates the Sharpe by a factor of ~20 -- the same class of
+    error as running daily bars at the 1-minute constant.
     """
     out = dict(params or {})
     out["fee_bps"] = fee_bps
     out["slippage_bps"] = slippage_bps
     out.setdefault("strategy", str(strategy_kind or ""))
+    if periods_per_year is not None:
+        out["periods_per_year"] = int(periods_per_year)
     return out
 
 
@@ -284,19 +297,36 @@ def _max_drawdown(equity):
 
 
 def run(conn=None, strategy=None, symbol=None, params=None, from_ts=0, to_ts=0,
-        limit=None):
+        limit=None, allow_synthetic=None):
     """DB-entry wrapper used by api/routes._engine_backtest.
 
     Loads 1m candles for the symbol/range window from the sqlite connection,
     then delegates to run_backtest() so the API and the live board share the
     exact same signal loop. Returns {"trades", "metrics", "equity"} plus a
     "coverage" block saying what tape the run actually saw.
+
+    `allow_synthetic` defaults to None, meaning "decide from the parameters":
+    `true` in params opts in explicitly, anything else refuses. A refusal
+    does not stop the run -- an exercise of the code path is legitimate and
+    some callers need it -- but the result carries `provenance.citable:
+    False` and a stated reason, so a figure from a seeded random walk cannot
+    be mistaken for a measurement.
+
+    Resolution is explicit and never guessed. `table` selects `candles_1m`
+    or `candles_1d`; a daily bar run through a 1-minute annualisation
+    produces a Sharpe wrong by a factor of about 20, in a direction that
+    looks entirely plausible.
     """
     limit = int(limit or BACKTEST_MAX_BARS)
+    if allow_synthetic is None:
+        allow_synthetic = bool((params or {}).get("allow_synthetic"))
+    table = str((params or {}).get("table") or "candles_1m")
+    if table not in ("candles_1m", "candles_1d"):
+        table = "candles_1m"
     candles = []
     if conn is not None and symbol:
         try:
-            q = "SELECT * FROM candles_1m WHERE symbol = ?"
+            q = "SELECT * FROM %s WHERE symbol = ?" % table
             args = [symbol]
             if from_ts:
                 q += " AND ts >= ?"
@@ -314,10 +344,99 @@ def run(conn=None, strategy=None, symbol=None, params=None, from_ts=0, to_ts=0,
                     candles.append(r)
         except Exception:
             candles = []
+    # Provenance of the tape this run will measure. Computed before the run
+    # so the verdict travels with the result rather than being looked up
+    # afterwards by whoever quotes the number.
+    prov = _provenance(conn, symbol, table, bool(allow_synthetic))
     res = run_backtest(candles, str(strategy or ""), params or {},
-                       cot_timeline=_cot_timeline_for(conn, params))
+                       cot_timeline=_cot_timeline_for(conn, params),
+                       periods_per_year=_periods_per_year(table))
     res["coverage"] = coverage(candles, from_ts, to_ts)
+    res["provenance"] = prov
+    res["engine"]["table"] = table
+    res["engine"]["periods_per_year"] = res.get("significance", {}).get(
+        "periods_per_year")
+    res["provenance"]["citable"] = bool(prov.get("citable"))
+    _mark_uncitable(res)
     return res
+
+
+def _periods_per_year(table):
+    """Periods per year for annualisation, by resolution.
+
+    390 minutes/day x 252 days for 1m; 252 for daily. Getting this wrong
+    scales Sharpe by about 20 and makes a daily strategy look absurdly good
+    or bad, so it is derived from the table rather than assumed.
+    """
+    return PERIODS_PER_YEAR_1D if str(table or "").endswith("_1d") \
+        else PERIODS_PER_YEAR_1M
+
+
+def _mark_uncitable(res):
+    """Blank the summary numbers when the tape cannot support them.
+
+    A Sharpe computed from a seeded random walk is a real number about the
+    generator. Leaving it in the payload invites someone to read it as a
+    measurement, and a null is harder to misread than a plausible figure.
+
+    The per-trade list, the equity curve and the trade count stay: they are
+    what makes the refusal inspectable. It is the *summary* that would be
+    quoted, so that is what goes.
+    """
+    prov = res.get("provenance") or {}
+    if prov.get("citable"):
+        return res
+    metrics = res.get("metrics")
+    if isinstance(metrics, dict):
+        for k in ("sharpe", "pf", "maxDD", "cagr", "avg_hold",
+                  "total_return_pct", "win_rate"):
+            if k in metrics:
+                metrics[k] = None
+        metrics["suppressed"] = True
+        metrics["suppressed_reason"] = prov.get("reason") or ""
+    sig = res.get("significance")
+    if isinstance(sig, dict):
+        for k in ("gross_sharpe", "net_sharpe", "psr", "dsr",
+                  "per_period_sharpe", "expectancy_bps", "verdict"):
+            if k in sig:
+                sig[k] = None
+        sig["suppressed"] = True
+        sig["suppressed_reason"] = prov.get("reason") or ""
+    return res
+
+
+def _provenance(conn, symbol, table, allow_synthetic):
+    """What the tape is made of, and whether a figure from it is citable."""
+    out = {"symbol": symbol, "table": table, "citable": True,
+           "verdict": "unknown", "reason": ""}
+    if conn is None or not symbol:
+        out["citable"] = False
+        out["verdict"] = "no symbol"
+        out["reason"] = "no symbol named, so nothing can be attributed"
+        return out
+    try:
+        from engines import dataprov
+        g = dataprov.gate(conn, symbol, table,
+                          allow_synthetic=allow_synthetic)
+    except Exception as e:
+        out["citable"] = False
+        out["verdict"] = "provenance unavailable"
+        out["reason"] = "could not determine candle provenance: %s" % e
+        return out
+    out["verdict"] = g.get("verdict")
+    out["reason"] = g.get("reason") or ""
+    out["allowed"] = bool(g.get("allowed"))
+    # Citable means "a reader could quote this as a measurement of the
+    # instrument". Synthetic data with an explicit opt-in runs fine and is
+    # still not citable -- that is the whole distinction between exercising
+    # a code path and testing a strategy.
+    out["citable"] = bool(g.get("allowed")) and g.get("verdict") == "real"
+    out["coverage"] = g.get("coverage")
+    if out["citable"]:
+        out["note"] = ""
+    else:
+        out["note"] = ("NOT CITABLE: " + out["reason"])
+    return out
 
 
 def _cot_timeline_for(conn, params):
@@ -420,16 +539,26 @@ def downsample_equity(equity, max_points=EQUITY_MAX_POINTS):
 
 
 def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
-                 slippage_bps=2.0, cot_timeline=None):
+                 slippage_bps=2.0, cot_timeline=None, periods_per_year=None):
     """Run the event loop. Returns {"trades", "metrics", "equity"}.
 
     `cot_timeline` is an `engines.cotgate` timeline, pre-built. Passing
     one is what lets `ema_trend_cot` evaluate the gate at each bar with a
     bisect instead of a database read; passing None makes that strategy
     refuse rather than trade ungated.
+
+    `periods_per_year` annualises Sharpe and the significance tests. It
+    defaults to the 1-minute constant because that is what this engine has
+    always meant, but a caller running daily bars must pass 252 -- otherwise
+    a Sharpe is wrong by a factor of about 20 and looks merely optimistic.
     """
     candles = list(candles or [])
     params = dict(params or {})
+    if periods_per_year is None:
+        periods_per_year = int(_num(params.get("periods_per_year",
+                                               ANNUALIZATION_PERIODS_1M),
+                                    ANNUALIZATION_PERIODS_1M))
+    periods_per_year = max(1, int(periods_per_year))
     fee_bps = _num(fee_bps, 0.0)
     slippage_bps = max(0.0, _num(slippage_bps, 0.0))
     qty = _num(params.get("qty", 1.0), 1.0)
@@ -489,7 +618,7 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
                 "engine": engine,
                 "significance": significance_for_trades(
                     [], _sig_params(params, fee_bps, slippage_bps,
-                                    strategy_kind))}
+                                    strategy_kind, periods_per_year))}
 
     slip = slippage_bps / 10000.0
     trades = []
@@ -700,7 +829,7 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
         "win_rate": wins / n_trades if n_trades else 0.0,
         "pf": pf,
         "maxDD": _max_drawdown(equity),
-        "sharpe": _sharpe_from_equity(equity),
+        "sharpe": _sharpe_from_equity(equity, periods_per_year),
         "cagr": cagr,
         "avg_hold": avg_hold,
     }
@@ -714,7 +843,8 @@ def run_backtest(candles, strategy_kind, params=None, fee_bps=2.0,
            "engine": engine,
            "significance": significance_for_trades(
                trades,
-               _sig_params(params, fee_bps, slippage_bps, strategy_kind))}
+               _sig_params(params, fee_bps, slippage_bps, strategy_kind,
+                           periods_per_year))}
     if cot is not None:
         out["cot_gate"] = _cot_gate_report(
             cot, trades, cot_blocks, cot_no_data, cot_no_gate, params)
