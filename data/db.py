@@ -135,7 +135,7 @@ def _migrate(conn):
     # `quotes_l1` got this treatment already and the reasoning applies
     # verbatim to candles. `scripts/seed.py` writes 1-minute bars from a
     # seeded RNG for any symbol with no history, and they land in the same
-    # table as a Binance backfill. Nothing downstream could tell them apart,
+    # table as a historical backfill. Nothing downstream could tell them apart,
     # so a backtest over AAPL read a random walk and reported its Sharpe as
     # though it measured a strategy.
     #

@@ -1,8 +1,8 @@
-# Mafutani Consolidation Trading Application (zero-deps, stdlib only)
+# Mafutani (zero-deps, stdlib only)
 
 > **The app is stdlib-only.** No third-party import appears anywhere in the
 > application tree (`app.py`, `core/`, `data/`, `api/`, `engines/`,
-> `brokers/`, `scripts/`), and the repository ships no dependency manifest.
+> `brokers/`, `scripts/`, `minting/`, `chain/`, `node/`, `compositor/`, `web/` assets are static), and the repository ships no dependency manifest.
 > Enforced app-wide by `tests/test_zero_dependency.py`, which parses every
 > file with `ast` and fails on any absolute import that is neither stdlib
 > nor the project's own. This restored the whole-tree sweep that was lost
@@ -10,8 +10,7 @@
 > was removed on 2026-10-16. See
 > [Torch: removed 2026-10-16](#torch-removed-2026-10-16).
 
-> **Disclaimer: not financial advice. Paper trading is the default. Live trading
-> is disabled unless `LIVE_TRADING_ENABLED=1` + eligible tier + explicit confirm.**
+> **Policy & risk (read before use):** Not financial, investment, trading, legal, or tax advice. Paper trading is the default; live trading is gated (environment/tier/explicit confirmation where applicable) and can cause real loss. Mafutani includes **experimental** Mafutani Chain / CommCoin (**MFT**) features: an independent zero-dep, SBC-mineable PoW chain with hash-based post-quantum signatures, deterministic 182-day epoch seeding (**100,000,000,000 MFT** per epoch) and token expiry/replacement, Merkle commitments/proofs, and a Wayland-like node compositor desktop model. Crypto features are **unaudited and experimental**; keys/transactions may be irreversible and total loss is possible. **`$100,000` per CommCoin/MFT is reference/config metadata only** (`MAFUTANI_COIN_USD_VALUE`) — not a market price, quote, guarantee, offer, or promise of value/liquidity. M-Pesa/Daraja integration is an admin-guarded off-ramp bridge; acceptance is not settlement and operators are responsible for compliance (KYC/AML/sanctions/tax), credentials, and secure deployment. See [Policies & security stance](docs/POLICIES.md) and [Mafutani Chain](docs/MAFUTANI_CHAIN.md).
 
 ## Runbook
 
@@ -32,34 +31,31 @@ python3 scripts/ingest_csv.py data.csv --symbol BTCUSD
 Docker:
 
 ```bash
-docker build -t mafutani-cta .
-docker run -p 8000:8000 mafutani-cta
+docker build -t mafutani .
+docker run -p 8000:8000 mafutani
 ```
 
-## API (JSON, cookie session + `X-CSRF` on POST/DELETE)
+## API (JSON, cookie session + `X-CSRF` on state-changing requests)
 
-- `POST /api/auth/signup|login|logout`, `GET /api/me/entitlements`
+- `POST /api/auth/signup|login|logout`, `GET /api/me/entitlements`, `GET/POST /api/auth/2fa*` (2FA capability; enforce step-up per deployment policy)
 - `GET /api/symbols`, `GET /api/candles?symbol&limit`, `GET /api/screener?min_vol&max_spread_bps`
 - `GET/POST /api/watchlists`, `DELETE /api/watchlists/:id`
 - `GET /api/strategies`, `POST /api/signals/preview`
 - `POST /api/backtests`, `GET /api/backtests`, `GET /api/backtests/:id`
-- `POST /api/orders` (paper default; live needs env + tier + `{confirm:true}`
-  + configured venue credentials),
-  `GET /api/orders`, `DELETE /api/orders/:id`,
-  `POST /api/positions/flatten`, `GET /api/portfolio`
-- `GET /api/brokers`, `POST /api/brokers/command` (venue layer: `paper`,
-  `binance`, and the REST `*_style` profiles)
-- `GET /api/arbitrage?asset_class=crypto|fx|commodity|all` (Pro+),
-  `GET /api/arbitrage/venues` (public: venue registry + fee schedule)
+- `POST /api/orders` (paper default; live needs env + tier + `{confirm:true}` + configured venue credentials), `GET /api/orders`, `DELETE /api/orders/:id`, `POST /api/positions/flatten`, `GET /api/portfolio`
+- `GET /api/brokers`, `POST /api/brokers/command` (venue layer: `paper` and REST `*_style` profiles; Binance removed; CommCoin/MFT native integration active)
+- `GET /api/arbitrage?asset_class=crypto|fx|commodity|all` (Pro+), `GET /api/arbitrage/venues` (public)
 - `GET/POST /api/risk`, `GET/POST /api/journal`
-- `GET /api/admin/overview`, `GET /api/admin/audit` (Admin tier only)
-- `GET /api/news?symbol&limit` (free public RSS, cached 10 min)
-- `GET /api/cot?report&q`, `GET /api/cot/contract?contract&weeks`,
-  `GET /api/cot/history?contract&category`, `POST /api/cot/sync`
-  (CFTC Commitments of Traders, Pro+ — weekly positioning, not prices)
-- `GET /api/status` (public service health: uptime, table counts, feed freshness)
-- `POST /api/terminal/command` `{cmd}` — OpenTerminal (same risk/fill path as REST)
-- `GET /stream/quotes` (SSE)
+- `GET /api/news?symbol&limit`, `GET /api/cot?report&q`, `GET /api/cot/contract?contract&weeks`, `GET /api/cot/history?contract&category`, `POST /api/cot/sync` (Pro+)
+- **Mafutani Chain (MFT/CommCoin, experimental):** `GET /api/chain/info`, `GET /api/chain/blocks`, `GET /api/chain/balance?address=...`, `GET /api/chain/wallets`, `POST /api/chain/wallet/create`, `POST /api/chain/tx/send`, `POST /api/chain/mine` (admin), `POST /api/chain/epoch/seed` (admin)
+- **Merkle/proofs/commitments:** `GET /api/chain/proof/tx`, `GET /api/chain/commitment`
+- **Node:** `GET /api/node/status`
+- **Wayland-like compositor desktop (stdlib model + web renderer):** `GET /api/compositor`, `POST /api/compositor/action` (CSRF/auth as implemented)
+- **Locale/i18n & policies:** `GET /api/i18n`, `GET /api/i18n/messages?lang=...`, `GET /api/policies`
+- **Admin/funding/off-ramps:** `GET /api/admin/overview`, `GET /api/admin/audit` (admin), funding ledger admin routes (Minima request/approve/execute lifecycle), `GET /api/admin/daraja/status`, `POST /api/admin/daraja/withdraw` (admin + CSRF + `confirm:true`)
+- `GET /api/status` (public service health), `POST /api/terminal/command` `{cmd}`, `GET /stream/quotes` (SSE)
+
+> **Authoritative source:** `api/routes.py`. Some routes may require admin tier, authenticated session, CSRF, and/or explicit confirmation flags.
 
 ## OpenTerminal
 
@@ -75,6 +71,20 @@ arb [crypto|fx|commodity|all] | venues BTCUSD
 ```
 
 Terminal trades are paper-only and risk-checked exactly like REST orders.
+
+## Current Stance: Mafutani Chain, Merkle, Node Compositor, Off-ramps, Security
+
+This section summarizes capabilities added/expanded beyond the original trading focus. See linked docs for normative details.
+
+- **Mafutani Chain / CommCoin (MFT)** (`chain/`): experimental, stdlib-only, SBC-mineable PoW (`SHAKE256`, adjustable target). 182-day epochs; **100,000,000,000 MFT** deterministic epoch seed; token expiry/replacement so expired outputs are not spendable and supply is replaced by epoch rules (`chain/consensus.py`, `chain/ledger.py`). Separate chain DB (`MAFUTANI_CHAIN_DB`, default `chain/mft.db`), UTXO model, amounts as text.
+- **Hash-based PQC** (`chain/pqc.py`): `MFT-PQC-WOTS-MERKLE-SHAKE256-v1` (WOTS+/Merkle over SHAKE256). Real hash-based PQC approach, **not externally audited**. Wallet state is **stateful** — never reuse signature indexes or restore stale wallet backups/state.
+- **Reference valuation:** `$100,000` per CommCoin/MFT (`MAFUTANI_COIN_USD_VALUE`) is **reference/config metadata only** — not a market price, quote, guarantee, offer, or promise of liquidity/value.
+- **Merkle abstractions/proofs** (`chain/merkle.py`, `node/proofs.py`): tx/block/UTXO/commitment proofs and Merkle-ized abstractions for integrity/proof workflows (`/api/chain/proof/tx`, `/api/chain/commitment`).
+- **Wayland-like node compositor desktop** (`compositor/`, `node/`, web `#/desktop`): in-process Wayland-inspired model (display/registry/globals, compositor/surface, output, seat/pointer/keyboard, `xdg_wm_base`/toplevel, commit/damage, scene, desktop shell) exposed via `compositor/service.py` and rendered in the web UI. **Not libwayland/DRM/KMS**.
+- **Locale/i18n:** `core/i18n.py`, `data/locales/*`, `web/i18n.js`, `/api/i18n*`.
+- **Minima funding ledger:** internal auditable liability/withdrawal workflow for Minima (not a mainnet minter), with request/reserve, approval, and node-backed execution semantics as implemented.
+- **Daraja/M-Pesa bridge** (`minting/daraja.py`): admin-guarded B2C payout integration via stdlib `urllib`; admin+CSRF+audit+`confirm:true`. Request acceptance is not settlement. Operator owns credentials (including pre-encrypted `SecurityCredential`), callbacks/reconciliation, and KYC/AML/sanctions/tax/compliance.
+- **Privileged-attack resistance (honest stance):** layered controls exist (auth/admin/CSRF, session cookie protections, audit logging, 2FA capability, funding approval-before-execute, Daraja confirm+admin, rate/risk/fingerprinting in relevant paths, restrictive wallet perms). These reduce risk from common admin/operational failures and some privileged/key-compromise-style vectors seen in the crypto industry, but **do not provide immunity**. Residual gaps: single-admin paths may lack enforced maker-checker/dual control and universal step-up 2FA/allowlists/velocity/delays; server-side custody/secret handling; shared compositor action model; experimental/unaudited chain+PQC; third-party settlement/reconciliation risk. Do not fabricate incident-specific claims. See [docs/POLICIES.md](docs/POLICIES.md).
 
 ## Proxy (SOCKS5 + HTTP CONNECT)
 
@@ -113,23 +123,23 @@ for the tests, and against real TLS through a tunnel with certificate
 verification on. Not verified against a commercial proxy (a corporate
 appliance, or a WireGuard-based VPN, which has its own framing).
 
-## Live trading (Binance spot)
+## Live trading (CommCoin venue)
 
 Paper is the default. Live requires **all** of:
 
 1. `LIVE_TRADING_ENABLED=1` in the environment
 2. a tier with `live_enabled` (Pro+)
 3. `{confirm: true}` on the request
-4. `BROKER_BINANCE_API_KEY` + `BROKER_BINANCE_SECRET`
+4. `BROKER_COMMCOIN_API_KEY` + `BROKER_COMMCOIN_SECRET`
 
 ```bash
 export LIVE_TRADING_ENABLED=1
-export BROKER_BINANCE_API_KEY=...
-export BROKER_BINANCE_SECRET=...
+export BROKER_COMMCOIN_API_KEY=...
+export BROKER_COMMCOIN_SECRET=...
 python3 app.py
 ```
 
-Add `BROKER_BINANCE_TESTNET=1` to target `testnet.binance.vision` — a real
+Add `BROKER_COMMCOIN_TESTNET=1` to target `testnet.binance.vision` — a real
 exchange with real signing and no real money. **Verify there before risking
 funds.**
 
@@ -152,7 +162,7 @@ charged a fee and moved P&L for an asset that was never bought.
 
 ### Credentials
 
-`BROKER_BINANCE_API_KEY` / `_SECRET` (uppercase, per-venue). Keys are never
+per-venue broker credentials (uppercase env prefix). Keys are never
 logged, never stored, never returned by an endpoint — `/api/arbitrage/venues`
 reports only a truncated SHA-256 fingerprint so an operator can confirm
 *which* key is wired up.
@@ -522,7 +532,7 @@ two legs of taker fees** — gross spread is not profit.
 
 | Model | Class | Needs |
 |---|---|---|
-| `cross_venue` | crypto | two real books for one symbol (Binance + Coinbase) |
+| `cross_venue` | crypto | real venue books for one symbol (config-dependent; replaced by CommCoin/MFT) |
 | `triangular` | crypto | a venue-tagged three-leg cycle, `A → B → C → A` |
 | `fx_cross` | currency | direct rate vs a synthetic cross (`EURUSD` vs `EURGBP × GBPUSD`) |
 | `spread` | commodity | correlated contracts (Brent–WTI crack, gold/silver) |
@@ -532,7 +542,7 @@ two legs of taker fees** — gross spread is not profit.
 `quotes_l1` is keyed by symbol alone — one price row set per instrument.
 That is correct for a tape ("what is BTCUSD trading at?") and it is why
 cross-venue arbitrage was not expressible: `cryptomarkets.ROUTES` is 1:1,
-so BTCUSD pointed at Binance and Coinbase had nowhere to go.
+venue routing kept the primary tape and multi-venue books separate.
 
 `venue_quotes` is the additive second dimension, keyed `(symbol, venue)`.
 `quotes_l1` keeps answering "what is this worth"; `venue_quotes` answers
@@ -605,10 +615,10 @@ interpretation — a fiat-redemption premium, not a tradeable gap — is
 indistinguishable from a scanner reporting a dislocation. That is what
 `venue_attribution()` is built to catch before it reaches a table.
 
-**Which venues are real.** Crypto gets two tradeable books each (Binance,
+**Which venues are real.** Venue coverage is config-dependent (Binance removed; CommCoin/MFT native integration active).
 Coinbase). FX uses **Kraken**, which publishes a real two-sided book —
 not a mid price, so the cross models can be costed honestly. Gold is the
-one commodity with two free keyless venues (Binance + Kraken both publish
+one commodity with two free keyless venues (configured venues may publish
 XAUTUSD). Everything else has no free source and falls to the synthetic
 generator, labelled as such.
 

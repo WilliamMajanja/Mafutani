@@ -42,7 +42,12 @@ WORKDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # conflating "the app has no dependencies" with "an auxiliary service might"
 # is how the old exception crept in. `tests/` is excluded because a test
 # runner is not shipped.
-APP_DIRS = ("core", "data", "api", "engines", "brokers", "scripts")
+#
+# `minting/` and `chain/` are imported/used by application code and are part of
+# the shipped app, not auxiliary scripts. A guard that only covers directories
+# someone remembered is the exact failure mode this file exists to prevent --
+# so the list is asserted against the on-disk tree by the test below.
+APP_DIRS = ("core", "data", "api", "engines", "brokers", "scripts", "minting", "chain", "node", "compositor")
 SKIP = {".git", "__pycache__", ".venv-torch", "node_modules", ".mypy_cache"}
 
 
@@ -132,6 +137,35 @@ class ZeroDependency(unittest.TestCase):
         self.assertGreater(len(files), 40,
                            "only %d app files found -- sweep is blind"
                            % len(files))
+
+    def test_every_python_package_in_the_tree_is_swept(self):
+        """A directory left out of APP_DIRS is unguarded code.
+
+        `minting/` shipped after this sweep was written and imports
+        `http.cookiejar`, `ssl` and friends. Had it been forgotten here it
+        could have grown a third-party import with nothing noticing, which is
+        the whole reason the sweep walks the tree rather than trusting a
+        hand-kept list. So the list itself is checked against disk.
+        """
+        swept = set(APP_DIRS)
+        on_disk = set()
+        for entry in os.listdir(WORKDIR):
+            full = os.path.join(WORKDIR, entry)
+            if not os.path.isdir(full) or entry in SKIP:
+                continue
+            for dirpath, dirs, files in os.walk(full):
+                dirs[:] = [d for d in dirs if d not in SKIP]
+                if any(f.endswith(".py") for f in files):
+                    on_disk.add(entry)
+                    break
+        # `services/` holds the optional, separately-run MT5 bridge and `web/`
+        # is static assets: both are excluded on purpose, documented above.
+        intentional = {"services", "web", "docs", "rfcs", "rffs", "tests",
+                       "data", "__pycache__"}
+        missing = on_disk - swept - intentional
+        self.assertEqual(missing, set(),
+                         "python package(s) not covered by the zero-dependency"
+                         " sweep: %s" % sorted(missing))
 
     def test_the_detector_flags_a_third_party_import(self):
         """The positive control: prove the checker can fail."""

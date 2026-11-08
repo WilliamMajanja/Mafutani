@@ -78,11 +78,11 @@ def _fields(**over):
     return out
 
 
-# --------------------------------------------------------------------- crypto
-# HMAC-signed REST exchange (the common shape: key+secret, signed requests,
+# ------------------------------------------------------------------ HMAC REST
+# HMAC-signed REST exchange (generic shape: key+secret, signed requests,
 # `clientOrderId` for idempotency, list-of-dicts responses).
-BINANCE_STYLE = VenueProfile(
-    name="binance_style",
+HMAC_STYLE = VenueProfile(
+    name="hmac_style",
     venue="HMAC REST Exchange",
     base_url="https://api.example-hmac-exchange.com",
     endpoints={
@@ -211,7 +211,7 @@ EXCHANGE_STYLE = VenueProfile(
 
 # ----------------------------------------------------------------- registry
 PROFILES = {
-    p.name: p for p in (BINANCE_STYLE, BEARER_STYLE, EXCHANGE_STYLE)
+    p.name: p for p in (HMAC_STYLE, BEARER_STYLE, EXCHANGE_STYLE)
 }
 
 

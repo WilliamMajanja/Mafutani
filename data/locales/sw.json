@@ -1,0 +1,16 @@
+{
+  "app.name": "Mafutani",
+  "nav.dashboard": "Dashibodi",
+  "nav.chain": "Mnyororo",
+  "nav.wallet": "Pochi",
+  "nav.funding": "Ufadhili",
+  "nav.policies": "Sera",
+  "risk.disclaimer": "Si ushauri wa kifedha. Mali za kidijitali na biashara zina hatari ya kupoteza yote.",
+  "chain.epoch_seed": "Ugavi wa kipindi: MFT 100,000,000,000 kila miezi 6 (siku 182).",
+  "chain.expiry": "Tokeni zilizoisha muda hazitumiki na hubadilishwa na ugavi wa kipindi kulingana na kanuni za makubaliano.",
+  "chain.pqc": "Sahihi hutumia kriptografia ya baada ya kwanta (WOTS+/Merkle, SHAKE256). Linda hali ya pochi.",
+  "payments.daraja": "M-Pesa/Daraja ni huduma ya mhusika mwingine. Mwendeshaji lazima asanidi vitambulisho na kufuata sheria.",
+  "action.mine": "Chimba",
+  "action.send": "Tuma",
+  "action.withdraw_mpesa": "Toa kwenda M-Pesa"
+}

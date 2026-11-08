@@ -332,8 +332,8 @@ class TestTransport(unittest.TestCase):
 # ------------------------------------------------------------ profiles
 class TestProfiles(unittest.TestCase):
     def test_get_profile_by_name(self):
-        p = profiles.get_profile("BINANCE_STYLE")
-        self.assertEqual(p.name, "binance_style")
+        p = profiles.get_profile("HMAC_STYLE")
+        self.assertEqual(p.name, "hmac_style")
 
     def test_unknown_profile_raises(self):
         with self.assertRaises(BrokerNotSupported):
@@ -366,7 +366,7 @@ class TestProfiles(unittest.TestCase):
 
 # ------------------------------------------------------------ rest broker
 class TestRestBroker(unittest.TestCase):
-    def broker(self, profile="binance_style", routes=None, creds=None,
+    def broker(self, profile="hmac_style", routes=None, creds=None,
                **kw):
         return rest.RestBroker(
             profile=profile,
@@ -375,16 +375,16 @@ class TestRestBroker(unittest.TestCase):
 
     def test_reports_profile_name_and_venue(self):
         """Broker.name/venue must describe the real venue, not 'base'."""
-        b = self.broker("binance_style")
-        self.assertEqual(b.name, "binance_style")
-        self.assertEqual(b.venue, profiles.BINANCE_STYLE.venue)
+        b = self.broker("hmac_style")
+        self.assertEqual(b.name, "hmac_style")
+        self.assertEqual(b.venue, profiles.HMAC_STYLE.venue)
         self.assertNotEqual(b.venue, "base")
 
     def test_submit_order_translates_fields(self):
         t = FakeTransport({"POST /api/v3/order": (200, {
             "orderId": 99, "symbol": "BTCUSD", "status": "NEW",
             "price": "100.5", "executedQty": "0"})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         o = b.submit_order(OrderRequest(symbol="btcusd", side="buy", qty=2))
         call = t.calls[-1]
@@ -412,7 +412,7 @@ class TestRestBroker(unittest.TestCase):
                  ("REJECTED", "rejected"), ("NEW", "new")]
         for raw, want in cases:
             t = FakeTransport({"GET /api/v3/order": (200, {"status": raw})})
-            b = rest.RestBroker(profile="binance_style",
+            b = rest.RestBroker(profile="hmac_style",
                                 credentials=Credentials("k", "s"), transport=t)
             o = b.get_order(1)
             self.assertEqual(o.status, want, raw)
@@ -429,7 +429,7 @@ class TestRestBroker(unittest.TestCase):
     def test_rejected_order_raises(self):
         t = FakeTransport({"POST /api/v3/order": (200, {
             "status": "REJECTED", "error": "insufficient margin"})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         with self.assertRaises(BrokerRejectedError) as cm:
             b.submit_order(OrderRequest(symbol="X", qty=1))
@@ -437,14 +437,14 @@ class TestRestBroker(unittest.TestCase):
 
     def test_dict_order_input_accepted(self):
         t = FakeTransport({"POST /api/v3/order": (200, {"status": "NEW"})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         o = b.submit_order({"symbol": "X", "side": "sell", "qty": 3})
         self.assertEqual(o.side, "sell")
 
     def test_invalid_order_never_reaches_network(self):
         t = FakeTransport()
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         with self.assertRaises(BrokerValidationError):
             b.submit_order(OrderRequest(symbol="X", qty=-1))
@@ -452,7 +452,7 @@ class TestRestBroker(unittest.TestCase):
 
     def test_non_live_adapter_refuses_live_flagged_request(self):
         t = FakeTransport({"POST /api/v3/order": (200, {"status": "NEW"})})
-        b = rest.RestBroker(profile="binance_style", live=False,
+        b = rest.RestBroker(profile="hmac_style", live=False,
                             credentials=Credentials("k", "s"), transport=t)
         req = OrderRequest(symbol="X", qty=1, metadata={"live": True})
         with self.assertRaises(BrokerError):
@@ -463,7 +463,7 @@ class TestRestBroker(unittest.TestCase):
     def test_live_adapter_blocked_when_env_off(self):
         t = FakeTransport({"POST /api/v3/order": (200, {"status": "NEW"})})
         os.environ.pop("LIVE_TRADING_ENABLED", None)
-        b = rest.RestBroker(profile="binance_style", live=True, confirm=True,
+        b = rest.RestBroker(profile="hmac_style", live=True, confirm=True,
                             credentials=Credentials("k", "s"), transport=t)
         with self.assertRaises(BrokerError):
             b.submit_order(OrderRequest(symbol="X", qty=1))
@@ -473,7 +473,7 @@ class TestRestBroker(unittest.TestCase):
         t = FakeTransport({"POST /api/v3/order": (200, {"status": "NEW"})})
         old = env(LIVE_TRADING_ENABLED="1")
         try:
-            b = rest.RestBroker(profile="binance_style", live=True,
+            b = rest.RestBroker(profile="hmac_style", live=True,
                                 confirm=True, tier_live_enabled=True,
                                 credentials=Credentials("k", "s"), transport=t)
             o = b.submit_order(OrderRequest(symbol="X", qty=1))
@@ -486,7 +486,7 @@ class TestRestBroker(unittest.TestCase):
         t = FakeTransport({"POST /api/v3/order": (200, {"status": "NEW"})})
         old = env(LIVE_TRADING_ENABLED="1")
         try:
-            b = rest.RestBroker(profile="binance_style", live=True,
+            b = rest.RestBroker(profile="hmac_style", live=True,
                                 confirm=False, tier_live_enabled=True,
                                 credentials=Credentials("k", "s"), transport=t)
             with self.assertRaises(BrokerError):
@@ -498,7 +498,7 @@ class TestRestBroker(unittest.TestCase):
         t = FakeTransport({"GET /api/v3/ticker/bookTicker": (200, {
             "symbol": "BTCUSD", "bidPrice": "99.5", "askPrice": "100.5",
             "lastPrice": "100.0"})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         q = b.quote("BTCUSD")
         self.assertEqual(q.bid, 99.5)
@@ -519,7 +519,7 @@ class TestRestBroker(unittest.TestCase):
         t = FakeTransport({"GET /api/v3/ticker/bookTicker": (200, {
             "symbol": "X", "bidPrice": "n/a", "askPrice": None,
             "lastPrice": ""})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         q = b.quote("X")
         self.assertEqual(q.bid, 0.0)
@@ -530,7 +530,7 @@ class TestRestBroker(unittest.TestCase):
             {"symbol": "BTCUSD", "positionAmt": "0.5", "entryPrice": "100"},
             {"symbol": "ETHUSD", "positionAmt": "0"},
             {"symbol": "XRPUSD", "positionAmt": "-100", "entryPrice": "2"}])})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         pos = b.positions()
         self.assertEqual(len(pos), 2, "flat positions must be omitted")
@@ -541,7 +541,7 @@ class TestRestBroker(unittest.TestCase):
         t = FakeTransport({"GET /api/v3/account": (200, {
             "freeBalance": "1000.5", "totalWalletBalance": "2500.0",
             "quoteAsset": "USDT"})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         a = b.account()
         self.assertEqual(a.cash, 1000.5)
@@ -550,7 +550,7 @@ class TestRestBroker(unittest.TestCase):
 
     def test_cancel(self):
         t = FakeTransport({"DELETE /api/v3/order": (200, {"orderId": 7})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         o = b.cancel_order(7)
         self.assertEqual(o.order_id, "7")
@@ -558,7 +558,7 @@ class TestRestBroker(unittest.TestCase):
 
     def test_default_params_merged(self):
         t = FakeTransport({"GET /api/v3/account": (200, {})})
-        b = rest.RestBroker(profile="binance_style",
+        b = rest.RestBroker(profile="hmac_style",
                             credentials=Credentials("k", "s"), transport=t)
         b.account()
         self.assertEqual(t.calls[-1]["query"].get("recvWindow"), 5000)
@@ -594,7 +594,7 @@ class TestRegistry(unittest.TestCase):
         """Regression: the registry name must reach the builder.
 
         Without the bound builder every REST broker constructed the
-        default profile, so `binance_style` silently returned a
+        default profile, so `commcoin_style` silently returned a
         `bearer_style` adapter pointed at the wrong venue shape.
         """
         for name in profiles.PROFILES:

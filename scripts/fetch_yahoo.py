@@ -7,7 +7,7 @@
 Why this exists
 ---------------
 42 of this deployment's symbols -- equities, commodities and FX -- have no
-free 1-minute source. Binance covers the crypto pairs; nothing free covers
+free 1-minute source. venue covers the crypto pairs; nothing free covers
 intraday for the rest. Yahoo's chart API carries *years* of daily OHLCV,
 and that is what real data genuinely means for these instruments.
 

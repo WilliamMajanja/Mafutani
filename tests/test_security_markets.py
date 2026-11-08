@@ -228,7 +228,7 @@ class TestMarkets(unittest.TestCase):
     def test_venue_mapping(self):
         self.assertEqual(markets.region_for_venue("NASDAQ"), "AMER")
         self.assertEqual(markets.region_for_venue("LME"), "EMEA")
-        self.assertEqual(markets.region_for_venue("BINANCE"), "APAC")
+        # CommCoin/MFT native integration active; Binance removed
         self.assertEqual(markets.region_for_venue("COINBASE"), "APAC")
         self.assertIsNone(markets.region_for_venue("NOWHERE", ""))
 

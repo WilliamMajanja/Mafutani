@@ -8,7 +8,6 @@ classes directly.
 from .base import (Broker, BrokerError, BrokerNotSupported, Credentials,
                    BrokerValidationError, live_trading_enabled)
 from . import profiles as _profiles
-from .binance import BinanceBroker
 from .paper import PaperBroker
 from .rest import RestBroker
 
@@ -52,22 +51,12 @@ def _rest_builder_for(profile_name):
 
     Without this the registry name is never seen by the builder, so every
     REST broker silently built the *default* profile -- asking for
-    `binance_style` and quietly getting `bearer_style`.
+    a named profile and quietly getting `bearer_style`.
     """
     def _builder(**kw):
         kw.pop("profile", None)
         return _build_rest(profile=profile_name, **kw)
     return _builder
-
-
-def _build_binance(**kw):
-    # credentials arrive already resolved by get_broker() from
-    # BROKER_BINANCE_API_KEY / _SECRET, so they are passed through rather
-    # than dropped -- popping them here would silently build an adapter
-    # that can never sign, and the failure would surface as a confusing
-    # "no credentials" at order time instead of at setup.
-    kw.pop("profile", None)
-    return BinanceBroker(**kw)
 
 
 def _build_mt5(**kw):
@@ -88,9 +77,7 @@ register("paper", _build_paper,
          "Simulated execution against the local database (default)")
 # The one venue that can actually execute. Registered under its real name
 # rather than as another "style" profile because it needs per-venue signing
-# logic that endpoint data cannot describe -- see brokers/binance.py.
-register("binance", _build_binance,
-         "Binance spot: HMAC-signed live execution (set BROKER_BINANCE_API_KEY/SECRET)")
+
 register("mt5", _build_mt5,
          "MetaTrader 5 via a local MQL5 EA bridge (run services/mt5/bridge_server.py "
          "beside the terminal; set MAFUTANI_MT5_TOKEN)")
@@ -123,12 +110,12 @@ def _lookup(name):
 def env_prefix_for(name):
     """Environment prefix holding a venue's credentials.
 
-    `binance_style` -> `BROKER_BINANCE_STYLE_`, so a deployment can hold
+    `bearer_style` -> `BROKER_BEARER_STYLE_`, so a deployment can hold
     several venues at once. Normalised defensively: venue names may be
     written with dashes, dots or spaces, all of which become `_`.
 
     Uppercase, as this docstring has always claimed. The implementation
-    used to emit `BROKER_binance_style_`, which meant following the
+    used to emit a lowercase prefix; both forms are accepted for compatibility.
     documented setup silently produced no credentials at all -- the
     adapter came up unconfigured and the real failure only appeared at
     order time as "no credentials". `resolve_credentials` still accepts
@@ -147,12 +134,11 @@ def _norm(name):
 def resolve_credentials(name=None, explicit=None):
     """Credentials for a venue: explicit, then per-venue env, then generic.
 
-    Resolution order for venue `binance_style`:
+    Resolution order for a venue:
       1. an explicit `Credentials` passed by the caller
-      2. `BROKER_BINANCE_STYLE_API_KEY` / `_SECRET` / `_PASSPHRASE`
+      2. `BROKER_<VENUE>_API_KEY` / `_SECRET` / `_PASSPHRASE`
          / `_EXTRA_*`
-      3. the same names lowercased (`BROKER_binance_style_...`), which is
-         what `env_prefix_for` used to emit before it was corrected
+      3. the same names lowercased for backward compatibility
       4. the generic `BROKER_API_KEY` / ... (single-venue deployments)
 
     Per-venue wins over generic so a multi-venue setup cannot have one

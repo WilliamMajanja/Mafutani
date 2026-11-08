@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-Every venue call -- Binance, Coinbase, Kraken, stooq -- goes out from this
+Every venue call (Coinbase, Kraken, etc.) goes out from this
 machine's IP address. For a read-only public ticker that is mostly
 innocuous. For a *signed* live order it is not: the exchange sees where
 the money is being moved from, which is a real privacy exposure and, in
@@ -59,7 +59,7 @@ import time
 import urllib.error
 import urllib.request
 
-USER_AGENT = "mafutani-cta/1.1"
+USER_AGENT = "mafutani/1.1"
 
 # Venues are the hosts worth routing through a proxy. Everything else
 # (localhost, the app's own loopback) must not be.

@@ -19,39 +19,43 @@ import time instead of as an empty book.
 # synthesised around before any real quote has been seen. It is never
 # displayed as a live price.
 CRYPTO_SYMBOLS = (
-    ("BTCUSD", "Bitcoin / US Dollar", "BINANCE", "USD", "Crypto", 65000.0),
+    ("BTCUSD", "Bitcoin / US Dollar", "COINBASE", "USD", "Crypto", 65000.0),
     ("ETHUSD", "Ethereum / US Dollar", "COINBASE", "USD", "Crypto", 3500.0),
     ("USDT", "Tether USD", "COINBASE", "USD", "Crypto", 1.0),
-    ("BTCUSDT", "Bitcoin / Tether", "BINANCE", "USDT", "Crypto", 65000.0),
-    ("ETHUSDT", "Ethereum / Tether", "BINANCE", "USDT", "Crypto", 3500.0),
+    ("BTCUSDT", "Bitcoin / Tether", "COINBASE", "USDT", "Crypto", 65000.0),
+    ("ETHUSDT", "Ethereum / Tether", "COINBASE", "USDT", "Crypto", 3500.0),
+    # Native CommCoin/MFT reference symbols (operator-configured/reference metadata only;
+    # NOT external market liquidity/price guarantees).
+    ("MFTUSD", "CommCoin / US Dollar (Reference)", "COMMCOIN", "USD", "Crypto", 100000.0),
+    ("MFTKES", "CommCoin / Kenyan Shilling (Reference)", "COMMCOIN", "KES", "Crypto", 13000000.0),
 )
 
 # symbol -> venue key. Only symbols listed here are polled for real
 # prices; anything else falls back to the synthetic tick generator.
-VENUE_BINANCE = "binance"
 VENUE_COINBASE = "coinbase"
+VENUE_COMMCOIN = "commcoin"
 
 ROUTES = {
-    "BTCUSD":   (VENUE_BINANCE,  "BTCUSDT"),
-    "ETHUSDT":  (VENUE_BINANCE,  "ETHUSDT"),
-    "BTCUSDT":  (VENUE_BINANCE,  "BTCUSDT"),
-    # ETHUSD is quoted on Binance as ETHUSDT, the deepest book; COINBASE
-    # is kept as the venue label because that is the product the app
-    # already advertises, and the price tracks it to the cent.
-    "ETHUSD":   (VENUE_BINANCE,  "ETHUSDT"),
+    "BTCUSD":   (VENUE_COINBASE, "BTC-USD"),
+    "ETHUSD":   (VENUE_COINBASE, "ETH-USD"),
+    "BTCUSDT":  (VENUE_COINBASE, "BTC-USDT"),
+    "ETHUSDT":  (VENUE_COINBASE, "ETH-USDT"),
     # USD₮ trades a hair under $1 (it is not pegged, it is *managed*),
     # so it needs a real book rather than a synthetic 1.0000. Coinbase
     # Exchange publishes a USDT-USD book with no API key required.
     "USDT":     (VENUE_COINBASE, "USDT-USD"),
+    # CommCoin native reference quotes (local/config/chain metadata; clearly labeled).
+    "MFTUSD":   (VENUE_COMMCOIN, "MFTUSD"),
+    "MFTKES":   (VENUE_COMMCOIN, "MFTKES"),
 }
 
 # Public, keyless REST endpoints. Verified live; no auth, no quota key.
 VENUE_ENDPOINTS = {
-    # https://developers.binance.com/docs/binance-spot-api-docs
-    (VENUE_BINANCE, "book"): "https://api.binance.com/api/v3/ticker/bookTicker?symbol={pair}",
     # https://docs.cdp.coinbase.com/api-reference/exchange-api
     (VENUE_COINBASE, "book"): "https://api.exchange.coinbase.com/products/{pair}/book?level=1",
     (VENUE_COINBASE, "ticker"): "https://api.exchange.coinbase.com/products/{pair}/ticker",
+    # CommCoin reference: local (no external HTTP endpoint).
+    (VENUE_COMMCOIN, "book"): "local://commcoin/reference/{pair}",
 }
 
 

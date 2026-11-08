@@ -8,7 +8,7 @@ Why this module exists
 `data.cryptomarkets.ROUTES` is 1:1 -- symbol -> one (venue, pair). That
 is correct for the primary tape, which wants one honest price per
 instrument, and it is why cross-venue arbitrage was not expressible
-before: BTCUSD pointed at Binance's BTCUSDT book, and Coinbase's
+before: BTCUSD was single-sourced, and additional venue
 BTC-USD book had nowhere to go.
 
 This module adds the second dimension, keyed by (symbol, venue), and is
@@ -72,9 +72,11 @@ longer exists.
 # reported as synthetic: the two tables used to disagree, and kraken
 # (26 bps here, no route) was simultaneously "known" and "synthetic".
 VENUE_FEES_BPS = {
-    "binance": 10.0,     # 0.10% spot taker, no BNB discount assumed
     "coinbase": 60.0,    # ~0.06% taker + spread crossing
     "kraken": 26.0,      # 0.26% FX/metal taker
+    "commcoin": 0.0,     # native CommCoin/MFT chain/reference (no external exchange fee)
+    "venue1": 30.0,      # generic known venue (diagnostics/tests; no external integration)
+    "venue2": 30.0,
     "synthetic": 50.0,   # worst case, never a reason to "profit"
 }
 
@@ -90,9 +92,7 @@ DEFAULT_FEE_BPS = 50.0
 # the ratio, reports it against its own history, and refuses to price an
 # executable edge -- because there is no executable book to price.
 #
-# Gold is the exception and is deliberately absent from this list: both
-# Binance and Kraken publish XAUTUSD, so gold cross-venue arbitrage is
-# real. See the comment on VENUE_ROUTES.
+# Gold (XAUUSD) is only included when multiple real venue books exist.
 SYNTHETIC_ONLY = (
     "XAGUSD", "XPTUSD", "XPDUSD", "COPPER", "ALUM", "NICKEL", "ZINC",
     "BRENT", "WTI", "NGAS", "GASOLINE", "HEATOIL",
@@ -113,19 +113,17 @@ SYNTHETIC_ONLY = (
 # endpoints now returns 404 (including the pre-existing EquityPoller's
 # own URL form), so it was removed rather than left to fail quietly.
 #
-# Commodity: gold is the only contract with two free keyless venues
-# (Binance XAUTUSD, Kraken XAUTUSD), so gold cross-venue arbitrage is
-# genuinely executable. There is no free source for silver, platinum,
+# Commodity: cross-venue arbitrage requires two real keyless venue books.
+# Symbols without that fall to synthetic/relationship handling. There is no free source for silver, platinum,
 # palladium, base metals, energy or ags -- those fall to the synthetic
 # generator and are labelled as such.
 VENUE_ROUTES = {
-    # -- crypto: two real venues each, which is what makes cross-venue
-    #    arbitrage possible at all.
-    "BTCUSD":   (("binance", "BTCUSDT"), ("coinbase", "BTC-USD")),
-    "ETHUSD":   (("binance", "ETHUSDT"), ("coinbase", "ETH-USD")),
-    "BTCUSDT":  (("binance", "BTCUSDT"), ("coinbase", "BTC-USDT")),
-    "ETHUSDT":  (("binance", "ETHUSDT"), ("coinbase", "ETH-USDT")),
-    "USDT":     (("coinbase", "USDT-USD"), ("binance", "USDTUSD")),
+    # -- crypto: Coinbase public books (CommCoin/MFT native integration active; Binance removed).
+    "BTCUSD":   (("coinbase", "BTC-USD"),),
+    "ETHUSD":   (("coinbase", "ETH-USD"),),
+    "BTCUSDT":  (("coinbase", "BTC-USDT"),),
+    "ETHUSDT":  (("coinbase", "ETH-USDT"),),
+    "USDT":     (("coinbase", "USDT-USD"),),
 
     # -- FX: kraken publishes a real two-sided book for each of these.
     "EURUSD":   (("kraken", "EURUSD"),),
@@ -140,15 +138,15 @@ VENUE_ROUTES = {
     # "EQuery:Unknown asset pair", so they are excluded here rather than
     # routed into a scan that can never price them.
 
-    # -- commodity: gold only, on two venues.
-    "XAUUSD":   (("binance", "XAUTUSDT"), ("kraken", "XAUTUSD")),
+    # -- commodity: gold via Kraken (single real venue in this config).
+    "XAUUSD":   (("kraken", "XAUTUSD"),),
 }
 
 # asset_type -> venues that may quote it. Used by the scanner to keep a
 # crypto venue from being credited with an FX book.
 VENUE_ASSET_CLASS = {
-    "binance": "multi",   # crypto spot + the XAUTUSD metal quote
     "coinbase": "crypto",
+    "commcoin": "crypto",
     "kraken": "multi",   # FX + metals + crypto
     "synthetic": "multi",
 }

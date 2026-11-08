@@ -132,7 +132,7 @@ def _http_get(url, timeout=8):
 
 
 def _urllib_get(url, timeout=8):
-    req = urllib.request.Request(url, headers={"User-Agent": "mafutani-cta/1.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "mafutani/1.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
 
@@ -174,22 +174,6 @@ def _num(value, default=0.0):
     except (TypeError, ValueError):
         return default
     return f if f > 0 else default
-
-
-def _parse_binance_book(text, symbol):
-    """Binance `/api/v3/ticker/bookTicker`: best bid/ask as strings."""
-    raw = json.loads(text)
-    if not isinstance(raw, dict) or "bidPrice" not in raw:
-        raise ValueError("unexpected binance book shape: {}".format(
-            str(raw)[:120]))
-    return {
-        "symbol": symbol,
-        "ts": _now(),
-        "bid": _num(raw.get("bidPrice")),
-        "ask": _num(raw.get("askPrice")),
-        "bid_size": _num(raw.get("bidQty")),
-        "ask_size": _num(raw.get("askQty")),
-    }
 
 
 def _parse_coinbase_book(text, symbol):
@@ -260,37 +244,86 @@ def _parse_kraken_ticker(text, symbol):
 
 
 # venue -> (endpoint template, parser). Kept as data so a new venue is a
-# new row here, not a new forked poller class.
+# new row here, not a new forked poller class. CommCoin/MFT native integration active; Binance removed.
 _BOOK_SOURCES = {
-    "binance": (
-        "https://api.binance.com/api/v3/ticker/bookTicker?symbol={pair}",
-        _parse_binance_book,
-    ),
     "coinbase": (
         "https://api.exchange.coinbase.com/products/{pair}/book?level=1",
         _parse_coinbase_book,
     ),
     # Kraken publishes real two-sided books for FX pairs and metals with
-    # no key. Replaces stooq, whose quote endpoints now 404 and which
-    # only ever published a mid price anyway (bid == ask), which forced
-    # a notional execution penalty onto every FX cross.
+    # no key.
     # https://docs.kraken.com/api/docs/rest-api/get-ticker-information
     "kraken": (
         "https://api.kraken.com/0/public/Ticker?pair={pair}",
         _parse_kraken_ticker,
     ),
+    # Native CommCoin reference (handled locally in fetch_venue_book).
+    "commcoin": ("local://commcoin/reference/{pair}", None),
 }
 
 
-def fetch_venue_book(symbol, venue, pair, timeout=8):
-    """One real top-of-book quote from a public venue endpoint.
 
-    Raises on anything unexpected rather than returning a zero price: a
-    caller that cannot distinguish "no data" from "price is zero" will
-    publish a 0.00 quote, and in a trading app a 0.00 quote is worse than
-    a missing one.
+def _commcoin_reference_quote(symbol, pair):
+    """Local reference quote for CommCoin/MFT (operator-configured metadata only).
+
+    NOT an external market price, NOT liquidity, NOT a guarantee. Labeled clearly
+    so UIs/consumers do not mistake it for exchange price discovery.
     """
-    source = _BOOK_SOURCES.get(str(venue or "").lower())
+    sym = str(symbol or pair or "").upper()
+    now = _now()
+    # USD reference: MAFUTANI_COIN_USD_VALUE (default 100000), metadata only.
+    usd_ref = 100000.0
+    try:
+        usd_ref = float(os.environ.get("MAFUTANI_COIN_USD_VALUE", "100000"))
+    except Exception:
+        pass
+    if usd_ref <= 0: usd_ref = 100000.0
+    kes_rate = 0.0
+    try:
+        kes_rate = float(os.environ.get("MAFUTANI_MFT_KES_RATE", "0"))
+    except Exception:
+        pass
+    if sym in ("MFTKES", "MFT/KES"):
+        if kes_rate > 0:
+            px = kes_rate
+            note = "reference: MAFUTANI_MFT_KES_RATE"
+        else:
+            # fallback: USD ref * a display-only placeholder is unsafe; return USD ref note via KES=0
+            px = usd_ref * 130.0 if usd_ref else 13000000.0
+            note = "reference fallback (set MAFUTANI_MFT_KES_RATE for KES off-ramp rate)"
+        ccy = "KES"
+    else:
+        px = usd_ref
+        ccy = "USD"
+        note = "reference: MAFUTANI_COIN_USD_VALUE (metadata only, not market price)"
+    spread = max(px * 0.0001, 0.01 if px > 1 else 0.00000001)
+    return {
+        "symbol": str(symbol),
+        "ts": now,
+        "bid": round(px - spread/2, 8),
+        "ask": round(px + spread/2, 8),
+        "bid_size": 0.0,
+        "ask_size": 0.0,
+        "last": round(px, 8),
+        "source": "commcoin_reference",
+        "venue": "commcoin",
+        "reference": True,
+        "currency": ccy,
+        "note": note,
+        "disclaimer": "Operator-configured/reference metadata only. Not an external market price, quote, guarantee, or offer.",
+    }
+
+def fetch_venue_book(symbol, venue, pair, timeout=8):
+    """Top-of-book quote from a public venue endpoint, or local CommCoin reference.
+
+    For external venues, raises on anything unexpected rather than returning a
+    zero price. CommCoin reference quotes are local/operator-configured metadata
+    (clearly labeled) — not external market liquidity.
+    """
+    v = str(venue or "").lower()
+    if v == "commcoin":
+        return _commcoin_reference_quote(symbol, pair)
+    source = _BOOK_SOURCES.get(v)
     if source is None:
         raise ValueError("no book source for venue '{}'".format(venue))
     template, parser = source
@@ -907,7 +940,7 @@ def _live_enabled():
     return os.environ.get("LIVE_TRADING_ENABLED", "0") == "1"
 
 
-def cancel_live_order(order_row, broker="binance", user=None):
+def cancel_live_order(order_row, broker=None, user=None):
     """Cancel a live order at the venue. Raises if the venue refuses.
 
     Split out from `place_live_order` because cancelling is the operation
@@ -918,6 +951,8 @@ def cancel_live_order(order_row, broker="binance", user=None):
     """
     if not _live_enabled():
         raise RuntimeError("live trading disabled (set LIVE_TRADING_ENABLED=1 to enable)")
+    if not broker:
+        raise RuntimeError("no live broker configured ( specify an available broker)")
     row = dict(order_row or {})
     venue_order_id = str(row.get("venue_order_id") or "").strip()
     if not venue_order_id:
@@ -944,7 +979,7 @@ def cancel_live_order(order_row, broker="binance", user=None):
 
 
 def place_live_order(symbol, side, qty, order_type="market", price=None,
-                     broker="binance", user_id=None, tier=None,
+                     broker=None, user_id=None, tier=None,
                      client_order_id=None):
     """Route a live order to a real venue.
 
@@ -960,7 +995,7 @@ def place_live_order(symbol, side, qty, order_type="market", price=None,
 
     * refuses outright unless a venue is configured and the order carries
       the live tier + env gates;
-    * submits through `brokers.binance`, which signs and returns the
+    * submits through the configured broker adapter and returns the
       venue's own status;
     * raises on transport failure, so the caller records the order
       `unknown` instead of `filled`.
@@ -972,6 +1007,8 @@ def place_live_order(symbol, side, qty, order_type="market", price=None,
     if not _live_enabled():
         raise RuntimeError(
             "live trading disabled (set LIVE_TRADING_ENABLED=1 to enable)")
+    if not broker:
+        raise RuntimeError("no live broker configured ( specify an available broker)")
     side = str(side).lower()
     if side not in ("buy", "sell"):
         raise ValueError("side must be buy|sell")

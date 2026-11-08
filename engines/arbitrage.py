@@ -1036,7 +1036,7 @@ PERSISTENCE_MAX_AGE_S = 3600
 # Commodity relationships: (a, b, kind, label). Ratio for metals
 # (gold/silver is the classic), difference for energy cracks.
 #
-# Only gold has a real book (Binance + Kraken both publish XAUTUSD), so
+# Only gold has a real book (venue + Kraken both publish XAUTUSD), so
 # gold/silver and platinum/palladium are the two entries whose *left-hand*
 # leg is live. The rest are computed from generated quotes and are
 # refused by `spread()` as unpriceable -- they exist so the relationship

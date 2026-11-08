@@ -1,4 +1,4 @@
-"""Trading app server. Stdlib only (http.server + sqlite3).
+"""Mafutani server. Stdlib only (http.server + sqlite3).
 
 - Serves /api/* via api.routes.Router
 - GET /stream/quotes as SSE (polls quotes_l1, 15s heartbeat)
@@ -97,7 +97,7 @@ def _client_ip(handler):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Mafutani-CTA/1.1"
+    server_version = "Mafutani/1.1"
 
     def log_message(self, fmt, *args):
         """Every server log line passes through the redactor.

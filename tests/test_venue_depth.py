@@ -142,7 +142,7 @@ class TestPruneBehaviour(_Db):
         self.conn.execute("DELETE FROM venue_quotes")
 
     def test_nothing_pruned_under_the_cap(self):
-        self.seed("binance", 200)
+        self.seed("venue1", 200)
         self.seed("coinbase", 200)
         before = self.count()
         feeds.prune_venue_quotes(self.conn)
@@ -158,22 +158,22 @@ class TestPruneBehaviour(_Db):
         market as single-venue.
         """
         feeds.prune_venue_quotes(self.conn, keep_per_book=100)
-        self.seed("binance", 150)
+        self.seed("venue1", 150)
         self.seed("coinbase", 45)
         feeds.prune_venue_quotes(self.conn, keep_per_book=100)
         self.assertEqual(self.count("coinbase"), 45,
                          "a busy venue evicted the quiet venue's history")
-        self.assertEqual(self.count("binance"), 100)
+        self.assertEqual(self.count("venue1"), 100)
 
     def test_cap_evicts_oldest_first(self):
-        self.seed("binance", 150)
+        self.seed("venue1", 150)
         feeds.prune_venue_quotes(self.conn, keep_per_book=100)
         kept = [r[0] for r in self.conn.execute(
-            "SELECT ts FROM venue_quotes WHERE venue='binance' ORDER BY ts")]
+            "SELECT ts FROM venue_quotes WHERE venue='venue1' ORDER BY ts")]
         self.assertEqual(len(kept), 100)
         self.assertEqual(kept, sorted(kept))
         newest = self.conn.execute(
-            "SELECT MAX(ts) FROM venue_quotes WHERE venue='binance'").fetchone()[0]
+            "SELECT MAX(ts) FROM venue_quotes WHERE venue='venue1'").fetchone()[0]
         self.assertEqual(kept[-1], newest, "did not keep the newest rows")
 
     def test_age_limit_still_applies_independently(self):
@@ -183,7 +183,7 @@ class TestPruneBehaviour(_Db):
         overnight gap filling the table with history nobody reads.
         """
         old = int(time.time()) - 30 * 86400      # 30 days back
-        self.seed("binance", 10, base_ts=old)
+        self.seed("venue1", 10, base_ts=old)
         self.assertEqual(self.count(), 10)
         feeds.prune_venue_quotes(self.conn, keep_per_book=1440)
         self.assertEqual(self.count(), 0,
@@ -194,7 +194,7 @@ class TestPruneBehaviour(_Db):
 
         Guards against a reintroduced silent single-venue read.
         """
-        self.seed("binance", 60)
+        self.seed("venue1", 60)
         self.seed("coinbase", 20)
         feeds.prune_venue_quotes(self.conn, keep_per_book=5)
         self.assertEqual(self.count("coinbase"), 20,
@@ -262,7 +262,7 @@ class TestPruneRunsWhenPersistenceIsOff(_Db):
         """
         app_mod = self._fresh_app()
         old = int(time.time()) - 30 * 86400      # 30 days back
-        self.seed("binance", 20, base_ts=old)
+        self.seed("venue1", 20, base_ts=old)
         self.seed("coinbase", 20, base_ts=old)
         self.assertEqual(self.count(), 40)
 
@@ -283,7 +283,7 @@ class TestPruneRunsWhenPersistenceIsOff(_Db):
         self.assertEqual(app_mod._prune_stale_venue_quotes(), 0)
 
         now = int(time.time())
-        self.seed("binance", 30, now=now)
+        self.seed("venue1", 30, now=now)
         self.assertEqual(app_mod._prune_stale_venue_quotes(), 0,
                          "pruned rows that were inside the retention window")
 
@@ -301,7 +301,7 @@ class TestPruneRunsWhenPersistenceIsOff(_Db):
         wiring bugs are invisible to tests that replace the wiring.
         """
         app_mod = self._fresh_app()
-        self.seed("binance", 5, base_ts=int(time.time()) - 30 * 86400)
+        self.seed("venue1", 5, base_ts=int(time.time()) - 30 * 86400)
         self.conn.execute("ALTER TABLE venue_quotes RENAME TO venue_quotes_gone")
         self.conn.commit()
         try:
@@ -327,7 +327,7 @@ class TestPruneRunsWhenPersistenceIsOff(_Db):
         happens by substituting a counting double and driving one tick.
         """
         app_mod = self._fresh_app()
-        self.seed("binance", 5, base_ts=int(time.time()) - 30 * 86400)
+        self.seed("venue1", 5, base_ts=int(time.time()) - 30 * 86400)
 
         calls = []
         real_prune = app_mod._prune_stale_venue_quotes
@@ -360,11 +360,11 @@ class TestDepthReport(_Db):
         self.conn.execute("DELETE FROM venue_quotes")
 
     def test_reports_rows_span_and_distinct_timestamps(self):
-        self.seed("binance", 30, step=60)
+        self.seed("venue1", 30, step=60)
         rows = feeds.venue_quote_depth(self.conn)
         self.assertEqual(len(rows), 1)
         r = rows[0]
-        self.assertEqual(r["venue"], "binance")
+        self.assertEqual(r["venue"], "venue1")
         self.assertEqual(r["symbol"], "BTCUSD")
         self.assertEqual(r["rows"], 30)
         self.assertEqual(r["distinct_ts"], 30)
@@ -385,7 +385,7 @@ class TestDepthReport(_Db):
         the 218/54 split was across symbols, and per (venue, symbol) the
         live table reads 37 rows / 37 distinct timestamps.
         """
-        self.seed("binance", 20, step=60)
+        self.seed("venue1", 20, step=60)
         r = feeds.venue_quote_depth(self.conn)[0]
         self.assertEqual(r["distinct_ts"], r["rows"])
 
@@ -398,7 +398,7 @@ class TestDepthReport(_Db):
         """
         self.conn.execute(
             "INSERT INTO venue_quotes (symbol, venue, ts, bid, ask, bid_size,"
-            " ask_size, last, source) VALUES ('BTCUSDT','binance',5000,"
+            " ask_size, last, source) VALUES ('BTCUSDT','venue1',5000,"
             "100.0,100.1,1.0,1.0,100.05,'venue')")
         self.conn.commit()
         r = [x for x in feeds.venue_quote_depth(self.conn)
@@ -410,11 +410,11 @@ class TestDepthReport(_Db):
     def test_two_instants_report_the_gap(self):
         self.conn.execute(
             "INSERT INTO venue_quotes (symbol, venue, ts, bid, ask, bid_size,"
-            " ask_size, last, source) VALUES ('BTCUSDT','binance',5000,"
+            " ask_size, last, source) VALUES ('BTCUSDT','venue1',5000,"
             "100.0,100.1,1.0,1.0,100.05,'venue')")
         self.conn.execute(
             "INSERT INTO venue_quotes (symbol, venue, ts, bid, ask, bid_size,"
-            " ask_size, last, source) VALUES ('BTCUSDT','binance',5600,"
+            " ask_size, last, source) VALUES ('BTCUSDT','venue1',5600,"
             "100.2,100.3,1.0,1.0,100.25,'venue')")
         self.conn.commit()
         r = [x for x in feeds.venue_quote_depth(self.conn)
@@ -426,7 +426,7 @@ class TestDepthReport(_Db):
         self.assertEqual(feeds.venue_quote_depth(self.conn), [])
 
     def test_orders_by_depth_descending(self):
-        self.seed("binance", 5)
+        self.seed("venue1", 5)
         self.seed("coinbase", 40)
         self.seed("kraken", 20)
         rows = feeds.venue_quote_depth(self.conn)
@@ -461,7 +461,7 @@ class TestDepthGateIsHonest(_Db):
         """
         for k in ("MAFUTANI_VQ_KEEP", "MAFUTANI_VQ_MAX_AGE_S"):
             os.environ.pop(k, None)
-        self.seed("binance", 37, step=60)   # what was actually measured
+        self.seed("venue1", 37, step=60)   # what was actually measured
         r = feeds.venue_quote_depth(self.conn)[0]
         self.assertEqual(r["rows"], 37)
         self.assertLess(r["rows"], self.MIN_USABLE_DEPTH)
@@ -478,7 +478,7 @@ class TestDepthGateIsHonest(_Db):
         for k in ("MAFUTANI_VQ_KEEP", "MAFUTANI_VQ_MAX_AGE_S"):
             os.environ.pop(k, None)
         old_cap = 40
-        self.seed("binance", 200, step=60)
+        self.seed("venue1", 200, step=60)
         self.conn.execute(
             "DELETE FROM venue_quotes WHERE id NOT IN ("
             "  SELECT id FROM (SELECT id, ROW_NUMBER() OVER"
@@ -504,7 +504,7 @@ class TestDepthGateIsHonest(_Db):
         # 86340 -- one minute short of a day, which is off-by-one in the
         # test rather than in the code, and the row count is the real
         # assertion here anyway.
-        self.seed("binance", 1441, step=60)
+        self.seed("venue1", 1441, step=60)
         r = feeds.venue_quote_depth(self.conn)[0]
         self.assertGreaterEqual(r["rows"], self.MIN_USABLE_DEPTH)
         self.assertGreaterEqual(r["span_s"], 86400)
@@ -525,7 +525,7 @@ class TestPersistIsolatesFailures(_Db):
         self.conn.execute("DELETE FROM feed_health")
         self.conn.commit()
 
-    def book(self, symbol, venue="binance", bid=100.0, ask=101.0):
+    def book(self, symbol, venue="venue1", bid=100.0, ask=101.0):
         return (symbol, venue), {"bid": bid, "ask": ask, "venue": venue,
                                  "symbol": symbol}
 
@@ -610,7 +610,7 @@ class TestPersistIsolatesFailures(_Db):
         for bad in ({"bid": 0, "ask": 0}, {"bid": 101.0, "ask": 100.0},
                     {"bid": -1.0, "ask": 1.0}):
             feeds.persist_venue_quotes(self.conn, {
-                ("BTCUSD", "binance"): dict(bad, venue="binance",
+                ("BTCUSD", "venue1"): dict(bad, venue="venue1",
                                             symbol="BTCUSD")})
         self.assertEqual(self.count(), 0)
         self.assertEqual(self.conn.execute(
@@ -624,7 +624,7 @@ class TestPersistIsolatesFailures(_Db):
                           " VALUES ('ethusd')")
         self.conn.commit()
         feeds.persist_venue_quotes(self.conn, {
-            ("ethusd", "binance"): {"bid": 5.0, "ask": 6.0, "venue": "binance",
+            ("ethusd", "venue1"): {"bid": 5.0, "ask": 6.0, "venue": "venue1",
                                     "symbol": "ethusd"}})
         self.assertEqual(self.stored(), ["ethusd"])
 
@@ -645,7 +645,7 @@ class TestPersistIsolatesFailures(_Db):
         self.conn.commit()
         try:
             n = feeds.persist_venue_quotes(self.conn, dict([
-                self.book("BTCUSD", venue="binance"),
+                self.book("BTCUSD", venue="venue1"),
                 self.book("BTCUSD", venue="coinbase"),
             ]))
         finally:

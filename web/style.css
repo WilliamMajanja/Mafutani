@@ -641,3 +641,59 @@ button.armed {
 }
 .page-purpose b { color: var(--txt); }
 #an-chart { margin-bottom: 14px; }
+
+/* ---- funding console ------------------------------------------------------
+   Distinct from the trading tables on purpose: this page moves real value, so
+   state has to be readable at a glance (pending vs confirmed) and a failed
+   withdrawal must not read like an empty cell. */
+.funding-note {
+  border-left: 3px solid #f0a020;
+  background: rgba(240, 160, 32, 0.08);
+  padding: 10px 12px;
+  margin: 12px 0;
+  max-width: 70ch;
+}
+.funding-node {
+  border: 1px solid #243040;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 4px 18px;
+}
+.funding-node-down { border-color: #a03030; background: rgba(200, 60, 60, 0.08); }
+.funding-node code { font-size: 0.85em; word-break: break-all; }
+.funding-panel {
+  border: 1px solid #1c2530;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 16px 0;
+}
+.funding-panel h3 { margin-top: 0; }
+.funding-bal { display: flex; gap: 22px; flex-wrap: wrap; margin: 8px 0 4px; }
+.funding-bal span { font-variant-numeric: tabular-nums; }
+.funding-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+.funding-table th, .funding-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #16202b;
+  vertical-align: top;
+}
+.funding-table code { font-size: 0.85em; word-break: break-all; }
+.funding-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.85em;
+  border: 1px solid #2a3a4a;
+}
+.badge-pending   { border-color: #f0a020; color: #f0a020; }
+.badge-approved  { border-color: #4aa3f0; color: #4aa3f0; }
+.badge-submitted { border-color: #b070f0; color: #b070f0; }
+.badge-confirmed { border-color: #35c07a; color: #35c07a; }
+.badge-failed, .badge-rejected { border-color: #d05050; color: #d05050; }
+.funding-fail { color: #d05050; font-size: 0.85em; margin-top: 4px; }
+.funding-ok  { color: #35c07a; }
+.funding-bad { color: #d05050; }
+.funding-msg { margin: 12px 0; min-height: 1.2em; }

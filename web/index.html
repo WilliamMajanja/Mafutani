@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="disclaimer" role="banner">PAPER TRADING BY DEFAULT — not financial advice. Live trading is gated and audited.</div>
+<div id="disclaimer" role="banner">NOT FINANCIAL ADVICE. Paper trading default; live trading gated/audited. MFT/Mafutani Chain is experimental crypto software (PQC/hash-based, SBC-mineable): 6-month epoch seed of 100B MFT with deterministic token expiry/replacement per consensus — you can lose all value; keys/transfers may be irreversible. CommCoin/MFT has an easy M-Pesa (Daraja) off-ramp flow when operator-configured; third-party/operator-configured, acceptance != settlement; comply with KYC/AML/sanctions/law. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></div>
 <header id="topbar">
   <span id="logo" title="Mafutani Consolidation Trading Application">MAFUTANI</span>
   <nav id="nav" aria-label="Primary">
@@ -29,8 +29,11 @@
     <a href="#/news">News</a>
     <a href="#/heatmap">Heatmap</a>
     <a href="#/markets">Markets</a>
+    <a href="#/chain">Chain</a>
+    <a href="#/desktop">Desktop</a>
     <a href="#/wallet">Wallet</a>
     <a href="#/security">Security</a>
+    <a href="#/policies">Policies</a>
     <a href="#/admin">Admin</a>
   </nav>
   <span id="userbox"><span id="tier-badge"></span> <button id="terminal-toggle" type="button" aria-expanded="false" title="Toggle OpenTerminal (` or Ctrl+K)">_ Terminal</button> <button id="logout-btn" type="button">Logout</button></span>
@@ -42,7 +45,7 @@
   <span><span id="sb-dot" class="sb-dot">●</span> <span id="sb-mode">PAPER</span> <span id="sb-tier" class="sb-tier"></span></span>
   <span>TIER <b id="sb-tier-label">—</b></span>
   <span id="sb-clock">--:--:--</span>
-  <span class="sb-right">` terminal · Ctrl+K palette · Alt+1..9 nav</span>
+  <span class="sb-right"><label style="margin-right:6px">Locale <select id="locale-select" aria-label="Locale"><option value="en">EN</option><option value="sw">SW</option><option value="fr">FR</option><option value="es">ES</option><option value="ar">AR</option><option value="pt">PT</option><option value="de">DE</option><option value="zh">ZH</option><option value="hi">HI</option></select></label> ` terminal · Ctrl+K palette</span>
 </footer>
 <section id="login-section">
   <h2>Login / Signup</h2>
@@ -63,6 +66,7 @@
     <p id="login-error" class="error" aria-live="polite"></p>
   </form>
 </section>
+<script src="i18n.js"></script>
 <script src="charts.js"></script>
 <script src="widgets.js"></script>
 <script src="terminal.js"></script>

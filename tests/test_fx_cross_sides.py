@@ -192,7 +192,7 @@ class TestCrossVenueBookSanity(unittest.TestCase):
 
     def test_wide_venue_book_is_refused(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(158.510, 160.999, "kraken"),
         })
         self.assertFalse(out["ok"])
@@ -201,14 +201,14 @@ class TestCrossVenueBookSanity(unittest.TestCase):
 
     def test_refusal_names_the_offending_venue(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(158.510, 160.999, "kraken"),
         })
         self.assertIn("kraken", out["reason"])
 
     def test_healthy_venues_still_price(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(100.15, 100.16, "kraken"),
         })
         self.assertTrue(out["ok"], out["reason"])
@@ -219,7 +219,7 @@ class TestCrossVenueBookSanity(unittest.TestCase):
         tight books must still be found -- conflating the two would silence
         the model entirely."""
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(105.00, 105.01, "kraken"),
         })
         self.assertTrue(out["ok"], out["reason"])

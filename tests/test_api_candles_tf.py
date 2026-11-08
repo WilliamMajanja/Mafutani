@@ -28,7 +28,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-BASE = os.environ.get("MAFUTANI_TEST_BASE", "http://127.0.0.1:8000")
+from tests.live_server import ensure_live_server
+
+BASE = ensure_live_server()
 
 
 def get(path, **params):
@@ -37,15 +39,8 @@ def get(path, **params):
         return json.loads(r.read().decode())
 
 
-def server_is_up():
-    try:
-        urllib.request.urlopen(BASE + "/", timeout=8)
-        return True
-    except Exception:
-        return False
 
 
-@unittest.skipUnless(server_is_up(), "app server not running on %s" % BASE)
 class TestResolutionRouting(unittest.TestCase):
     def test_1m_still_works(self):
         """The default path must not regress. 30 symbols depend on it."""
@@ -77,7 +72,6 @@ class TestResolutionRouting(unittest.TestCase):
                             [c["ts"] for c in day["candles"]])
 
 
-@unittest.skipUnless(server_is_up(), "app server not running on %s" % BASE)
 class TestUnrecognisedResolution(unittest.TestCase):
     def test_unknown_tf_falls_back_to_1m_and_says_so(self):
         """Degrades to a renderable chart rather than an error.
@@ -100,7 +94,6 @@ class TestUnrecognisedResolution(unittest.TestCase):
             self.assertEqual(d["tf"], "1d", "tf=%r not normalised" % variant)
 
 
-@unittest.skipUnless(server_is_up(), "app server not running on %s" % BASE)
 class TestTableNameIsNeverUserControlled(unittest.TestCase):
     """`tf` reaches SQL as a table name, so it must not be interpolated."""
 

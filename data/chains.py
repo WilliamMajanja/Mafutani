@@ -8,7 +8,7 @@ the place where a wrong address must not be tolerated.
 
 Addresses are the canonical ones published by Tether
 (https://tether.to/en/supported-protocols/), except for BNB Smart Chain,
-where the widely held USD₮ representation is Binance-Peg's.
+where bridged USD₮ representations are commonly used.
 
 Two things this module deliberately does NOT do:
 
@@ -53,10 +53,10 @@ CHAINS = (
         "explorer": "https://bscscan.com",
         "rpc": None,
         "usdt_address": "0x55d398326f99059fF775485246999027B3197955",
-        # 18, not 6: this is Binance-Peg's BSC representation, not the
+        # 18, not 6: this is a common bridged BSC representation, not the
         # Ethereum contract. Reading 6 here is the classic USDT bug.
         "usdt_expected_decimals": 18,
-        "note": "Binance-Peg USDT (BEP-20). Note 18 decimals.",
+        "note": "Bridged USDT (BEP-20). Note 18 decimals. Verify the contract you intend to use.",
     },
     {
         "chain_id": 137,

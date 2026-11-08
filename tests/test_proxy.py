@@ -314,11 +314,11 @@ class TestNoProxyBypass(unittest.TestCase):
     def test_no_proxy_list(self):
         with _Env(MAFUTANI_PROXY_NO_PROXY="internal.example,10.0.0.0/8"):
             self.assertTrue(_p._should_bypass("internal.example"))
-            self.assertTrue(_p._should_bypass("api.binance.com") is False)
+            self.assertTrue(_p._should_bypass("api.commcoin.net") is False)
 
     def test_star_disables_everything(self):
         with _Env(MAFUTANI_PROXY_NO_PROXY="*"):
-            self.assertTrue(_p._should_bypass("api.binance.com"))
+            self.assertTrue(_p._should_bypass("api.commcoin.net"))
 
 
 class TestSocks5Handshake(unittest.TestCase):
@@ -429,11 +429,11 @@ class TestNoProxyPathUnchanged(unittest.TestCase):
         _p.request = spy
         try:
             with _Env(MAFUTANI_PROXY="socks5://127.0.0.1:1080"):
-                body = feeds._http_get("https://api.binance.com/api/v3/ping")
+                body = feeds._http_get("https://api.commcoin.net/api/v3/ping")
         finally:
             _p.request = real
         self.assertEqual(len(calls), 1, "venue fetch did not use the proxy")
-        self.assertIn("api.binance.com", calls[0][1])
+        self.assertIn("api.commcoin.net", calls[0][1])
         self.assertIn("ok", body)
 
     def test_feeds_http_bypasses_proxy_when_unset(self):

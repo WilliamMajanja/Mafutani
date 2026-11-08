@@ -15,7 +15,7 @@ from collections import OrderedDict
 
 TTL = 600
 _TIMEOUT = 8
-_UA = {"User-Agent": "mafutani-cta/1.1 (personal-research; contact: local)"}
+_UA = {"User-Agent": "mafutani/1.1 (personal-research; contact: local)"}
 
 _CACHE = {}  # key -> (ts, items)
 

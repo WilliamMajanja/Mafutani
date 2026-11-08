@@ -184,11 +184,11 @@ class TestAggregate(unittest.TestCase):
         rows = [
             {"exchange": "COMEX", "symbol": "XAUUSD", "volume": 100.0, "spread_bps": 5.0, "score": 70.0},
             {"exchange": "COMEX", "symbol": "XAGUSD", "volume": 50.0, "spread_bps": 9.0, "score": 40.0},
-            {"exchange": "BINANCE", "symbol": "BTCUSD", "volume": 500.0, "spread_bps": 3.0, "score": 60.0},
+            {"exchange": "COMMCOIN", "symbol": "BTCUSD", "volume": 500.0, "spread_bps": 3.0, "score": 60.0},
         ]
         agg = aggregate_exchanges(rows)
         self.assertEqual(len(agg), 2)
-        self.assertEqual(agg[0]["exchange"], "BINANCE")  # highest volume first
+        self.assertEqual(agg[0]["exchange"], "COMMCOIN")  # highest volume first
         comex = [a for a in agg if a["exchange"] == "COMEX"][0]
         self.assertEqual(comex["symbol_count"], 2)
         self.assertEqual(comex["top_symbol"], "XAUUSD")

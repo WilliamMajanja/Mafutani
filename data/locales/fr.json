@@ -1,0 +1,7 @@
+{
+  "app.name": "Mafutani",
+  "risk.disclaimer": "Ceci n'est pas un conseil financier. Les actifs numériques et le trading comportent un risque de perte totale.",
+  "chain.epoch_seed": "Émission d'époque : 100 000 000 000 MFT tous les 6 mois (182 jours).",
+  "chain.expiry": "Les jetons expirés ne sont pas dépensables et sont remplacés par l'émission d'époque selon les règles de consensus.",
+  "payments.daraja": "M-Pesa/Daraja est un service tiers. L'opérateur doit configurer les identifiants et respecter la loi."
+}

@@ -1,0 +1,7 @@
+{
+  "app.name": "Mafutani",
+  "risk.disclaimer": "No es asesoramiento financiero. Los activos digitales y el trading conllevan riesgo de pérdida total.",
+  "chain.epoch_seed": "Emisión por época: 100.000.000.000 MFT cada 6 meses (182 días).",
+  "chain.expiry": "Los tokens vencidos no se pueden gastar y se reemplazan por la emisión de época según el consenso.",
+  "payments.daraja": "M-Pesa/Daraja es un servicio de terceros. El operador debe configurar credenciales y cumplir la ley."
+}

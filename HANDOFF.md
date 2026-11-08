@@ -1,3 +1,21 @@
+# Handoff — Current Stance (updated 2026-11-08)
+
+> **Status note (supersedes where conflicting):** This repository now includes **experimental Mafutani Chain / CommCoin (MFT)** features alongside the trading platform. Core stance: **stdlib-only** (app tree enforced by `tests/test_zero_dependency.py`), paper-trading default, live/gated controls, and explicit operator responsibility for compliance and secure deployment.
+
+## Current capabilities / stance
+- **Mafutani Chain (MFT/CommCoin):** independent zero-dep chain in `chain/` (separate SQLite, UTXO, amounts as text). 182-day epochs; deterministic **100,000,000,000 MFT** epoch seed; token expiry/replacement per `chain/consensus.py`/`chain/ledger.py`. SBC-mineable PoW (`SHAKE256` adjustable). Hash-based PQC signatures `MFT-PQC-WOTS-MERKLE-SHAKE256-v1` (WOTS+/Merkle over SHAKE256) — **experimental, not externally audited, stateful wallet index** (never reuse/restore stale state). `$100,000`/CommCoin is **reference/config metadata only** (`MAFUTANI_COIN_USD_VALUE`), not a market price/guarantee.
+- **Merkle abstractions/proofs:** `chain/merkle.py`, `node/proofs.py`; tx/block/UTXO/commitment proofs and APIs (`/api/chain/proof/tx`, `/api/chain/commitment`).
+- **Node + Wayland-like compositor desktop:** `node/` (mempool/proofs placeholders/services) and `compositor/` implement a **Wayland-inspired in-process model** (display/registry/globals/surfaces/output/seat/xdg_wm_base/toplevel, scene/damage, desktop shell) — **not libwayland/DRM/KMS**. Web renderer at `#/desktop`; APIs `/api/node/status`, `/api/compositor`, `/api/compositor/action`.
+- **Locale/i18n:** `core/i18n.py`, `data/locales/*`, `web/i18n.js`, `/api/i18n*`.
+- **Off-ramps/payments:** Minima funding ledger remains an auditable internal liability/withdrawal workflow (not a minter), request/reserve→approve→execute semantics. **Daraja/M-Pesa** B2C bridge (`minting/daraja.py`) is admin+CSRF+audit with `confirm:true`; acceptance != settlement; operator handles credentials (incl. pre-encrypted `SecurityCredential`), callbacks/reconciliation, and KYC/AML/sanctions/tax/compliance.
+- **Security/privileged controls:** auth/admin/CSRF, audit logging, session cookie flags, 2FA endpoints, funding approval-before-execute, Daraja confirm+admin, rate-limit/fingerprinting/risk controls in relevant paths, wallet files `chmod 0o600`. **Residual imbalances remain** — no universal enforced maker-checker/dual control/step-up 2FA for high-value payouts, server-side custody/key risks, shared compositor action model considerations, and experimental/unaudited chain+PQC. Operators must harden deployment (TLS, secret stores/HSM where appropriate, allowlists/velocity/delays, separation of duties, monitoring, reconciliation). Do not interpret this as immunity from privileged/key-compromise-style attacks seen in the crypto industry.
+
+## Operational notes
+- A local `chain/mft.db` may contain seeded chain state; do not reset/overwrite casually. MFT wallet state is stateful (PQC index) — protect and never reuse stale backups.
+- Restart the server after code edits in already-imported modules (e.g. `PORT=8000 MAFUTANI_NO_FEED=1 python3 app.py`).
+- See `docs/POLICIES.md`, `docs/MAFUTANI_CHAIN.md`, `docs/index.md`, and `README.md` for current authoritative documentation.
+
+---
 # Handoff — 2026-10-16 (point-in-time, evidence ledger, forward shadow)
 
 Picked up from `fed16ee`.
@@ -831,7 +849,7 @@ cash unchanged. Verified against live venues.
    live orders refuse — but paper is the honest default. One restart:
    ```bash
    kill 366586
-   cd /mnt/c/Users/kawal/Documents/Projects/trading-app && python3 app.py
+   cd /path/to/mafutani && python3 app.py
    ```
 
 ## Forecast / Kronos — REMOVED

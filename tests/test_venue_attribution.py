@@ -31,9 +31,9 @@ class TestOneVenueDrivesTheGap(unittest.TestCase):
     """The Flowerday case, reproduced. This is the test that matters."""
 
     BOOKS = {
-        "binance":  book(82500.0, 82502.0, 5, 5),
+        "venue1":  book(82500.0, 82502.0, 5, 5),
         "coinbase": book(82501.0, 82503.0, 4, 4),
-        "kraken":   book(83100.0, 83110.0, 1, 1),
+        "kraken":   book(83500.0, 83510.0, 1, 1),
     }
 
     def setUp(self):
@@ -59,9 +59,9 @@ class TestOneVenueDrivesTheGap(unittest.TestCase):
                           "a gap survived removing the venue that caused it")
 
     def test_dropping_an_innocent_venue_changes_nothing(self):
-        """Attribution must not accuse the wrong venue. Binance and Coinbase
+        """Attribution must not accuse the wrong venue. Venue1 and Coinbase
         agree, so removing either leaves the kraken gap intact."""
-        for venue in ("binance", "coinbase"):
+        for venue in ("venue1", "coinbase"):
             row = [r for r in self.attr["venues"] if r["dropped"] == venue][0]
             self.assertFalse(row["collapses"], "%s wrongly blamed" % venue)
             self.assertGreater(row["retained_fraction"], 0.9)
@@ -74,7 +74,7 @@ class TestGapIsTheBooksOwnDispersion(unittest.TestCase):
     """Symmetric outlier either side: no single venue is 'the driver'."""
 
     BOOKS = {
-        "binance":  book(82500.0, 82502.0),
+        "venue1":  book(82500.0, 82502.0),
         "coinbase": book(82580.0, 82582.0),
         "kraken":   book(82540.0, 82542.0),
     }
@@ -100,7 +100,7 @@ class TestNoGapToAttribute(unittest.TestCase):
     """
 
     AGREE = {
-        "binance":  book(82500.0, 82502.0),
+        "venue1":  book(82500.0, 82502.0),
         "coinbase": book(82501.0, 82503.0),
         "kraken":   book(82499.0, 82501.5),
     }
@@ -121,7 +121,7 @@ class TestTooFewVenues(unittest.TestCase):
     book and nothing to compare, so a verdict would be meaningless."""
 
     def test_two_venues_is_untestable_not_robust(self):
-        books = {"binance": book(82500.0, 82502.0),
+        books = {"venue1": book(82500.0, 82502.0),
                  "kraken": book(82501.0, 82503.0)}
         attr = venue_attribution("BTCUSD", books)
         self.assertFalse(attr["testable"])
@@ -130,7 +130,7 @@ class TestTooFewVenues(unittest.TestCase):
         self.assertIn("3+ venues", attr["reason"])
 
     def test_one_venue_is_untestable(self):
-        attr = venue_attribution("BTCUSD", {"binance": book(1.0, 1.1)})
+        attr = venue_attribution("BTCUSD", {"venue1": book(1.0, 1.1)})
         self.assertFalse(attr["testable"])
         self.assertIsNone(attr["robust"])
 
@@ -147,7 +147,7 @@ class TestUnusableBooksAreIgnored(unittest.TestCase):
 
     def test_crossed_book_does_not_count_as_a_venue(self):
         books = {
-            "binance":  book(82500.0, 82502.0),
+            "venue1":  book(82500.0, 82502.0),
             "coinbase": book(82501.0, 82503.0),
             "kraken":   book(82510.0, 82500.0),      # ask < bid: crossed
         }
@@ -157,7 +157,7 @@ class TestUnusableBooksAreIgnored(unittest.TestCase):
 
     def test_zero_priced_book_does_not_count(self):
         books = {
-            "binance":  book(82500.0, 82502.0),
+            "venue1":  book(82500.0, 82502.0),
             "coinbase": book(82501.0, 82503.0),
             "kraken":   book(0.0, 0.0),
         }
@@ -186,14 +186,14 @@ class TestRetentionComparisonIsOnGross(unittest.TestCase):
 class TestScanIntegration(unittest.TestCase):
     def test_attribute_defaults_off(self):
         rows = scan_crypto(["BTCUSD"],
-                           {"BTCUSD": {"binance": book(1.0, 1.1),
+                           {"BTCUSD": {"venue1": book(1.0, 1.1),
                                        "kraken": book(1.2, 1.3)}})
         self.assertEqual(len(rows), 1)
         self.assertNotIn("attribution", rows[0])
 
     def test_attribute_on_adds_the_block(self):
         rows = scan_crypto(["BTCUSD"],
-                           {"BTCUSD": {"binance": book(1.0, 1.1),
+                           {"BTCUSD": {"venue1": book(1.0, 1.1),
                                        "coinbase": book(1.05, 1.15),
                                        "kraken": book(1.2, 1.3)}},
                            attribute=True)
@@ -201,7 +201,7 @@ class TestScanIntegration(unittest.TestCase):
         self.assertTrue(rows[0]["attribution"]["testable"])
 
     def test_single_venue_symbol_is_skipped(self):
-        rows = scan_crypto(["BTCUSD"], {"BTCUSD": {"binance": book(1.0, 1.1)}},
+        rows = scan_crypto(["BTCUSD"], {"BTCUSD": {"venue1": book(1.0, 1.1)}},
                            attribute=True)
         self.assertEqual(rows, [])
 

@@ -131,10 +131,10 @@ class TestFailureIsolation(unittest.TestCase):
         self.assertNotIn("BTCUSD", out)
 
     def test_source_is_preserved(self):
-        fake = FakePoller({s: {"source": "binance"} for s in ROUTED})
+        fake = FakePoller({s: {"source": "commcoin"} for s in ROUTED})
         out = with_poller(fake, lambda: app._real_quotes(ROUTED))
         for sym in ROUTED:
-            self.assertEqual(out[sym]["source"], "binance")
+            self.assertEqual(out[sym]["source"], "commcoin")
 
     def test_all_failing_returns_empty_not_raises(self):
         fake = FakePoller({s: IOError("down") for s in ROUTED})

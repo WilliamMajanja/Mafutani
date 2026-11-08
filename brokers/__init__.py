@@ -34,7 +34,7 @@ from .base import (Broker, BrokerError, BrokerAuthError, BrokerRateLimitError,
 from .registry import (get_broker, available, describe, register,
                        resolve_credentials, env_prefix_for, credential_status)
 from .profiles import (VenueProfile, get_profile, list_profiles, PROFILES,
-                       BINANCE_STYLE, BEARER_STYLE, EXCHANGE_STYLE)
+                       HMAC_STYLE, BEARER_STYLE, EXCHANGE_STYLE)
 from .paper import PaperBroker
 from .rest import RestBroker
 from .interactive import BrokerSession
@@ -51,7 +51,7 @@ __all__ = [
     "get_broker", "available", "describe", "register",
     "resolve_credentials", "env_prefix_for", "credential_status",
     "VenueProfile", "get_profile", "list_profiles",
-    "PROFILES", "BINANCE_STYLE", "BEARER_STYLE", "EXCHANGE_STYLE",
+    "PROFILES", "HMAC_STYLE", "BEARER_STYLE", "EXCHANGE_STYLE",
     "PaperBroker", "RestBroker", "BrokerSession",
     "transport", "profiles", "registry",
 ]

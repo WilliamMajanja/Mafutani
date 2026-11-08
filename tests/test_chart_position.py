@@ -29,15 +29,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-BASE = os.environ.get("MAFUTANI_TEST_BASE", "http://127.0.0.1:8000")
+from tests.live_server import ensure_live_server
+
+BASE = ensure_live_server()
 
 
-def server_is_up():
-    try:
-        urllib.request.urlopen(BASE + "/", timeout=8)
-        return True
-    except Exception:
-        return False
 
 
 def get(path, **params):
@@ -46,7 +42,6 @@ def get(path, **params):
         return json.loads(r.read().decode())
 
 
-@unittest.skipUnless(server_is_up(), "app server not running")
 class TestChartPosition(unittest.TestCase):
     def test_known_symbol_answers(self):
         d = get("/api/chart_position", symbol="BTCUSD")
@@ -102,7 +97,6 @@ class TestChartPosition(unittest.TestCase):
         self.assertIsNotNone(d["round_trip_cost_bps"])
 
 
-@unittest.skipUnless(server_is_up(), "app server not running")
 class TestUnrealisedArithmetic(unittest.TestCase):
     def test_pnl_matches_the_reported_prices(self):
         """Computed, not stored -- so it must agree with what is returned.

@@ -16,6 +16,16 @@ import time
 import threading
 import urllib.parse
 
+# removed: Minima integration
+# removed: Minima integration
+# removed: Minima integration
+# removed: Minima integration
+# removed: Minima integration
+# removed: Minima integration
+# removed: Minima integration
+# Minima integration removed: CommCoin/MFT + Daraja are primary.
+
+
 _BOOT_TS = time.time()  # process start approx (routes imported at boot)
 
 # ---------------------------------------------------------------- lazy core
@@ -1010,7 +1020,7 @@ def _arbitrage_books(conn, symbols=None, max_age_s=None, allow_live=True):
     "never looked". A scanner that cannot distinguish those two states
     reads as broken.
 
-    Stale rows are excluded either way. A 40-minute-old Binance quote
+    Stale rows are excluded either way. A 40-minute-old venue quote
     next to a live Coinbase one would show as a 900-bps "dislocation"
     that vanished the instant you looked, which is the single most
     effective way to make an arbitrage scanner useless.
@@ -1203,7 +1213,7 @@ def _engine_arbitrage(conn, ud, asset_class="all", symbol="", min_edge_bps=None,
         return want == "all" or want == cls
 
     # Cross-venue arbitrage is not crypto-specific. It means "two venues
-    # quote this instrument", and gold qualifies: Binance and Kraken both
+    # quote this instrument", and other venues may also quote it.
     # publish XAUTUSD. Restricting this to the crypto bucket left the
     # commodity page empty even when it had two real books.
     cross_books = {}
@@ -1511,7 +1521,7 @@ def _candle_row_total(conn):
 def _status_payload(conn):
     """Verbose service snapshot: uptime, table counts, feed freshness."""
     now = int(time.time())
-    out = {"ok": True, "service": "mafutani-cta",
+    out = {"ok": True, "service": "mafutani",
            "name": "Mafutani Consolidation Trading Application",
            "version": "1.1.0", "time": now,
            "uptime_s": int(now - _BOOT_TS), "tables": {}, "feeds": []}
@@ -1719,6 +1729,80 @@ class Router:
             return self._auth_totp(conn, h, action="disable")
         if path == "/api/chains" and method == "GET":
             return self._chains(h)
+        # Mafutani Chain (MFT) + locale/policies/payments
+        if path == "/api/policies" and method == "GET":
+            return self._policies(h)
+        if path == "/api/i18n" and method == "GET":
+            return self._i18n_info(h, qs)
+        if path == "/api/i18n/messages" and method == "GET":
+            return self._i18n_messages(h, qs)
+        if path == "/api/chain/info" and method == "GET":
+            return self._mft_info(h)
+        if path == "/api/chain/blocks" and method == "GET":
+            return self._mft_blocks(h, qs)
+        if path == "/api/chain/balance" and method == "GET":
+            return self._mft_balance(h, qs)
+        if path == "/api/chain/wallet" and method == "GET":
+            return self._mft_wallet_info(conn, h)
+        if path == "/api/chain/wallet" and method == "POST":
+            return self._mft_wallet_create(conn, h)
+        if path == "/api/chain/mine" and method == "POST":
+            return self._mft_mine(conn, h)
+        if path == "/api/chain/send" and method == "POST":
+            return self._mft_send(conn, h)
+        # CommCoin/MFT -> M-Pesa (Daraja) off-ramp (user-facing, controlled)
+        if path == "/api/offramp/mpesa/info" and method == "GET":
+            return self._offramp_mpesa_info(conn, h)
+        if path == "/api/offramp/mpesa" and method == "GET":
+            return self._offramp_mpesa_list(conn, h, qs)
+        if path == "/api/offramp/mpesa" and method == "POST":
+            return self._offramp_mpesa_create(conn, h)
+        if path == "/api/admin/offramp/mpesa" and method == "GET":
+            return self._admin_offramp_mpesa_list(conn, h, qs)
+        if path.startswith("/api/admin/offramp/mpesa/") and method == "POST":
+            return self._admin_offramp_mpesa_action(conn, h, path)
+        if path == "/api/admin/daraja/status" and method == "GET":
+            return self._daraja_status(conn, h)
+        if path == "/api/admin/daraja/withdraw" and method == "POST":
+            return self._daraja_withdraw(conn, h)
+        # Merkle / node / compositor (Wayland-like desktop)
+        if path == "/api/chain/proof/tx" and method == "GET":
+            return self._mft_proof_tx(h, qs)
+        if path == "/api/chain/commitment" and method == "GET":
+            return self._mft_commitment(h, qs)
+        # PiNet / node / sync (SBC-friendly block capture; stdlib only)
+        if path == "/api/node/pinet" and method == "GET":
+            return self._pinet_status(h)
+        if path == "/api/node/pinet/capture" and method == "POST":
+            return self._pinet_capture(conn, h)
+        if path == "/api/node/mempool" and method == "GET":
+            return self._node_mempool(h, qs)
+        if path == "/api/node/tx/submit" and method == "POST":
+            return self._node_tx_submit(conn, h)
+        if path == "/api/node/sync/pull" and method == "POST":
+            return self._node_sync_pull(conn, h)
+        if path == "/api/chain/export" and method == "GET":
+            return self._chain_export(h, qs)
+        if path == "/api/chain/import" and method == "POST":
+            return self._chain_import(conn, h)
+        if path == "/api/chain/headers" and method == "GET":
+            return self._chain_headers(h, qs)
+        if path == "/api/chain/proof/verify" and method == "POST":
+            return self._chain_proof_verify(h)
+        if path == "/api/kyc/me" and method == "GET":
+            return self._kyc_me(conn, h)
+        if path == "/api/kyc/me" and method == "POST":
+            return self._kyc_submit(conn, h)
+        if path == "/api/admin/kyc" and method == "GET":
+            return self._admin_kyc_list(conn, h, qs)
+        if path.startswith("/api/admin/kyc/") and method == "POST":
+            return self._admin_kyc_review(conn, h, path)
+        if path == "/api/node/status" and method == "GET":
+            return self._pinet_status(h)
+        if path == "/api/compositor" and method == "GET":
+            return self._compositor_state(h)
+        if path == "/api/compositor/action" and method == "POST":
+            return self._compositor_action(conn, h)
         if path == "/api/markets" and method == "GET":
             return self._markets(conn, h, qs)
         if path == "/api/me/entitlements" and method == "GET":
@@ -1844,6 +1928,7 @@ class Router:
         if path.startswith("/api/admin/symbols/") and path.endswith("/disable") \
                 and method == "POST":
             return self._admin_symbol_disable(conn, h, path)
+        # Minima funding ledger removed; CommCoin/MFT + M-Pesa (Daraja) off-ramp is primary.
         _err(h, "not found: {} {}".format(method, path), 404)
         return True
 
@@ -3970,7 +4055,7 @@ class Router:
                 from data.feeds import place_live_order
                 routed = place_live_order(
                     symbol, side, qty, otype, price_f,
-                    broker=str(data.get("broker") or "binance"),
+                    broker=(str(data.get("broker")).strip() if data.get("broker") else None),
                     user_id=ud["id"], tier=ud.get("tier", "Free"),
                     client_order_id=coid)
             except Exception as e:
@@ -4732,3 +4817,689 @@ class Router:
                 out, filename="audit-export.csv")
         except Exception as e:
             return _err(h, "audit export failed: {}".format(e), 500)
+
+
+
+    # -- policies / locale / MFT chain / Daraja ------------------------
+    def _policies(self, h):
+        doc = ""
+        for p in ("docs/POLICIES.md", "POLICIES.md"):
+            try:
+                with open(os.path.join(ROOT, p), "r", encoding="utf-8") as f:
+                    doc = f.read(); break
+            except Exception:
+                pass
+        return _send_json(h, {
+            "ok": True,
+            "summary": {
+                "not_financial_advice": True,
+                "paper_default": True,
+                "crypto_risk_total_loss": True,
+                "mft_experimental": True,
+                "pqc_hash_based_stateful": True,
+                "epoch_seed": "100000000000 MFT every 182 days (6 months)",
+                "token_expiry_replacement": "deterministic per consensus; expired outputs not spendable",
+                "mpesa_daraja_third_party": True,
+                "operator_kyc_aml_sanctions_compliance": True,
+                "locale_global_integratable": True,
+            },
+            "document": doc,
+            "path": "docs/POLICIES.md",
+        })
+
+    def _i18n_info(self, h, qs):
+        try:
+            from core.i18n import locale_info, negotiate, SUPPORTED
+        except Exception as e:
+            return _err(h, "i18n unavailable: {}".format(e), 503)
+        req = (qs.get("locale") or [""])[0]
+        al = h.headers.get("Accept-Language", "")
+        loc = negotiate(accept_language=al, requested=req)
+        info = locale_info(loc)
+        info["negotiated_from"] = {"requested": req or None, "accept_language": al or None}
+        return _send_json(h, info)
+
+    def _i18n_messages(self, h, qs):
+        try:
+            from core.i18n import catalog, negotiate
+        except Exception as e:
+            return _err(h, "i18n unavailable: {}".format(e), 503)
+        req = (qs.get("locale") or [""])[0]
+        al = h.headers.get("Accept-Language", "")
+        loc = negotiate(accept_language=al, requested=req)
+        return _send_json(h, {"locale": loc, "messages": catalog(loc)})
+
+    def _mft_chain(self):
+        from chain.ledger import Chain
+        return Chain()
+
+    def _mft_info(self, h):
+        try:
+            c = self._mft_chain()
+            try:
+                info = c.chain_info()
+                tip = c.tip()
+                info["disclaimer"] = "Experimental chain software. Not financial advice. Reference valuations are not market prices or guarantees. Total loss possible."
+                info["consensus"] = {
+                    "epoch_seconds": 15724800,
+                    "epoch_days": 182,
+                    "epoch_reward_base": 100000000000 * 10**8,
+                    "seed_per_epoch": "100000000000 " + str(info.get("coin_symbol","MFT")),
+                    "token_lifetime_epochs": 1,
+                    "expiry_model": "outputs expire after lifetime; unspendable when expired; replaced by epoch seeding",
+                    "pow": "SHAKE256 adjustable, SBC-friendly",
+                }
+                return _send_json(h, info)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "chain unavailable: {}".format(e), 503)
+
+    def _mft_blocks(self, h, qs):
+        try:
+            c = self._mft_chain()
+            try:
+                try:
+                    limit = max(1, min(50, int((qs.get("limit") or ["10"])[0])))
+                except Exception:
+                    limit = 10
+                height = c.height()
+                blocks = []
+                for hh in range(height, max(-1, height - limit), -1):
+                    b = c.get_block(hh)
+                    if b:
+                        blocks.append({"height": b["height"], "hash": b["hash"], "prev": b["prev"],
+                                       "ts": b["ts"], "bits": b["bits"], "epoch": b["epoch"],
+                                       "tx_count": len(json.loads(b.get("body") or "[]"))})
+                return _send_json(h, {"height": height, "blocks": blocks})
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "chain unavailable: {}".format(e), 503)
+
+    def _mft_balance(self, h, qs):
+        addr = (qs.get("address") or [""])[0].strip()
+        if not addr:
+            return _err(h, "address required", 400)
+        try:
+            c = self._mft_chain()
+            try:
+                epoch = c.current_epoch()
+                bal = c.balance(addr, current_epoch=epoch)
+                utxos = c.utxos_for_address(addr, current_epoch=epoch, include_expired=True)
+                return _send_json(h, {
+                    "address": addr, "epoch": epoch,
+                    "spendable_base": bal, "spendable_mft": str(bal // 10**8),
+                    "utxos": [{"txid": u["txid"], "vout": u["vout"], "amount": int(u["amount"]),
+                               "creation_epoch": int(u["creation_epoch"]), "expired": bool(u["expired"])} for u in utxos[:200]],
+                })
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "chain unavailable: {}".format(e), 503)
+
+    def _mft_wallet_path(self, user_id):
+        base = os.environ.get("MAFUTANI_WALLET_DIR") or os.path.join(ROOT, "data", "wallets")
+        if not os.path.isdir(base):
+            os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "mft_user_%s.json" % int(user_id))
+
+    def _mft_wallet_info(self, conn, h):
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        ud = _row_to_dict(user)
+        path = self._mft_wallet_path(ud["id"])
+        if not os.path.isfile(path):
+            return _send_json(h, {"exists": False, "note": "POST /api/chain/wallet to create a PQC wallet (admin/user)."})
+        try:
+            from chain.wallet import Wallet
+            w = Wallet(path).load()
+            c = self._mft_chain()
+            try:
+                info = w.info(c)
+                info["exists"] = True
+                info["policy"] = "PQC stateful: never reuse/restore old wallet state. Back up securely."
+                return _send_json(h, info)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "wallet unavailable: {}".format(e), 503)
+
+    def _mft_wallet_create(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        ud = _row_to_dict(user)
+        path = self._mft_wallet_path(ud["id"])
+        if os.path.isfile(path):
+            return _err(h, "wallet already exists; refusing to overwrite", 409)
+        body, err = _read_json(h)
+        if err and body is None:
+            body = {}
+        body = body or {}
+        try:
+            height = max(4, min(12, int(body.get("height", 10))))
+        except Exception:
+            height = 10
+        try:
+            from chain.wallet import Wallet
+            w = Wallet.create(path, height=height)
+            _audit(conn, ud["id"], "mft.wallet.create", ud.get("tier", ""), "chain",
+                   {"address": w.address, "height": height})
+            return _send_json(h, {
+                "ok": True, "address": w.address, "pub_fingerprint": __import__('chain.pqc', fromlist=['pub_fingerprint']).pub_fingerprint(w.pub),
+                "signatures_max": (1 << height),
+                "warning": "Private key stored server-side at operator-managed path. Secure the host. NEVER reuse old wallet backups (PQC state).",
+                "disclaimer": "Experimental. Total loss possible.",
+            }, status=201)
+        except Exception as e:
+            return _err(h, "wallet create failed: {}".format(e), 500)
+
+    def _mft_mine(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        ud = _row_to_dict(user)
+        body, err = _read_json(h)
+        if err and body is None:
+            body = {}
+        body = body or {}
+        try:
+            rounds = max(1000, min(2000000, int(body.get("rounds", 200000))))
+        except Exception:
+            rounds = 200000
+        path = self._mft_wallet_path(ud["id"])
+        if not os.path.isfile(path):
+            return _err(h, "create a chain wallet first (POST /api/chain/wallet)", 400)
+        try:
+            from chain.wallet import Wallet
+            from chain.miner import Miner
+            w = Wallet(path).load()
+            c = self._mft_chain()
+            try:
+                m = Miner(c, address=w.address)
+                res = m.mine_and_submit(rounds=rounds, start_nonce=int(body.get("start_nonce") or 0))
+                if res.get("ok"):
+                    _audit(conn, ud["id"], "mft.mine", ud.get("tier", ""), "chain", res)
+                res["disclaimer"] = "Mined MFT is experimental and may have no value/liquidity. Token expiry/replacement rules apply."
+                return _send_json(h, res)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "mine failed: {}".format(e), 500)
+
+    def _mft_send(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        ud = _row_to_dict(user)
+        body, err = _read_json(h)
+        if err:
+            return _err(h, err, 400)
+        body = body or {}
+        to = str(body.get("to") or "").strip()
+        amt = body.get("amount_mft")
+        if not to or amt is None:
+            return _err(h, "to and amount_mft required", 400)
+        path = self._mft_wallet_path(ud["id"])
+        if not os.path.isfile(path):
+            return _err(h, "no chain wallet", 400)
+        try:
+            from chain.wallet import Wallet
+            w = Wallet(path).load()
+            c = self._mft_chain()
+            try:
+                tx = w.build_transfer(c, to, amt, memo=str(body.get("memo", ""))[:140])
+                # In this local-node model, a transfer is accepted when included in a mined block.
+                # For usability, attempt to mine it in a small block.
+                from chain.miner import Miner
+                m = Miner(c, address=w.address)
+                res = m.mine_and_submit(extra_txs=[tx], rounds=int(body.get("mine_rounds") or 300000))
+                out = {"txid": tx.get("txid"), "submitted_in_block": res if res.get("ok") else None,
+                       "mined": res.get("ok"), "mine_result": res}
+                if res.get("ok"):
+                    _audit(conn, ud["id"], "mft.send", ud.get("tier", ""), "chain",
+                           {"txid": tx.get("txid"), "to": to, "amount_mft": str(amt)})
+                else:
+                    out["note"] = "Transaction signed but not mined in this call (no PoW solution found). Keep tx and mine/include via node tooling."
+                    out["tx"] = tx
+                out["disclaimer"] = "Transfers may be irreversible. Experimental chain."
+                return _send_json(h, out)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "send failed: {}".format(e), 400)
+
+    def _daraja_status(self, conn, h):
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        try:
+            from minting.daraja import DarajaClient
+            st = DarajaClient().status()
+            st["policy"] = "Third-party M-Pesa/Daraja. Operator must ensure KYC/AML/sanctions/tax/compliance and secure credentials. Request acceptance is not settlement."
+            return _send_json(h, st)
+        except Exception as e:
+            return _err(h, "daraja unavailable: {}".format(e), 503)
+
+    def _daraja_withdraw(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        body, err = _read_json(h)
+        if err:
+            return _err(h, err, 400)
+        body = body or {}
+        phone = body.get("phone") or body.get("msisdn")
+        amount = body.get("amount")
+        if not phone or amount is None:
+            return _err(h, "phone and amount required", 400)
+        # Optional: link to funding account reservation/check? For safety, require explicit confirm.
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true after verifying recipient, amount, compliance, and available funds", 400)
+        ud = _row_to_dict(user)
+        try:
+            from minting.daraja import DarajaClient
+            client = DarajaClient()
+            res = client.b2c_payment(phone, amount,
+                                     remarks=str(body.get("remarks") or "Mafutani withdrawal")[:100],
+                                     occasion=str(body.get("occasion") or "")[:100],
+                                     originator_conversation_id=body.get("originator_conversation_id"))
+            _audit(conn, ud["id"], "daraja.b2c", ud.get("tier", ""), "live" if res.get("ok") else "paper", {
+                "phone": res.get("phone"), "amount": res.get("amount"),
+                "conversation_id": res.get("conversation_id"),
+                "response_code": res.get("response_code"), "ok": res.get("ok"),
+            })
+            return _send_json(h, res, status=200 if res.get("ok") else 502)
+        except Exception as e:
+            _audit(conn, ud["id"], "daraja.b2c.error", ud.get("tier", ""), "paper", {"error": str(e)})
+            return _err(h, "daraja withdraw failed: {}".format(e), 502)
+
+
+
+    def _mft_proof_tx(self, h, qs):
+        try:
+            height = int((qs.get("height") or ["0"])[0])
+            txid = (qs.get("txid") or [""])[0].strip()
+            if not txid: return _err(h, "txid required", 400)
+            c = self._mft_chain()
+            try:
+                from node.proofs import ProofService
+                proof = ProofService(c).tx_proof(height, txid)
+                if not proof: return _err(h, "tx not found in block", 404)
+                return _send_json(h, proof)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "proof unavailable: {}".format(e), 503)
+
+    def _mft_commitment(self, h, qs):
+        try:
+            c = self._mft_chain()
+            try:
+                from node.proofs import ProofService
+                ps = ProofService(c)
+                try: height = int((qs.get("height") or [str(c.height())])[0])
+                except Exception: height = c.height()
+                blk = ps.block_commitment(height)
+                utxo = ps.utxo_set_commitment()
+                from chain import merkle
+                crypto = {"coin": c.chain_info().get("coin_alias","CommCoin"),
+                          "chain_tip": merkle.commitment(c.chain_info(), domain="chain-info"),
+                          "utxo_state_root": utxo.get("state_root"),
+                          "block": blk}
+                crypto["crypto_commitment"] = merkle.commitment(crypto, domain="crypto")
+                return _send_json(h, crypto)
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "commitment unavailable: {}".format(e), 503)
+
+    def _node_status(self, h):
+        try:
+            c = self._mft_chain()
+            try:
+                info = c.chain_info()
+                from node.proofs import ProofService
+                utxo = ProofService(c).utxo_set_commitment()
+                return _send_json(h, {"ok":True, "node":"commcoin-node", "chain": info, "state": utxo,
+                                      "services":["chain","pqc-wallet","miner","merkle-proofs","compositor-desktop","daraja-bridge","i18n"]})
+            finally:
+                c.close()
+        except Exception as e:
+            return _err(h, "node unavailable: {}".format(e), 503)
+
+    def _compositor_state(self, h):
+        try:
+            from compositor.service import get_service
+            node = {}
+            try:
+                c = self._mft_chain(); node = {"height": c.height(), "epoch": c.current_epoch(), "seeded": c.chain_info().get("epoch_seeded")}; c.close()
+            except Exception: pass
+            return _send_json(h, get_service().snapshot(node_info=node))
+        except Exception as e:
+            return _err(h, "compositor unavailable: {}".format(e), 503)
+
+    def _compositor_action(self, conn, h):
+        # allow logged-in users to interact; keep it simple
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        body = body or {}
+        try:
+            from compositor.service import get_service
+            res = get_service().action(str(body.get("cmd","")), body.get("payload") or {})
+            ud = _row_to_dict(user)
+            _audit(conn, ud["id"], "compositor.action", ud.get("tier",""), "ui", {"cmd": body.get("cmd")})
+            return _send_json(h, res)
+        except Exception as e:
+            return _err(h, "compositor action failed: {}".format(e), 500)
+
+
+    # -- CommCoin -> M-Pesa (Daraja) off-ramp -----------------------------
+    def _offramp_mpesa_info(self, conn, h):
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        try:
+            from minting.mpesa_offramp import config, ensure_schema
+            from minting.daraja import DarajaClient
+            ensure_schema(conn)
+            cfg = config()
+            daraja = DarajaClient().status()
+            cfg["daraja_configured"] = bool(daraja.get("configured"))
+            cfg["daraja_b2c_ready"] = bool(daraja.get("b2c_ready"))
+            return _send_json(h, {"ok": True, "offramp": cfg})
+        except Exception as e:
+            return _err(h, "off-ramp info unavailable: %s" % e, 503)
+
+    def _offramp_mpesa_list(self, conn, h, qs):
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        ud = _row_to_dict(user)
+        try:
+            from minting.mpesa_offramp import list_requests
+            rows = list_requests(conn, user_id=ud["id"], limit=100)
+            return _send_json(h, {"requests": rows})
+        except Exception as e:
+            return _err(h, "off-ramp list failed: %s" % e, 500)
+
+    def _offramp_mpesa_create(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        body, err = _read_json(h)
+        if err:
+            return _err(h, err, 400)
+        body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true after verifying phone, MFT amount, KES conversion, instructions, and compliance", 400)
+        ud = _row_to_dict(user)
+        try:
+            # Zero-dep KYC workflow gate (operator-configured). Technical control, not legal compliance.
+            from minting.kyc import check_offramp_allowed
+            ok_kyc, kyc_msg = check_offramp_allowed(conn, ud["id"])
+            if not ok_kyc:
+                return _err(h, kyc_msg, 403)
+            from minting.mpesa_offramp import create_request, config
+            mft_addr = ""
+            try:
+                from chain.wallet import Wallet
+                wp = self._mft_wallet_path(ud["id"])
+                if os.path.exists(wp):
+                    mft_addr = Wallet(wp).load().address
+            except Exception:
+                pass
+            row = create_request(conn, ud["id"], body.get("phone"), body.get("amount_mft"),
+                                 mft_address=mft_addr, note=str(body.get("note") or "")[:500])
+            cfg = config()
+            if cfg.get("treasury_mft_address") and row.get("status") == "pending":
+                row["instructions"] = "Send %s MFT to treasury %s with memo offramp:%s (operator verifies receipt before settlement unless auto-submit is explicitly configured)." % (
+                    row.get("amount_mft"), cfg.get("treasury_mft_address"), row.get("id"))
+            _audit(conn, ud["id"], "offramp.mpesa.create", ud.get("tier", ""), "offramp", {
+                "request_id": row.get("id"), "amount_mft": row.get("amount_mft"),
+                "amount_kes": row.get("amount_kes"), "status": row.get("status")})
+            return _send_json(h, row, status=201)
+        except Exception as e:
+            return _err(h, "off-ramp request failed: %s" % e, 400)
+
+    def _admin_offramp_mpesa_list(self, conn, h, qs):
+        user, _s = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        try:
+            from minting.mpesa_offramp import list_requests
+            status = (qs.get("status") or [None])[0]
+            rows = list_requests(conn, status=status, limit=200)
+            return _send_json(h, {"requests": rows})
+        except Exception as e:
+            return _err(h, "admin off-ramp list failed: %s" % e, 500)
+
+    def _admin_offramp_mpesa_action(self, conn, h, path):
+        user, sess = self._require_user(conn, h)
+        if user is None:
+            return True
+        if not self._require_admin(conn, h, user):
+            return True
+        if not self._require_csrf(conn, h, sess):
+            return True
+        parts = path.rstrip('/').split('/')
+        if len(parts) < 7:
+            return _err(h, "bad path", 400)
+        try:
+            rid = int(parts[5])
+        except Exception:
+            return _err(h, "bad request id", 400)
+        action = parts[6]
+        body, err = _read_json(h)
+        if err:
+            return _err(h, err, 400)
+        body = body or {}
+        ud = _row_to_dict(user)
+        try:
+            from minting.mpesa_offramp import submit_request, update_status
+            if action == 'submit':
+                if not body.get('confirm'):
+                    return _err(h, "set confirm=true after verifying MFT receipt/compliance before Daraja submission", 400)
+                row = submit_request(conn, rid, admin_user_id=ud['id'])
+            elif action in ('reject', 'complete', 'pending', 'failed'):
+                status = 'completed' if action == 'complete' else action
+                row = update_status(conn, rid, status, admin_note=str(body.get('note') or '')[:500])
+            else:
+                return _err(h, "unknown action", 400)
+            _audit(conn, ud['id'], 'offramp.mpesa.%s' % action, ud.get('tier',''), 'offramp', {'request_id': rid, 'status': (row or {}).get('status')})
+            return _send_json(h, row or {})
+        except Exception as e:
+            return _err(h, "admin off-ramp action failed: %s" % e, 400)
+
+
+    # -- PiNet / sync / mempool / zero-dep KYC (CommCoin SBC node) --------
+    def _pinet_node(self):
+        from node.pinet import get_node
+        return get_node()
+
+    def _pinet_status(self, h):
+        try:
+            return _send_json(h, self._pinet_node().status())
+        except Exception as e:
+            return _err(h, "pinet unavailable: %s" % e, 503)
+
+    def _pinet_capture(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        body = body or {}
+        ud = _row_to_dict(user)
+        # mine to user's wallet if present
+        address = body.get("address")
+        if not address:
+            try:
+                from chain.wallet import Wallet
+                wp = self._mft_wallet_path(ud["id"])
+                if os.path.exists(wp): address = Wallet(wp).load().address
+            except Exception: pass
+        if not address:
+            return _err(h, "no mining address: create a chain wallet or pass address", 400)
+        rounds = body.get("rounds")
+        try:
+            res = self._pinet_node().capture(address, rounds=rounds)
+            _audit(conn, ud["id"], "pinet.capture", ud.get("tier",""), "node",
+                   {"ok": res.get("ok"), "height": res.get("height"), "rounds": res.get("rounds")})
+            return _send_json(h, res)
+        except Exception as e:
+            return _err(h, "capture failed: %s" % e, 500)
+
+    def _node_mempool(self, h, qs):
+        try:
+            limit = int((qs.get("limit") or [50])[0])
+            return _send_json(h, self._pinet_node().mempool.snapshot(limit=max(1,min(limit,200))))
+        except Exception as e:
+            return _err(h, "mempool unavailable: %s" % e, 503)
+
+    def _node_tx_submit(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        tx = (body or {}).get("tx") or body
+        try:
+            res = self._pinet_node().submit_tx(tx)
+            ud = _row_to_dict(user)
+            _audit(conn, ud["id"], "node.tx.submit", ud.get("tier",""), "node", {"txid": res.get("txid")})
+            return _send_json(h, res, status=201)
+        except Exception as e:
+            return _err(h, "tx rejected: %s" % e, 400)
+
+    def _node_sync_pull(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        peer = (body or {}).get("peer") or (body or {}).get("url")
+        if not peer: return _err(h, "peer URL required", 400)
+        try:
+            res = self._pinet_node().pull(peer, max_blocks=int((body or {}).get("max_blocks") or 100))
+            ud = _row_to_dict(user)
+            _audit(conn, ud["id"], "node.sync.pull", ud.get("tier",""), "node", {"peer": str(peer)[:200], "ok": res.get("ok")})
+            return _send_json(h, res)
+        except Exception as e:
+            return _err(h, "sync pull failed: %s" % e, 502)
+
+    def _chain_export(self, h, qs):
+        try:
+            start = int((qs.get("start") or [1])[0])
+            limit = int((qs.get("limit") or [100])[0])
+            return _send_json(h, self._pinet_node().export(start=start, limit=min(max(limit,1),500)))
+        except Exception as e:
+            return _err(h, "export failed: %s" % e, 500)
+
+    def _chain_import(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        blocks = (body or {}).get("blocks") or []
+        try:
+            res = self._pinet_node().import_blocks(blocks)
+            ud = _row_to_dict(user)
+            _audit(conn, ud["id"], "node.chain.import", ud.get("tier",""), "node", {"imported": res.get("imported"), "ok": res.get("ok")})
+            return _send_json(h, res)
+        except Exception as e:
+            return _err(h, "import failed: %s" % e, 400)
+
+    def _chain_headers(self, h, qs):
+        try:
+            start = int((qs.get("start") or [0])[0])
+            limit = int((qs.get("limit") or [500])[0])
+            return _send_json(h, self._pinet_node().headers(start=start, limit=min(max(limit,1),2000)))
+        except Exception as e:
+            return _err(h, "headers failed: %s" % e, 500)
+
+    def _chain_proof_verify(self, h):
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        proof = (body or {}).get("proof") or body or {}
+        try:
+            return _send_json(h, self._pinet_node().verify_proof(proof))
+        except Exception as e:
+            return _err(h, "verify failed: %s" % e, 400)
+
+    def _kyc_me(self, conn, h):
+        user, _s = self._require_user(conn, h)
+        if user is None: return True
+        ud = _row_to_dict(user)
+        from minting.kyc import get_case
+        return _send_json(h, {"kyc": get_case(conn, ud["id"]), "disclaimer": "Zero-dependency workflow hooks only; not legal/regulatory compliance or identity-verification guarantee."})
+
+    def _kyc_submit(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true to submit KYC workflow data for operator review", 400)
+        ud = _row_to_dict(user)
+        from minting.kyc import submit
+        case = submit(conn, ud["id"], full_name=body.get("full_name"), country=body.get("country"),
+                      doc_type=body.get("doc_type"), doc_ref=body.get("doc_ref"), notes=body.get("notes"))
+        _audit(conn, ud["id"], "kyc.submit", ud.get("tier",""), "kyc", {"status": case.get("status")})
+        return _send_json(h, {"kyc": case})
+
+    def _admin_kyc_list(self, conn, h, qs):
+        user, _s = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        from minting.kyc import list_cases
+        status = (qs.get("status") or [None])[0]
+        return _send_json(h, {"cases": list_cases(conn, status=status, limit=200)})
+
+    def _admin_kyc_review(self, conn, h, path):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        body = body or {}
+        parts = path.rstrip('/').split('/')
+        try: uid = int(parts[-2]) if parts[-1] == 'review' else int(parts[-1])
+        except Exception: return _err(h, "bad user id", 400)
+        status = str((body or {}).get("status") or "")
+        if not status: return _err(h, "status required", 400)
+        ud = _row_to_dict(user)
+        from minting.kyc import review
+        try:
+            case = review(conn, uid, status, actor_id=ud["id"], reviewer_notes=body.get("reviewer_notes"))
+            _audit(conn, ud["id"], "kyc.review", ud.get("tier",""), "kyc", {"user_id": uid, "status": status})
+            return _send_json(h, {"kyc": case})
+        except Exception as e:
+            return _err(h, "kyc review failed: %s" % e, 400)

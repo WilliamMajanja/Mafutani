@@ -77,7 +77,7 @@ import urllib.request
 import zipfile
 
 BASE = "https://www.cftc.gov"
-UA = {"User-Agent": "mafutani-cta/1.1 (personal-research; contact: local)"}
+UA = {"User-Agent": "mafutani/1.1 (personal-research; contact: local)"}
 TIMEOUT = 45
 
 # CFTC publishes Friday 15:30 ET for the preceding Tuesday. Records how

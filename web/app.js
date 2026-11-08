@@ -2880,39 +2880,127 @@
     load();
   }
 
-  function pageAdmin() {
-    hideLogin();
-    view().innerHTML = "<h2>Admin</h2><div id='out'>loading…</div>";
+
+
+  function pageDesktop() {
+    view().innerHTML = "<h2>CommCoin Node Compositor</h2><p class='kpi-l'>Loading Wayland-like desktop…</p>";
     Promise.all([
-      api("GET", "/api/admin/overview").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/admin/users").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/admin/audit").catch(function (e) { return { error: e.message }; })
+      api("GET","/api/compositor"),
+      api("GET","/api/node/status").catch(function(e){ return {error:e.message}; }),
+      api("GET","/api/chain/commitment").catch(function(e){ return {error:e.message}; })
+    ]).then(function(res){
+      var comp = res[0], node = res[1]||{}, commit = res[2]||{};
+      var out = (comp.outputs||[])[0]||{};
+      var tasks = ((comp.shell||{}).tasks||[]);
+      var surfs = ((comp.scene||{}).surfaces||[]);
+      function surfHtml(s){
+        return "<div class='card' data-sid='"+esc(s.id)+"' style='position:absolute;left:"+esc(s.x)+"px;top:"+esc(s.y)+"px;width:"+esc(s.w)+"px;height:"+Math.max(120,Math.min(360,s.h))+"px;overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.35);border:1px solid #334'>" +
+          "<div style='display:flex;justify-content:space-between;gap:8px;align-items:center;background:#111827;padding:6px 8px;cursor:move'><b>"+esc(s.title||s.app_id)+"</b><span><span class='kpi-l'>"+esc(s.role||"xdg_toplevel")+" #"+esc(s.id)+"</span> <button data-close='"+esc(s.id)+"'>×</button></span></div>" +
+          "<div style='padding:8px;font-size:13px'>" + (s.meta_role==='node_status' ? ("<div>Node: <b>"+esc((node.chain||{}).height)+"</b> height · epoch "+esc((node.chain||{}).epoch)+" · seeded "+esc(String((node.chain||{}).epoch_seeded))+"<br>Coin: "+esc((node.chain||{}).coin_alias||"CommCoin")+" ref $"+esc(Number((node.chain||{}).reference_value_usd||100000).toLocaleString())+" (metadata only)<br>UTXO state root: <code style='font-size:11px'>"+esc(((node.state||{}).state_root||"").slice(0,24))+"…</code></div>") :
+            s.meta_role==='chain' ? ("<div>Merkle abstraction (entire cryptocurrency):<br>tx/block/state commitments & proofs via <code>/api/chain/proof/tx</code>, <code>/api/chain/commitment</code>.<br>Crypto commitment: <code style='font-size:11px'>"+esc((commit.crypto_commitment||"").slice(0,24))+"…</code><br>UTXO root: <code style='font-size:11px'>"+esc((commit.utxo_state_root||"").slice(0,24))+"…</code></div>") :
+            s.meta_role==='wallet' ? ("<div>Wallet/miner/epoch seed managed in <a href='#/chain'>#/chain</a>. PQC: "+esc((node.chain||{}).pqc||"hash-based WOTS+/Merkle SHAKE256")+" (stateful index).<br>Daraja/M-Pesa: admin-guarded offramp when configured.</div>") :
+            ("<div>Wayland-like surface (<code>"+esc(s.interface||"wl_surface")+"</code> / "+esc(s.role)+") committed "+esc(s.commits)+" times.</div>")) + "</div></div>";
+      }
+      var areaW = Math.max(900, (out.w||1280)-20), areaH = Math.max(520, (out.h||800)-220);
+      view().innerHTML = "<h2>CommCoin Node Compositor <span class='kpi-l'>(Wayland-like desktop, stdlib model + web renderer)</span></h2>" +
+        "<div class='warn' style='margin:8px 0;padding:8px;border:1px solid #2f6'>Wayland-inspired compositor: wl_display/registry, wl_compositor+wl_surface, wl_output, wl_seat, xdg_wm_base/toplevel, scene+damage, shell tasks. Merkle-ized chain commitments & proofs exposed. Experimental.</div>" +
+        "<div class='kpi-row' style='gap:8px;flex-wrap:wrap'><span class='badge'>display "+esc((comp.display||{}).id)+"</span><span class='badge'>globals "+esc(((comp.display||{}).globals||[]).length)+"</span><span class='badge'>output "+esc(out.w)+"x"+esc(out.h)+"</span><span class='badge'>surfaces "+esc(surfs.length)+"</span><span class='badge'>damage "+esc((comp.scene||{}).damage_serial)+"</span><button id='desk-new'>New Toplevel</button><button id='desk-refresh'>Refresh</button></div>" +
+        "<div id='desk-area' style='position:relative;margin-top:10px;width:"+areaW+"px;height:"+areaH+"px;background:linear-gradient(180deg,#0b1220,#081018);border:1px solid #334;border-radius:8px;overflow:hidden'>" + surfs.map(surfHtml).join("") + "</div>" +
+        "<div class='card' style='margin-top:10px'><h3>Shell Tasks / Globals</h3><div class='kpi-l'>"+tasks.map(function(t){ return esc(t.title)+" (#"+esc(t.surface_id)+", "+esc(t.app_id)+")"; }).join(" · ")+"</div><div class='kpi-l' style='margin-top:6px'>"+((comp.display||{}).globals||[]).map(function(g){ return esc(g.interface)+"@v"+esc(g.version); }).join(" · ")+"</div></div>";
+      document.getElementById('desk-refresh').onclick = pageDesktop;
+      document.getElementById('desk-new').onclick = function(){ api("POST","/api/compositor/action",{cmd:"create_toplevel",payload:{title:"Toplevel",app_id:"commcoin.app",x:120+Math.random()*120,y:120+Math.random()*80,w:460,h:280}}).then(pageDesktop).catch(function(e){ alert(e.message); }); };
+      view().querySelectorAll('[data-close]').forEach(function(b){ b.onclick=function(){ api("POST","/api/compositor/action",{cmd:"close",payload:{id:parseInt(b.getAttribute('data-close'),10)}}).then(pageDesktop).catch(function(e){alert(e.message);}); }; });
+    }).catch(function(e){ view().innerHTML="<h2>CommCoin Node Compositor</h2><p class='error'>"+esc(e.message)+"</p>"; });
+  }
+
+
+  function pagePolicies() {
+    view().innerHTML = "<h2>Policies</h2><p class='kpi-l'>Loading…</p>";
+    api("GET", "/api/policies").then(function (r) {
+      var sum = r.summary || {};
+      var badges = Object.keys(sum).map(function (k) { return "<span class='badge'>" + esc(k.replace(/_/g," ")) + ": " + esc(String(sum[k])) + "</span>"; }).join(" ");
+      var doc = esc(r.document || "See docs/POLICIES.md").replace(/\n/g, "<br>");
+      view().innerHTML = "<h2>Policies & Risk Disclosures</h2>" +
+        "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'>" +
+        "<b>Not financial/legal/tax advice.</b> Experimental crypto/payment features: total loss possible; transfers/keys may be irreversible. " +
+        "Operators must satisfy KYC/AML/sanctions/tax and local-law requirements.</div>" +
+        "<div class='kpi-row' style='flex-wrap:wrap;gap:6px;margin:8px 0'>" + badges + "</div>" +
+        "<h3>Full Policy</h3><div class='card' style='max-height:60vh;overflow:auto;font-size:13px;line-height:1.45'>" + doc + "</div>";
+    }).catch(function (e) { view().innerHTML = "<h2>Policies</h2><p class='error'>" + esc(e.message) + "</p>"; });
+  }
+
+  function pageChain() {
+    view().innerHTML = "<h2>Mafutani Chain (MFT / CommCoin)</h2><p class='kpi-l'>Loading…</p>";
+    Promise.all([
+      api("GET", "/api/chain/info"),
+      api("GET", "/api/chain/blocks?limit=8"),
+      api("GET", "/api/chain/wallet"),
+      api("GET", "/api/offramp/mpesa/info").catch(function(e){ return {offramp:{error:e.message,enabled:false}}; }),
+      api("GET", "/api/offramp/mpesa").catch(function(){ return {requests:[]}; })
     ]).then(function (res) {
-      var ov = res[0] || {};
-      var users = res[1].users || res[1].rows || [];
-      var audit = res[2].entries || res[2].audit || [];
-      var err = res[0].error || res[1].error || res[2].error;
-      var html = "";
-      if (err) html = showErr(new Error(err));
-      var kpis = [["Users", ov.users], ["Sessions", ov.sessions], ["Symbols", ov.symbols],
-                  ["Candles", ov.candles], ["Quotes", ov.quotes], ["Orders", ov.orders],
-                  ["Fills", ov.fills], ["Backtests", ov.backtests], ["Risk events", ov.risk_events],
-                  ["Audit log", ov.audit]];
-      html += "<div class='kpi-l'>" + kpis.map(function (k) {
-        return "<span class='kpi'><b>" + (k[1] == null ? "—" : k[1]) + "</b> " + esc(k[0]) + "</span>";
-      }).join("") + "</div>";
-      html += "<h3>Users / tiers</h3><table><tr><th>ID</th><th>Email</th><th>Tier</th><th>Disabled</th></tr>" +
-        users.map(function (u) {
-          return "<tr><td>" + esc(u.id) + "</td><td>" + esc(u.email) + "</td><td>" +
-            esc(u.tier) + "</td><td class='" + (u.disabled ? "neg" : "") + "'>" +
-            (u.disabled ? "yes" : "no") + "</td></tr>";
-        }).join("") + "</table>";
-      html += "<h3>Audit</h3><table><tr><th>TS</th><th>Action</th><th>Actor</th></tr>" +
-        audit.map(function (a) {
-          return "<tr><td>" + esc(a.ts) + "</td><td>" + esc(a.action) + "</td><td>" + esc(a.actor_user_id) + "</td></tr>";
-        }).join("") + "</table>";
-      document.getElementById("out").innerHTML = html;
-    });
+      var info = res[0], bl = res[1], w = res[2], off = (res[3]||{}).offramp||{}, reqs = (res[4]||{}).requests||[];
+      var walletHtml = !w.exists ?
+        "<p>No chain wallet. <button id='mft-create-wallet'>Create PQC Wallet</button></p>" +
+        "<p class='kpi-l'>Hash-based PQC (WOTS+/Merkle, SHAKE256). Stateful: never reuse old backups.</p>" :
+        "<div>Address <code>" + esc(w.address) + "</code><br>Spendable <b>" + esc(w.balance_mft||"0") + " MFT</b> (epoch " + esc(w.epoch) + ") · expired utxos " + esc(w.expired_utxo_count||0) + "<br>Sigs used " + esc(w.signatures_used) + "/" + esc(w.signatures_max) + " <span class='kpi-l'>" + esc(w.pub_fingerprint||"") + "</span></div>";
+      var rows = (bl.blocks||[]).map(function (b) {
+        return "<tr><td>" + esc(b.height) + "</td><td><code>" + esc((b.hash||"").slice(0,16)) + "…</code></td><td>" + esc(b.epoch) + "</td><td>" + esc(b.tx_count) + "</td><td>" + esc(b.bits) + "</td></tr>";
+      }).join("");
+      var reqRows = reqs.slice(0,8).map(function(r){
+        return "<tr><td>"+esc(r.id)+"</td><td>"+esc(r.amount_mft)+"</td><td>KES "+esc(r.amount_kes)+"</td><td>"+esc(r.phone)+"</td><td>"+esc(r.status)+"</td></tr>";
+      }).join("") || "<tr><td colspan='5' class='dim'>No requests yet</td></tr>";
+      var offDisabled = !off.enabled;
+      view().innerHTML = "<h2>Mafutani Chain (MFT / CommCoin)</h2>" +
+        "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'>CommCoin/MFT is the primary chain. Experimental zero-dep blockchain: SBC-mineable PoW (SHAKE256), hash-based PQC signatures. <b>6-month epochs seed 100,000,000,000 " + esc(info.coin_symbol||"MFT") + "</b>; outputs expire and are replaced by deterministic epoch seeding. <b>$100,000/CommCoin is reference/config metadata only</b> (not a market price/guarantee). Not financial advice; total loss possible.</div>" +
+        "<div class='grid'>" +
+        "<div class='card'><h3>Chain</h3><p>Height <b>" + esc(info.height) + "</b> · epoch <b>" + esc(info.epoch) + "</b> · seeded " + esc(String(info.epoch_seeded)) + " · next bits " + esc(info.next_bits) + "</p><p class='kpi-l'>Coin <b>" + esc(info.coin_name||"Mafutani Coin") + " (" + esc(info.coin_symbol||"MFT") + ", " + esc(info.coin_alias||"CommCoin") + ")</b> · reward " + esc(info.epoch_reward_mft) + " / epoch · lifetime " + esc(info.token_lifetime_epochs) + " epoch(s)</p><p class='kpi-l'><b>Reference value:</b> $ " + esc(Number(info.reference_value_usd||100000).toLocaleString()) + " USD / " + esc(info.coin_symbol||"MFT") + " <span style='opacity:.8'>(" + esc(info.reference_value_note||"reference only, not a market price/guarantee") + ")</span></p><p class='kpi-l'>" + esc(info.pqc) + "</p></div>" +
+        "<div class='card'><h3>Wallet</h3>" + walletHtml + "</div>" +
+        "</div>" +
+        "<div class='card'><h3>Mine (SBC-friendly rounds)</h3><p class='kpi-l'>Runs a limited PoW search on the server and submits a block if found. Use small rounds on shared/SBC hosts.</p>" +
+        "<button id='mft-mine'>Mine rounds</button> <input id='mft-rounds' type='number' value='200000' min='1000' max='2000000' style='width:120px'> <span id='mft-mine-out' class='kpi-l'></span></div>" +
+        "<div class='card'><h3>Send MFT</h3><p><input id='mft-to' placeholder='mft1… address' style='width:60%'> <input id='mft-amt' type='number' min='1' placeholder='amount MFT' style='width:140px'> <button id='mft-send'>Sign & Mine</button></p><p id='mft-send-out' class='kpi-l'></p></div>" +
+        "<div class='card'><h3>Off-ramp to M-Pesa (Daraja)</h3>" +
+        "<p class='kpi-l'>Easy user off-ramp flow for CommCoin/MFT. Requires operator config: <code>MAFUTANI_MFT_KES_RATE</code> and Daraja credentials. Conversion is operator-configured reference metadata — <b>not a market price/guarantee</b>. Daraja acceptance is <b>not settlement</b>; callbacks/reconciliation and KYC/AML/sanctions/tax compliance are operator responsibilities.</p>" +
+        "<p class='kpi-l'>Rate: <b>" + esc(off.rate_kes_per_mft||"0") + " KES / MFT</b> · enabled " + esc(String(!!off.enabled)) + " · Daraja ready " + esc(String(!!off.daraja_b2c_ready)) + (off.treasury_mft_address ? " · treasury <code>"+esc(off.treasury_mft_address)+"</code>" : "") + "</p>" +
+        (offDisabled ? "<p class='warn'>Off-ramp not configured by operator. Set <code>MAFUTANI_MFT_KES_RATE</code> and Daraja env vars.</p>" : "") +
+        "<div class='row' style='gap:8px;flex-wrap:wrap;align-items:center'><input id='mpesa-phone' placeholder='2547XXXXXXXX' style='width:170px'> <input id='mpesa-amt' type='number' min='0' step='any' placeholder='Amount MFT' style='width:140px'> <button id='mpesa-send'" + (offDisabled?" disabled":"") + ">Request M-Pesa Off-ramp</button></div>" +
+        "<p id='mpesa-out' class='kpi-l'></p>" +
+        "<h4>My Requests</h4><table><thead><tr><th>ID</th><th>MFT</th><th>KES</th><th>Phone</th><th>Status</th></tr></thead><tbody>" + reqRows + "</tbody></table></div>" +
+        "<div class='card'><h3>Recent Blocks</h3><table><thead><tr><th>H</th><th>Hash</th><th>Epoch</th><th>Txs</th><th>Bits</th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+      var cw = document.getElementById("mft-create-wallet");
+      if (cw) cw.onclick = function () {
+        cw.disabled = true;
+        api("POST", "/api/chain/wallet", {height:10}).then(function(){ pageChain(); }).catch(function(e){ alert(e.message); cw.disabled=false; });
+      };
+      var mb = document.getElementById("mft-mine");
+      if (mb) mb.onclick = function () {
+        var out = document.getElementById("mft-mine-out"); mb.disabled = true; out.textContent = "mining…";
+        api("POST", "/api/chain/mine", {rounds: parseInt(document.getElementById("mft-rounds").value||"200000",10)})
+          .then(function(r){ out.textContent = JSON.stringify(r); if(r.ok) pageChain(); else mb.disabled=false; })
+          .catch(function(e){ out.textContent = e.message; mb.disabled=false; });
+      };
+      var sb = document.getElementById("mft-send");
+      if (sb) sb.onclick = function () {
+        var out = document.getElementById("mft-send-out"); sb.disabled = true; out.textContent = "signing/mining…";
+        api("POST", "/api/chain/send", {to: document.getElementById("mft-to").value.trim(), amount_mft: parseInt(document.getElementById("mft-amt").value||"0",10)})
+          .then(function(r){ out.textContent = JSON.stringify(r); if(r.mined) pageChain(); else sb.disabled=false; })
+          .catch(function(e){ out.textContent = e.message; sb.disabled=false; });
+      };
+      var mp = document.getElementById("mpesa-send");
+      if (mp) mp.onclick = function(){
+        var out = document.getElementById("mpesa-out");
+        var phone = document.getElementById("mpesa-phone").value.trim();
+        var amt = document.getElementById("mpesa-amt").value;
+        var rate = parseFloat(off.rate_kes_per_mft||"0");
+        var est = rate && amt ? (" (~KES " + Math.floor(parseFloat(amt)*rate) + " at operator-configured rate; not a market price/guarantee)") : "";
+        if (!phone || !amt) { out.textContent = "Phone and MFT amount required."; return; }
+        if (!window.confirm("Create M-Pesa off-ramp request for " + amt + " MFT to " + phone + est + "? This requires explicit confirmation and is subject to operator config, Daraja availability, reconciliation, and compliance. Continue?")) return;
+        mp.disabled = true; out.textContent = "Submitting request…";
+        api("POST", "/api/offramp/mpesa", {phone: phone, amount_mft: amt, confirm: true})
+          .then(function(r){ out.textContent = "Request #"+r.id+" created: "+r.status+" (KES "+r.amount_kes+"). "+(r.instructions||"Operator will verify/process per configured controls."); pageChain(); })
+          .catch(function(e){ out.textContent = e.message; mp.disabled=false; });
+      };
+    }).catch(function (e) { view().innerHTML = "<h2>Mafutani Chain</h2><p class='error'>" + esc(e.message) + "</p><p class='kpi-l'>Ensure you are logged in for wallet/mining/off-ramp actions.</p>"; });
   }
 
   function pageWallet() {
@@ -2972,6 +3060,7 @@
     
     "/heatmap": pageHeatmap, "/analysis": pageAnalysis, "/anomalies": pageAnomalies,
     "/markets": pageMarkets, "/security": pageSecurity, "/wallet": pageWallet,
+    "/chain": pageChain, "/desktop": pageDesktop, "/policies": pagePolicies,
     "/admin": pageAdmin
   };
   function router() {

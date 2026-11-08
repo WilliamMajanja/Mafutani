@@ -39,3 +39,5 @@ env/
 # clean tree.
 *\tmp\mt5build-*
 *mt5build-*
+data/wallets/*.json
+data/wallets/*seed*.json

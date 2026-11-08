@@ -1,0 +1,16 @@
+{
+  "app.name": "Mafutani",
+  "nav.dashboard": "Dashboard",
+  "nav.chain": "Chain",
+  "nav.wallet": "Wallet",
+  "nav.funding": "Funding",
+  "nav.policies": "Policies",
+  "risk.disclaimer": "Not financial advice. Digital assets and trading carry risk of total loss.",
+  "chain.epoch_seed": "Epoch seed: 100,000,000,000 MFT every 6 months (182 days).",
+  "chain.expiry": "Expired tokens are not spendable and are replaced by epoch seeding under consensus rules.",
+  "chain.pqc": "Signatures use hash-based post-quantum cryptography (WOTS+/Merkle, SHAKE256). Protect wallet state.",
+  "payments.daraja": "M-Pesa/Daraja is a third-party service. Operator must configure credentials and comply with law.",
+  "action.mine": "Mine",
+  "action.send": "Send",
+  "action.withdraw_mpesa": "Withdraw to M-Pesa"
+}

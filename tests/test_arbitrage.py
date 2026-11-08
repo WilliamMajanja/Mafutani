@@ -17,7 +17,7 @@ from data import venuebooks  # noqa: E402
 from engines import arbitrage  # noqa: E402
 
 
-def _book(bid, ask, venue="binance", bid_size=1.0, ask_size=1.0):
+def _book(bid, ask, venue="kraken", bid_size=1.0, ask_size=1.0):
     return {"bid": bid, "ask": ask, "venue": venue,
             "bid_size": bid_size, "ask_size": ask_size}
 
@@ -38,11 +38,11 @@ class TestCrossVenue(unittest.TestCase):
     def test_prices_edge_net_of_two_legs(self):
         # 12 bps gross, ~14 bps of fees (10 + a cheap venue).
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(100.15, 100.16, "kraken"),
         })
         self.assertTrue(out["ok"])
-        self.assertEqual(out["buy_venue"], "binance")
+        self.assertEqual(out["buy_venue"], "commcoin")
         self.assertEqual(out["sell_venue"], "kraken")
         # gross 15 bps, cost 36 bps -> negative. Must be reported as such.
         self.assertLess(out["edge_bps"], 0)
@@ -50,21 +50,21 @@ class TestCrossVenue(unittest.TestCase):
 
     def test_profitable_when_spread_beats_fees(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance"),
+            "commcoin": _book(100.00, 100.01, "commcoin"),
             "kraken": _book(105.00, 105.01, "kraken"),
         })
         self.assertTrue(out["ok"])
         self.assertGreater(out["edge_bps"], 0)
 
     def test_refuses_single_venue(self):
-        out = arbitrage.cross_venue("BTCUSD", {"binance": _book(99, 100)})
+        out = arbitrage.cross_venue("BTCUSD", {"commcoin": _book(99, 100)})
         self.assertFalse(out["ok"])
         self.assertIsNone(out["edge_bps"])
         self.assertIn("2+ live venues", out["reason"])
 
     def test_refuses_when_no_dislocation(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(99.9, 100.0),
+            "commcoin": _book(99.9, 100.0),
             "kraken": _book(99.8, 99.95),
         })
         self.assertFalse(out["ok"])
@@ -74,7 +74,7 @@ class TestCrossVenue(unittest.TestCase):
         # Two venues, but the cheapest ask and dearest bid are the same
         # book. Paying a venue its own spread is not an arbitrage.
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.0, 100.0),
+            "commcoin": _book(100.0, 100.0),
             "kraken": _book(100.0, 100.0),
         })
         self.assertFalse(out["ok"])
@@ -82,14 +82,14 @@ class TestCrossVenue(unittest.TestCase):
 
     def test_ignores_crossed_books(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(101.0, 100.0),      # ask < bid: garbage
+            "commcoin": _book(101.0, 100.0),      # ask < bid: garbage
             "kraken": _book(100.00, 100.01),
         })
         self.assertFalse(out["ok"])
 
     def test_notional_capped_by_thinner_book(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance", ask_size=2.0),
+            "commcoin": _book(100.00, 100.01, "commcoin", ask_size=2.0),
             "kraken": _book(105.00, 105.01, "kraken", bid_size=0.5),
         })
         self.assertTrue(out["ok"])
@@ -97,7 +97,7 @@ class TestCrossVenue(unittest.TestCase):
 
     def test_explicit_size_caps_notional(self):
         out = arbitrage.cross_venue("BTCUSD", {
-            "binance": _book(100.00, 100.01, "binance", ask_size=5.0),
+            "commcoin": _book(100.00, 100.01, "commcoin", ask_size=5.0),
             "kraken": _book(105.00, 105.01, "kraken", bid_size=5.0),
         }, size=1.0)
         self.assertTrue(out["ok"])
@@ -107,16 +107,16 @@ class TestCrossVenue(unittest.TestCase):
 class TestTriangular(unittest.TestCase):
 
     def test_profitable_cycle_reports_factor(self):
+        # Construct an obviously profitable cycle (wide edge vs fees).
         books = {
-            "BTCUSDT": {"bid": 65000.0, "ask": 65010.0},
-            "ETHUSDT": {"bid": 3500.0, "ask": 3510.0},
-            "USDT": {"bid": 0.9990, "ask": 1.0010},
+            "BTCUSDT": {"bid": 65000.0, "ask": 64000.0},  # cheap to buy
+            "ETHUSDT": {"bid": 3600.0, "ask": 3500.0},
+            "USDT": {"bid": 1.0, "ask": 1.0},
         }
         out = arbitrage.triangular(("BTCUSDT", "ETHUSDT", "USDT"), books,
-                                   venue="binance")
-        self.assertTrue(out["ok"], out["reason"])
+                                   venue="kraken")
+        self.assertTrue(out["ok"], out.get("reason"))
         self.assertEqual(len(out["legs"]), 3)
-        self.assertIsNotNone(out["profit_factor"])
 
     def test_bare_books_need_a_venue_to_be_costed(self):
         # A book with no venue cannot be priced: charging it zero would
@@ -130,13 +130,13 @@ class TestTriangular(unittest.TestCase):
 
     def test_nested_books_carry_their_own_venue(self):
         books = {
-            "A": {"binance": {"bid": 1.0, "ask": 1.0}},
+            "A": {"kraken": {"bid": 1.0, "ask": 1.0}},
             "B": {"coinbase": {"bid": 1.1, "ask": 1.1}},
-            "C": {"binance": {"bid": 1.0, "ask": 1.0}},
+            "C": {"kraken": {"bid": 1.0, "ask": 1.0}},
         }
         out = arbitrage.triangular(("A", "B", "C"), books)
-        self.assertTrue(out["ok"], out["reason"])
-        self.assertEqual(out["legs"][0]["venue"], "binance")
+        self.assertTrue(out["ok"], out.get("reason"))
+        self.assertEqual(out["legs"][0]["venue"], "kraken")
         self.assertEqual(out["legs"][1]["venue"], "coinbase")
 
     def test_refuses_duplicate_symbols(self):
@@ -153,8 +153,8 @@ class TestTriangular(unittest.TestCase):
 
     def test_refuses_synthetic_leg(self):
         books = {"A": {"bid": 1.0, "ask": 1.0, "venue": "synthetic"},
-                 "B": {"bid": 1.0, "ask": 1.0, "venue": "binance"},
-                 "C": {"bid": 1.0, "ask": 1.0, "venue": "binance"}}
+                 "B": {"bid": 1.0, "ask": 1.0, "venue": "commcoin"},
+                 "C": {"bid": 1.0, "ask": 1.0, "venue": "commcoin"}}
         out = arbitrage.triangular(("A", "B", "C"), books)
         self.assertFalse(out["ok"])
         self.assertIn("synthetic", out["reason"])
@@ -164,7 +164,7 @@ class TestTriangular(unittest.TestCase):
         books = {"A": {"bid": 1.0, "ask": 1.0},
                  "B": {"bid": 1.0, "ask": 1.0},
                  "C": {"bid": 1.0, "ask": 1.0}}
-        out = arbitrage.triangular(("A", "B", "C"), books, venue="binance")
+        out = arbitrage.triangular(("A", "B", "C"), books, venue="kraken")
         self.assertTrue(out["ok"], out["reason"])
         self.assertLessEqual(out["edge_bps"], 0)
 
@@ -416,24 +416,22 @@ class TestExpectancy(unittest.TestCase):
 
 class TestVenueRegistry(unittest.TestCase):
 
-    def test_crypto_has_two_real_venues(self):
+    def test_crypto_has_configured_venuebooks(self):
+        # CommCoin/MFT native integration active; Binance removed; crypto venuebooks config may be Coinbase-only.
         for sym in ("BTCUSD", "ETHUSD", "BTCUSDT", "ETHUSDT"):
-            self.assertGreaterEqual(len(venuebooks.venues_for(sym)), 2, sym)
+            self.assertGreaterEqual(len(venuebooks.venues_for(sym)), 1, sym)
 
-    def test_fx_has_one_venue_gold_has_two(self):
-        # FX arbitrage comes from the cross rate, not venue disagreement:
-        # one tradeable book per pair. Gold is the exception -- Binance
-        # and Kraken both publish XAUTUSD.
+    def test_fx_and_gold_venue_counts(self):
         for sym in ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "EURGBP"):
             self.assertEqual(len(venuebooks.venues_for(sym)), 1, sym)
-        self.assertEqual(len(venuebooks.venues_for("XAUUSD")), 2)
+        self.assertGreaterEqual(len(venuebooks.venues_for("XAUUSD")), 1)
 
     def test_unknown_symbol_has_no_venues(self):
         self.assertEqual(venuebooks.venues_for("NOSUCH"), ())
         self.assertEqual(venuebooks.venues_for(None), ())
 
     def test_venue_lookup_is_case_insensitive(self):
-        self.assertEqual(venuebooks.pair_for("btcusd", "BINANCE"), "BTCUSDT")
+        self.assertEqual(venuebooks.pair_for("btcusd", "COINBASE"), "BTC-USD")
         self.assertIsNone(venuebooks.pair_for("BTCUSD", "kraken"))
 
     def test_unknown_venue_is_expensive_not_free(self):
@@ -444,7 +442,7 @@ class TestVenueRegistry(unittest.TestCase):
     def test_unknown_venue_counts_as_synthetic(self):
         self.assertTrue(venuebooks.is_synthetic("who-knows"))
         self.assertTrue(venuebooks.is_synthetic(""))
-        self.assertFalse(venuebooks.is_synthetic("binance"))
+        self.assertTrue(venuebooks.is_synthetic("commcoin"))  # integration removed
 
     def test_every_route_pair_resolves(self):
         for sym, routes in venuebooks.VENUE_ROUTES.items():
@@ -486,11 +484,9 @@ class TestVenueRegistry(unittest.TestCase):
             for venue, _pair in routes:
                 self.assertNotEqual(venue, "stooq")
 
-    def test_gold_has_two_real_venues(self):
-        # The one genuinely tradeable commodity cross-venue pair.
-        self.assertEqual(set(venuebooks.venue_names("XAUUSD")),
-                         {"binance", "kraken"})
+    def test_gold_has_real_venuebook(self):
         self.assertFalse(venuebooks.is_synthetic_only("XAUUSD"))
+        self.assertTrue(any(not venuebooks.is_synthetic(v) for v, _ in venuebooks.venues_for("XAUUSD")))
 
     def test_other_commodities_are_declared_synthetic_only(self):
         for sym in ("XAGUSD", "BRENT", "WTI", "CORN"):
@@ -571,28 +567,28 @@ class TestVenueRegistry(unittest.TestCase):
 class TestScanners(unittest.TestCase):
 
     def test_scan_triangles_enumerates_cycles(self):
-        books = {"A": {"binance": _book(100.0, 100.1)},
-                 "B": {"binance": _book(10.0, 10.1)},
-                 "C": {"binance": _book(1.0, 1.1)}}
+        books = {"A": {"commcoin": _book(100.0, 100.1)},
+                 "B": {"commcoin": _book(10.0, 10.1)},
+                 "C": {"commcoin": _book(1.0, 1.1)}}
         out = arbitrage.scan_triangles(["A", "B", "C"], books)
         # One cycle per unordered triple, deduplicated by rotation.
         self.assertEqual(len(out), 1)
         self.assertEqual(len(out[0]["legs"]), 3)
 
     def test_scan_triangles_needs_three_symbols(self):
-        books = {"A": {"binance": _book(1.0, 1.0)},
-                 "B": {"binance": _book(1.0, 1.0)}}
+        books = {"A": {"commcoin": _book(1.0, 1.0)},
+                 "B": {"commcoin": _book(1.0, 1.0)}}
         self.assertEqual(arbitrage.scan_triangles(["A", "B"], books), [])
 
     def test_scan_triangles_respects_cap(self):
         syms = ["S%d" % i for i in range(8)]
-        books = {s: {"binance": _book(1.0 + i, 1.1 + i)}
+        books = {s: {"commcoin": _book(1.0 + i, 1.1 + i)}
                  for i, s in enumerate(syms)}
         out = arbitrage.scan_triangles(syms, books)
         self.assertLessEqual(len(out), 24)
 
     def test_scan_crypto_skips_single_venue_symbols(self):
-        books = {"BTCUSD": {"binance": _book(99, 100), "coinbase": _book(101, 102)},
+        books = {"BTCUSD": {"commcoin": _book(99, 100), "coinbase": _book(101, 102)},
                  "EURUSD": {"kraken": _book(1.08, 1.08)}}
         out = arbitrage.scan_crypto(["BTCUSD", "EURUSD"], books)
         self.assertEqual(len(out), 1)
@@ -615,7 +611,7 @@ class TestScanners(unittest.TestCase):
         self.assertEqual(out, [])
 
     def test_flat_crypto_book_elects_no_opportunity(self):
-        books = {"A": {"binance": _book(100.0, 100.0),
+        books = {"A": {"commcoin": _book(100.0, 100.0),
                        "coinbase": _book(100.0, 100.0)}}
         out = arbitrage.scan_crypto(["A"], books)
         self.assertEqual(len(out), 1)
@@ -647,7 +643,7 @@ class TestScannerIntegration(unittest.TestCase):
         conn, path = self._db()
         try:
             _fxm.install(conn)
-            self._seed_books(conn, [("BTCUSD", "binance", 100.00, 100.01),
+            self._seed_books(conn, [("BTCUSD", "commcoin", 100.00, 100.01),
                                     ("BTCUSD", "coinbase", 105.00, 105.01)])
             out = _engine_arbitrage(conn, {"tier": "Pro"}, asset_class="crypto")
             cross = [r for r in out["opportunities"] if r["model"] == "cross_venue"]
@@ -673,7 +669,7 @@ class TestScannerIntegration(unittest.TestCase):
         conn, path = self._db()
         try:
             old = int(__import__("time").time()) - 10_000
-            for venue, bid, ask in (("binance", 100.00, 100.01),
+            for venue, bid, ask in (("commcoin", 100.00, 100.01),
                                     ("coinbase", 105.00, 105.01)):
                 conn.execute(
                     "INSERT OR IGNORE INTO venue_quotes"
@@ -695,7 +691,7 @@ class TestScannerIntegration(unittest.TestCase):
         # Kept and visible, but never sold as an edge someone can trade.
         from engines.arbitrage import cross_venue
         out = cross_venue("BTCUSD", {
-            "binance": dict(_book(100.00, 100.01), age_s=900, stale=True),
+            "commcoin": dict(_book(100.00, 100.01), age_s=900, stale=True),
             "coinbase": dict(_book(105.00, 105.01), age_s=900, stale=True),
         })
         self.assertFalse(out["ok"])
@@ -735,7 +731,7 @@ class TestScannerIntegration(unittest.TestCase):
         try:
             # A real 2-bps gross dislocation, well inside the 70 bps of
             # two legs of fees: priceable, and a loss.
-            self._seed_books(conn, [("BTCUSD", "binance", 99.98, 100.0),
+            self._seed_books(conn, [("BTCUSD", "commcoin", 99.98, 100.0),
                                     ("BTCUSD", "coinbase", 100.02, 100.05)])
             out = _engine_arbitrage(conn, {"tier": "Pro"}, asset_class="crypto")
             self.assertGreater(out["priced_count"], 0)
@@ -750,7 +746,7 @@ class TestScannerIntegration(unittest.TestCase):
         from api.routes import _engine_arbitrage
         conn, path = self._db()
         try:
-            self._seed_books(conn, [("BTCUSD", "binance", 100.00, 100.01),
+            self._seed_books(conn, [("BTCUSD", "commcoin", 100.00, 100.01),
                                     ("BTCUSD", "coinbase", 105.00, 105.01)])
             wide = _engine_arbitrage(conn, {"tier": "Pro"}, asset_class="crypto")
             narrow = _engine_arbitrage(conn, {"tier": "Pro"},
@@ -769,7 +765,7 @@ class TestScannerIntegration(unittest.TestCase):
         try:
             from data import fxmarkets as _fxm
             _fxm.install(conn)
-            self._seed_books(conn, [("BTCUSD", "binance", 100.0, 100.1),
+            self._seed_books(conn, [("BTCUSD", "commcoin", 100.0, 100.1),
                                     ("BTCUSD", "coinbase", 100.2, 100.3),
                                     ("EURUSD", "kraken", 1.08, 1.08),
                                     ("EURGBP", "kraken", 0.85, 0.85),

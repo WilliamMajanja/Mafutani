@@ -269,18 +269,13 @@ class TestCutsAndClassifyingSeriesShareALambda(unittest.TestCase):
 
 
 # ------------------------------------------------------------------ HTTP
-BASE = os.environ.get("MAFUTANI_TEST_BASE", "http://127.0.0.1:8000")
+from tests.live_server import ensure_live_server
+
+BASE = ensure_live_server()
 
 
-def server_is_up():
-    try:
-        urllib.request.urlopen(BASE + "/", timeout=8)
-        return True
-    except Exception:
-        return False
 
 
-@unittest.skipUnless(server_is_up(), "app server not running")
 class TestChartContextServesBothResolutions(unittest.TestCase):
     def _get(self, **params):
         url = BASE + "/api/chart_context?" + urllib.parse.urlencode(params)

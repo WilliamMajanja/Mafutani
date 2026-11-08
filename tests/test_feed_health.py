@@ -159,7 +159,7 @@ class TestTransitionsNotEveryPoll(FeedHealthBase):
 
     def test_venues_of_the_same_symbol_are_independent(self):
         feeds._note_feed_health({"BTCUSD": {"venue": "kraken", "error": "x"}})
-        feeds._note_feed_health({"BTCUSD": {"venue": "binance", "error": "y"}})
+        feeds._note_feed_health({"BTCUSD": {"venue": "commcoin", "error": "y"}})
         feeds._note_feed_health({"BTCUSD": {"venue": "kraken", "bid": 1.0}})
         rows = _rows(self.path)
         self.assertEqual(len(rows), 3, rows)
@@ -183,7 +183,7 @@ class TestTupleKeyedResults(FeedHealthBase):
 
     def test_tuple_and_symbol_keys_do_not_collide(self):
         feeds._note_feed_health({("BTCUSD", "kraken"): {"error": "a"}})
-        feeds._note_feed_health({"BTCUSD": {"venue": "binance", "error": "b"}})
+        feeds._note_feed_health({"BTCUSD": {"venue": "commcoin", "error": "b"}})
         self.assertEqual(len(_rows(self.path)), 2)
 
     def test_tuple_keyed_recovery(self):

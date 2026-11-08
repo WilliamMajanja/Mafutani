@@ -4,7 +4,7 @@ means. Stdlib only.
 The problem
 -----------
 `scripts/seed.py` writes 1-minute bars from a seeded RNG for any symbol with
-no history, and they land in `candles_1m` beside a genuine Binance backfill.
+no history, and they land in `candles_1m` beside a genuine venue backfill.
 Nothing downstream could tell them apart, so a backtest over AAPL read a
 random walk and returned its Sharpe as though it measured a strategy.
 
@@ -38,7 +38,7 @@ __all__ = [
 
 # Venue names and upstream hosts whose output is a real observation.
 REAL_SOURCES = frozenset([
-    "binance", "coinbase", "kraken", "okx", "bybit",
+    "venue", "coinbase", "kraken", "okx", "bybit",
     "yahoo-chart", "stooq", "alphavantage", "fred", "cftc",
 ])
 

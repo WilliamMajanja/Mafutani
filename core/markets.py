@@ -36,7 +36,7 @@ REGIONS = {
         "tz": "Asia/Singapore",
         "open_utc": 1.0,    # 09:00 Singapore (SGT) in UTC hours
         "close_utc": 9.0,   # 17:00 Singapore (SGT) in UTC hours
-        "venues": ["TSE", "HKEX", "SGX", "ASX", "KRX", "NSE", "BINANCE", "COINBASE"],
+        "venues": ["TSE", "HKEX", "SGX", "ASX", "KRX", "NSE", "COINBASE"],
         "asset_classes": ["equity", "crypto", "fx", "index", "commodity"],
     },
 }

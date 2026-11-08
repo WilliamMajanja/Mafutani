@@ -271,7 +271,7 @@ class TestApiSurfacesTheVerdict(unittest.TestCase):
             " ('AAA','test','AAA',1,0.01,0.0001)")
         self.conn.executemany(
             "INSERT INTO candles_1m (symbol, ts, open, high, low, close,"
-            " volume, source) VALUES (?,?,?,?,?,?,?,'binance')",
+            " volume, source) VALUES (?,?,?,?,?,?,?,'commcoin')",
             [("AAA", BASE_TS + i, c * 1.001, c * 1.004, c * 0.996, c, 500.0)
              for i, c in enumerate(noisy_series(1200, drift=0.02))])
         self.conn.commit()
