@@ -2,10 +2,10 @@
 
 **Zero-dependency, stdlib-only Python platform for experimental trading, CommCoin/MFT (PiNet), and operator-guarded off-ramps.**
 
-[![stdlib-only](https://img.shields.io/badge/runtime-stdlib--only-1f6feb)](#zero-dependency-stdlib-only)
-[![python](https://img.shields.io/badge/python-3.x-3776AB)](#quick-start)
-[![chain](https://img.shields.io/badge/chain-CommCoin%2FMFT_experimental-f59e0b)](#pinet-on-raspberry-pi--sbc-commcoin-capture)
-[![license](https://img.shields.io/badge/license-see_LICENSE-lightgrey)](./LICENSE)
+![stdlib-only](https://img.shields.io/badge/runtime-stdlib--only-1f6feb)
+![python](https://img.shields.io/badge/python-3.x-3776AB)
+![chain](https://img.shields.io/badge/chain-CommCoin--MFT_experimental-f59e0b)
+![license](https://img.shields.io/badge/license-see_LICENSE-lightgrey)
 
 > **Status:** experimental / unaudited. Use in controlled environments. Read [SECURITY.md](./SECURITY.md) and [docs/POLICIES.md](./docs/POLICIES.md) before deployment.
 
