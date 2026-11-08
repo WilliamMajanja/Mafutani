@@ -136,16 +136,27 @@ class Wallet(object):
             "outputs": outputs,
             "memo": memo or "",
         }
-        # sign each input (each consumes one WOTS index in our wallet state? No -
-        # WOTS+ is per leaf; we use ONE wallet signature operation that advances
-        # index once and signs the tx sighash per input context? For correctness
-        # with our PQC API, sign_message signs a message and advances index once.
-        # Multiple inputs => multiple signatures/index uses. That's honest/costly.
-        # We'll sign per input.)
-        # Reload-safe: operate on in-memory then save after all succeed.
+        # Stateful PQC safety: each input signature consumes one WOTS+ leaf/index.
+        # Never reuse indexes; never restore stale wallet state/backups.
+        max_sigs = (1 << int(self.priv.get("h", pqc.TREE_HEIGHT)))
+        used = int(self.priv.get("next_index", 0))
+        need_sigs = len(tx["inputs"])
+        if need_sigs <= 0:
+            raise ValueError("no inputs to sign")
+        if used + need_sigs > max_sigs:
+            raise ValueError(
+                "insufficient PQC signature capacity (%s used, %s needed, %s max). "
+                "Rotate to a new wallet; do NOT reuse/restore old state." % (used, need_sigs, max_sigs))
+        # Sign all inputs, then persist advanced state atomically before returning tx.
+        # If save fails, the signed tx must NOT be used/broadcast.
         for i in range(len(tx["inputs"])):
             tx["inputs"][i]["sig"] = pqc.sign_message(self.priv, sighash(tx, i))
-            # pub already set
-        self.save()  # persists advanced next_index
+        try:
+            self.save()
+        except Exception as e:
+            raise ValueError(
+                "CRITICAL: signatures were generated but wallet state could not be saved (%s). "
+                "Do NOT broadcast the returned transaction. Inspect wallet file integrity and "
+                "PQC index state before any further signing." % e)
         tx["txid"] = txid_for(tx)
         return tx

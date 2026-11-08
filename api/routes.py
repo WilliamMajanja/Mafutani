@@ -5044,6 +5044,8 @@ class Router:
         if err:
             return _err(h, err, 400)
         body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true: CommCoin transfers may be irreversible; experimental/unaudited chain; verify recipient and amount", 400)
         to = str(body.get("to") or "").strip()
         amt = body.get("amount_mft")
         if not to or amt is None:
@@ -5224,7 +5226,9 @@ class Router:
             daraja = DarajaClient().status()
             cfg["daraja_configured"] = bool(daraja.get("configured"))
             cfg["daraja_b2c_ready"] = bool(daraja.get("b2c_ready"))
-            return _send_json(h, {"ok": True, "offramp": cfg})
+            cfg["reference_only"] = True
+            cfg["settlement_disclaimer"] = "Daraja request acceptance is not settlement. Reconciliation/callbacks, operator compliance (KYC/AML/sanctions/tax), and valid credentials/limits are required."
+            return _send_json(h, {"ok": True, "offramp": cfg, "disclaimer": cfg["disclaimer"]})
         except Exception as e:
             return _err(h, "off-ramp info unavailable: %s" % e, 503)
 
@@ -5400,10 +5404,13 @@ class Router:
         if not self._require_csrf(conn, h, sess): return True
         body, err = _read_json(h)
         if err: return _err(h, err, 400)
-        peer = (body or {}).get("peer") or (body or {}).get("url")
+        body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true: sync pull fetches and imports peer blocks (validated, tip-append); treat peers as untrusted", 400)
+        peer = body.get("peer") or body.get("url")
         if not peer: return _err(h, "peer URL required", 400)
         try:
-            res = self._pinet_node().pull(peer, max_blocks=int((body or {}).get("max_blocks") or 100))
+            res = self._pinet_node().pull(peer, max_blocks=int(body.get("max_blocks") or 100))
             ud = _row_to_dict(user)
             _audit(conn, ud["id"], "node.sync.pull", ud.get("tier",""), "node", {"peer": str(peer)[:200], "ok": res.get("ok")})
             return _send_json(h, res)
@@ -5425,7 +5432,10 @@ class Router:
         if not self._require_csrf(conn, h, sess): return True
         body, err = _read_json(h)
         if err: return _err(h, err, 400)
-        blocks = (body or {}).get("blocks") or []
+        body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true: chain import validates but mutates local chain state; treat peer data as untrusted", 400)
+        blocks = body.get("blocks") or []
         try:
             res = self._pinet_node().import_blocks(blocks)
             ud = _row_to_dict(user)

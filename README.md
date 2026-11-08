@@ -4,8 +4,8 @@
 
 [![stdlib-only](https://img.shields.io/badge/runtime-stdlib--only-1f6feb)](#zero-dependency-stdlib-only)
 [![python](https://img.shields.io/badge/python-3.x-3776AB)](#quick-start)
-[![chain](https://img.shields.io/badge/chain-CommCoin%2FMFT%20experimental-f59e0b)](#commcoinmft--pinet)
-[![license](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](./LICENSE)
+[![chain](https://img.shields.io/badge/chain-CommCoin%2FMFT_experimental-f59e0b)](#pinet-on-raspberry-pi--sbc-commcoin-capture)
+[![license](https://img.shields.io/badge/license-see_LICENSE-lightgrey)](./LICENSE)
 
 > **Status:** experimental / unaudited. Use in controlled environments. Read [SECURITY.md](./SECURITY.md) and [docs/POLICIES.md](./docs/POLICIES.md) before deployment.
 
