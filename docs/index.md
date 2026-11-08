@@ -1,36 +1,45 @@
 # Mafutani Documentation
 
-> Zero-dependency, stdlib-only platform. Experimental trading + Mafutani Chain (CommCoin/MFT) features.
+> **Mafutani** is a zero-dependency, stdlib-only Python platform for experimental trading, **CommCoin/MFT (PiNet)**, and operator-guarded off-ramps.
 
-## Overview
-Mafutani is a zero-dependency platform built with Python stdlib only (`http.server`, `sqlite3`, `urllib`, etc.). It includes trading/automation (paper-first, gated live controls), a web UI, terminal, admin/auth/audit tooling, and **experimental** Mafutani Chain capabilities (MFT/CommCoin): hash-based PQC signatures, SBC-mineable PoW, deterministic epoch seeding/token expiry replacement, Merkle commitments/proofs, a node compositor (Wayland-like model + web desktop), locale/i18n, and admin-guarded off-ramp bridges.
+## Current Stance
 
-## Current Stance (summary)
-- **No external runtime dependencies** in the app tree; enforced by `tests/test_zero_dependency.py`.
-- **Trading:** paper by default; live paths are gated/audited and risk-managed — not financial advice.
-- **Mafutani Chain / MFT / CommCoin:** experimental, unaudited. 182-day epoch; **100,000,000,000 MFT** seed per epoch; outputs expire and are replaced by deterministic seeding rules (see [Mafutani Chain](MAFUTANI_CHAIN.md)).
-- **Valuation:** `$100,000` per CommCoin/MFT is **reference/config metadata only** (`MAFUTANI_COIN_USD_VALUE`), not a market price or guarantee.
-- **Payments:** Daraja/M-Pesa and Minima funding flows are admin-guarded; acceptance != settlement; operator owns compliance and secure operations.
-- **Security:** layered controls exist (auth/admin/CSRF, audit logging, approval-before-execute funding lifecycle, risk checks), but privileged-attack resistance is **not absolute**. Review residual risks and operator mitigations in [Policies](POLICIES.md).
+- **Stdlib-only runtime** (enforced by `tests/test_zero_dependency.py`). No npm build for the core app.
+- **Trading:** paper default; live paths gated/audited. Not financial advice.
+- **CommCoin/MFT:** experimental, unaudited chain (SHAKE256 PoW, hash-based PQC WOTS+/Merkle, 182-day epochs, **100B MFT** deterministic seed, token expiry/replacement, Merkle proofs, PiNet SBC capture/sync). `$100,000/CommCoin` is **reference/config metadata only** — not a market price or guarantee.
+- **Off-ramps:** CommCoin → M-Pesa (Daraja) user/admin flows when operator-configured; **acceptance ≠ settlement**. Zero-dep KYC hooks are workflow plumbing, not legal compliance.
+- **Security:** layered controls exist, but privileged-attack resistance is **not absolute**. See [Policies](POLICIES.md) and [SECURITY.md](../SECURITY.md).
 
-## Docs
-- [Policies & security stance](POLICIES.md)
-- [Mafutani Chain (MFT/CommCoin)](MAFUTANI_CHAIN.md)
-- [Minima node findings](minima-node-findings.md)
-- [RFCs](rfcs/)
-- [RFFs](rffs/)
+## Read First
+
+| Doc | Purpose |
+|---|---|
+| [../README.md](../README.md) | Quick start, config, API overview, project layout |
+| [POLICIES.md](POLICIES.md) | Risk, payments/KYC, security controls & residual risks |
+| [MAFUTANI_CHAIN.md](MAFUTANI_CHAIN.md) | Chain, PQC, Merkle, PiNet, compositor, off-ramp/KYC APIs |
+| [../SECURITY.md](../SECURITY.md) | Vulnerability reporting & sensitive areas |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contribution workflow & quality checklist |
+| [../CHANGELOG.md](../CHANGELOG.md) | Notable changes |
+
+## Design Records
+
+- [RFCs](rfcs/) and [../rfcs](../rfcs/) (mirrored copies may exist)
+- [RFFs](rffs/) and [../rffs](../rffs/)
 - [Research: Sub-agent trading](research-subagent-trading.md)
+- [MAFUTANI_RFC_RFF_SUMMARY.md](../MAFUTANI_RFC_RFF_SUMMARY.md)
 
 ## Quick Start
+
 ```bash
 python3 scripts/seed.py
 python3 app.py
-# optional: disable feed for local/CI
-# PORT=8000 MAFUTANI_NO_FEED=1 python3 app.py
+# SBC/local: PORT=8000 MAFUTANI_NO_FEED=1 MAFUTANI_PINET_ROUNDS=100000 python3 app.py
 ```
 
-## Key UI Areas
-Markets, Chain (`#/chain`), Desktop (`#/desktop`), Wallet, Funding (`#/funding`), Policies (`#/policies`), plus trading/admin views depending on role/config.
+## UI Areas
+
+Markets, Chain (`#/chain`), Desktop (`#/desktop`), Wallet, Policies (`#/policies`), plus trading/admin views depending on role/config.
 
 ## GitHub Pages
-This site is published via GitHub Pages. Release/package links may be added from workflows/releases.
+
+Published via GitHub Pages workflows when configured (workflow files may require a token with `workflow` scope to push). See repository Actions/settings.

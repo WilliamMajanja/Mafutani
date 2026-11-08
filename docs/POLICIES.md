@@ -1,56 +1,57 @@
-# Mafutani Policies
+# Mafutani Policies & Security Stance
 
-**Effective scope:** applies to the Mafutani platform, APIs, web UI, terminal, Mafutani Chain (MFT/CommCoin), node/compositor desktop, wallet/mining features, Minima funding ledger, and integrated payment/off-ramp services (including M-Pesa via Daraja when configured).
+**Scope:** Mafutani platform, APIs, web UI, terminal, CommCoin/MFT chain, PiNet/node sync, compositor desktop, wallet/mining, M-Pesa/Daraja off-ramp, and zero-dependency KYC workflow hooks.
 
-> These policies are operational safeguards and disclosures. They are **not legal advice**. Operators deploying Mafutani in a jurisdiction must obtain qualified legal, tax, and compliance advice.
+> Operational safeguards and disclosures — **not legal advice**. Operators must obtain qualified legal, tax, and compliance advice for their jurisdictions.
 
 ## 1. Risk & No-Advice Disclaimer
-- **Not financial, investment, trading, legal, or tax advice.** Analytics, signals, backtests, arbitrage views, chain data, prices, proofs, and outputs are informational/experimental.
-- **Paper trading is the default** for trading features. Live trading is gated/audited and requires explicit operator enablement/controls; a live order can result in real loss.
-- **Digital assets / MFT carry extreme risk.** You may lose all value. Transfers may be irreversible. Software bugs, consensus failures, key loss, stale PQC state reuse, network issues, exchange/payment failures, fraud, and regulatory action can cause total loss.
-- **No guarantee of value, liquidity, tradability, or convertibility.** The configured CommCoin/MFT reference value (default **$100,000 USD** per coin, `MAFUTANI_COIN_USD_VALUE`) is **reference/config metadata only** — not a market price, quote, guarantee, offer, or payout promise.
 
-## 2. Mafutani Chain / MFT / CommCoin Policy
-- Chain/node/compositor/wallet/miner code is **experimental and not externally audited**. Use at your own risk.
-- Consensus is deterministic by code (see `chain/consensus.py`, `chain/ledger.py`): 182-day epochs, **100,000,000,000 MFT** epoch seed (one deterministic seed tx per epoch window/rules), and token expiry/replacement rules as implemented. Monetary/consensus changes require explicit, versioned migration and review.
-- **Post-quantum signatures are hash-based** (`MFT-PQC-WOTS-MERKLE-SHAKE256-v1`, WOTS+/Merkle over SHAKE256). They are a real hash-based PQC approach but **not externally audited**. Wallet state is **stateful**: never reuse signature indexes and never restore old wallet backups/state.
-- **Merkle abstractions/proofs** (tx/block/UTXO/commitments) are implementation features for integrity/proof workflows; they do not eliminate consensus, implementation, or operational risk.
-- Mining is permissionless in protocol design but operationally constrained by resources/network; no profitability is implied.
+- **Not financial, investment, trading, legal, or tax advice.** Outputs are informational/experimental.
+- **Paper trading is default** for trading features. Live trading is gated/audited; real loss is possible.
+- **Digital assets / CommCoin (MFT) carry extreme risk.** Total loss possible. Transfers may be irreversible. Bugs, consensus/PQC failures, key loss, stale PQC state reuse, network/payment failures, fraud, and regulatory action can cause loss.
+- **No guarantee of value, liquidity, convertibility, or stability.** The configured CommCoin/MFT reference value (default **$100,000 USD**, `MAFUTANI_COIN_USD_VALUE`) is **reference/config metadata only** — not a market price, quote, guarantee, offer, or payout promise.
+- **Design goals are not guarantees.** Deterministic epoch seeding/expiry replacement, SBC/PiNet capture, validation controls, and “no unnecessary token loss / no nonsense hacks” are design intents and technical controls — **not** proof of security, stability, or economic outcomes.
 
-## 3. Payments, Minima Funding, M-Pesa / Daraja, and Off-Ramps
-- **Minima funding ledger** is an internal auditable liability/withdrawal workflow, not a mainnet minter. Withdrawals follow explicit lifecycle controls (request/reserve, approval, node-backed execution paths as implemented) and require a funded/reachable node where applicable.
-- **M-Pesa/Daraja** is an admin-guarded payout bridge when configured by the operator with valid credentials/certificates and compliant processes. It uses stdlib networking and requires explicit confirmation for payout actions.
-- **Daraja credentials/secrets** must be stored in environment/secret stores, never in source control, logs, or client responses. `SecurityCredential` is accepted as an operator pre-encrypted value in the zero-dependency design — operators remain responsible for correct encryption/material handling.
-- **Fiat payout success is not guaranteed** by chain/ledger state. Payout acceptance is not settlement; callbacks/reconciliation, sufficient float/limits, valid recipient details, idempotency, and compliance checks are required.
-- Operators are responsible for KYC/AML/sanctions screening, tax handling, consumer disclosures, dispute processes, and compliance with Safaricom, CBK, communications/data laws, and all applicable jurisdictions.
+## 2. CommCoin / MFT / PiNet Policy
 
-## 4. Security Controls & Privileged-Attack Resistance (current stance)
+- Chain/node/compositor/wallet/miner/PiNet code is **experimental and not externally audited**.
+- Consensus is deterministic by code (`chain/consensus.py`, `chain/ledger.py`): 182-day epochs, **100,000,000,000 MFT** epoch seed, token expiry/replacement as implemented. Changes require explicit, versioned migration/review.
+- **PQC (hash-based):** `MFT-PQC-WOTS-MERKLE-SHAKE256-v1` — **not externally audited**, **stateful**. Never reuse signature indexes; never restore stale wallet backups/state.
+- **PiNet sync/import:** block export/import/pull use stdlib JSON/HTTP and validated tip-append import in the current model. Treat peer data as untrusted; harden for adversarial/public P2P use.
 
-Mafutani implements layered controls intended to reduce common web/admin/operational risks, including **privileged/key-compromise-style attack vectors seen in the crypto industry** (including high-profile exchange incidents). This section describes controls **as implemented/design intent** and residual gaps honestly; it does **not** claim immunity and does **not** fabricate incident-specific details.
+## 3. M-Pesa / Daraja, Off-ramps, and Zero-dep KYC
 
-### Controls present (verify in code/config before relying on them)
-- **Authentication & session controls:** session-based auth; CSRF protection on state-changing flows; session cookies use `HttpOnly; SameSite=Lax` and add `Secure` when served appropriately (see `_session_cookie_flags` / auth helpers).
-- **Authorization:** admin-gated sensitive operations (including funding admin actions and Daraja status/withdraw routes); audit logging for important transitions/actions.
-- **2FA capability:** 2FA endpoints exist (`/api/auth/2fa*`) — operators/users must enable and enforce step-up use according to deployment policy.
-- **Funding withdrawal lifecycle (Minima):** request records/reserves liability, approval is a separate explicit step, and execution is node-backed; reservation/failure semantics are designed to avoid silent fund movement and to fail loudly on node/refusal conditions.
-- **Daraja payouts:** admin + CSRF + audit + explicit `confirm:true` required for payout actions; configuration/status endpoints avoid exposing secrets.
-- **Trading/risk controls:** paper/live separation, risk/rate-limit/fingerprinting and allowlist/limit mechanisms exist in relevant paths (review implementation for exact enforcement scope).
-- **Key/file handling:** server-managed MFT wallet files are written with restrictive permissions (`chmod 0o600`); PQC state is stateful and must not be reused/restored from stale backups.
-- **Zero-dependency supply chain reduction:** stdlib-only runtime reduces third-party package dependency surface (not a substitute for secure coding, review, or infrastructure hardening).
+- **M-Pesa/Daraja** is operator-configured (third-party). User/admin off-ramp flows require auth/CSRF/audit and explicit `confirm:true` as implemented. **Acceptance is not settlement.** Callbacks/reconciliation, idempotency, float/limits, recipient validity, and compliance are required.
+- **Secrets:** store Daraja credentials in secret stores/env; never in source control, logs, or client responses. `SecurityCredential` handling is operator-controlled.
+- **Zero-dependency KYC hooks** (`minting/kyc.py`, `/api/kyc/*`) provide workflow status, hashed document references, admin review, and optional off-ramp gating. **Not** a substitute for legal/regulatory compliance, qualified identity verification, sanctions/AML screening, or professional advice.
 
-### Residual imbalances / risks (operator must mitigate)
-- **Single-admin / insufficient dual control:** admin+CSRF+`confirm` is not the same as enforced maker-checker/dual authorization. High-value funding approvals and Daraja payouts may be vulnerable to a single privileged account/session compromise unless operators add independent approval, mandatory step-up 2FA, hardware-backed auth, allowlists, velocity limits, withdrawal delays/cooling-off, out-of-band confirmation, and separation of duties.
-- **Server-side key/wallet custody:** server-managed wallets and payout credentials create custody risk. Production deployments should use HSMs/secret stores, encrypted key management, minimal-access hosts, backup controls that preserve PQC state safely, and incident response procedures.
-- **2FA not universally enforced as step-up:** 2FA capability exists, but operators must verify and enforce step-up 2FA for admin/payout/withdrawal actions in their deployment process.
-- **Compositor action model:** compositor actions are a shared service/UI model; treat as an operational surface and review authorization/session assumptions before exposing beyond trusted contexts.
-- **Chain/PQC/protocol implementation risk:** MFT chain, PQC, Merkle proofs, and node components are experimental/unaudited; consensus/crypto/serialization bugs can have security or fund-loss impact.
-- **Third-party/payment/network outages:** Daraja, Minima nodes, data feeds, and networks are failure-prone; reconciliation, idempotency, timeout handling, and monitoring are required.
-- **Public deployment hardening:** input validation/rate limits/local assumptions are insufficient alone. Use TLS, reverse-proxy/WAF controls, hardened OS/runtime, secret rotation, observability, backups, and tested incident playbooks.
+## 4. Security Controls & Privileged-Attack Resistance (honest stance)
 
-## 5. Data, Locale, and User Protection
-- Global locale/i18n is supported as a capability (`core/i18n.py`, locale files, `/api/i18n*`), but legal/compliance notices must be reviewed per locale/jurisdiction.
-- Collect minimum necessary personal/payment data. Protect logs from secrets and sensitive personal data. Follow applicable privacy/data-protection laws.
+Layered controls aim to reduce common web/admin/operational risks, including privileged/key-compromise-style vectors seen in the crypto industry. **No immunity claimed; no fabricated incident details.**
+
+### Controls present (verify in code/config)
+- Session auth, CSRF on mutating flows, `HttpOnly`/`SameSite` cookies (and `Secure` where applicable).
+- Admin-gated sensitive operations (Daraja/off-ramp admin actions, KYC review, chain import/sync pull, capture/admin chain actions as implemented).
+- Audit logging for key transitions.
+- 2FA capability exists (`/api/auth/2fa*`) — operators must enforce step-up for sensitive actions by deployment policy.
+- Explicit `confirm:true` for payouts/off-ramp/KYC submit paths where implemented.
+- Restrictive permissions for server-managed wallet files where implemented; stateful PQC warnings.
+- Stdlib-only runtime reduces third-party dependency surface (not a substitute for review/hardening).
+
+### Residual risks (operator must mitigate)
+- **Insufficient dual control:** admin+CSRF+confirm ≠ enforced maker-checker. Add separation of duties, step-up 2FA, allowlists, velocity limits, delays/cooling-off, out-of-band confirmation, and reconciliation.
+- **Custody/secret risk:** use secret stores/HSM-backed processes where appropriate; protect backups without breaking PQC state safety.
+- **2FA not universally enforced as step-up:** verify and enforce.
+- **Experimental/unaudited components:** chain, PQC, Merkle, PiNet, compositor, off-ramp/KYC integrations.
+- **Third-party/network risk:** Daraja, peers, feeds, infrastructure. Monitor, reconcile, handle timeouts/idempotency.
+- **Deployment hardening:** TLS, reverse proxy/WAF, OS/runtime hardening, logging/observability (no secrets), backups, incident playbooks.
+
+## 5. Data, Locale, User Protection
+
+- i18n is supported (`core/i18n.py`, locale files, `/api/i18n*`); legal/compliance notices must be localized and reviewed per jurisdiction.
+- Collect minimum necessary data. Protect logs from secrets and sensitive personal data. Follow applicable privacy/data-protection laws.
 
 ## 6. Change Control
-- Changes to consensus, monetary policy, key custody/PQC handling, payout flow, privileged controls, or live-trading gates require code review, tests, migration notes, and updated policy/docs.
-- Core application code is zero-dependency by design. New runtime dependencies must not be introduced without an explicit, reviewed decision and updated zero-dependency enforcement.
+
+- Consensus, monetary policy, PQC/key custody, payout/off-ramp, KYC/admin controls, and live-trading gates require review, tests, migration notes, and updated docs.
+- Core app remains **stdlib-only**; dependency additions require explicit reviewed decisions and updated enforcement.

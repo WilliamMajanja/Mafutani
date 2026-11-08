@@ -1,51 +1,69 @@
-# Mafutani Chain (MFT / CommCoin)
+# Mafutani Chain (CommCoin / MFT)
 
-Mafutani Chain is a **zero-dependency**, stdlib-only blockchain implementation in `chain/`, with node services in `node/` and a Wayland-like compositor desktop in `compositor/`/`web`. It is **experimental and not externally audited**.
+Mafutani Chain is a **zero-dependency**, stdlib-only blockchain in `chain/`, with node/PiNet services in `node/`, and a Wayland-like compositor desktop in `compositor/`/`web`. It is **experimental and not externally audited**.
 
 ## Consensus & Tokenomics (normative: `chain/consensus.py`, `chain/ledger.py`)
+
 - **Coin:** MFT (alias **CommCoin**), `1 coin = 10^8` base units. Config: `MAFUTANI_COIN_SYMBOL`, `MAFUTANI_COIN_NAME`, `MAFUTANI_COIN_ALIAS`.
-- **Reference valuation (metadata only):** `MAFUTANI_COIN_USD_VALUE` (default `100000`, i.e. **$100,000 USD per coin reference value**). This is configured/reference display/accounting metadata — **not a market price, quote, guarantee, offer, or financial advice**.
+- **Reference valuation (metadata only):** `MAFUTANI_COIN_USD_VALUE` (default `100000`, i.e. **$100,000 USD per coin reference value**). Config/reference display/accounting metadata — **not** a market price, quote, guarantee, offer, liquidity promise, stability guarantee, or financial advice.
 - **Epoch:** `182 days` (6 months) from fixed genesis reference.
-- **Epoch seeding:** each epoch may include **exactly one** deterministic `epoch_seed` transaction minting **100,000,000,000 MFT (100B)**. Seed outputs are created at the current epoch.
-- **Token expiry / replacement:** outputs expire after `TOKEN_LIFETIME_EPOCHS` (default `1`, i.e. at the next epoch boundary as implemented). **Expired outputs are not spendable**. The per-epoch seed replaces expiring supply under deterministic rules for all nodes, avoiding unbounded stale-token accumulation without discretionary minting.
-- **PoW:** `SHAKE256(header||nonce)` compared to an adjustable target (`chain.consensus.meets_target`). SBC-friendly defaults (pure-Python mineable), difficulty adjusts by interval. Not designed to compete with ASIC networks.
-- **Storage/model:** separate SQLite DB (`MAFUTANI_CHAIN_DB`, default `chain/mft.db`). UTXO model; amounts stored as integer strings (safe beyond SQLite signed 64-bit). Block headers support Merkle/state-root abstractions (v2+ fields) while preserving legacy compatibility for existing seeded/genesis-era blocks as implemented.
+- **Epoch seeding:** each epoch may include **exactly one** deterministic `epoch_seed` transaction minting **100,000,000,000 MFT (100B)**.
+- **Token expiry / replacement:** outputs expire after `TOKEN_LIFETIME_EPOCHS` (default `1`). **Expired outputs are not spendable** by consensus rules. The per-epoch seed replaces supply deterministically, avoiding unbounded stale accumulation **by protocol design** (not a guarantee of economic outcome or user safety).
+- **PoW:** `SHAKE256(header||nonce)` vs adjustable target (`chain.consensus.meets_target`). SBC-friendly defaults (pure-Python mineable), difficulty adjusts by interval. Not designed to compete with ASIC networks.
+- **Storage/model:** separate SQLite DB (`MAFUTANI_CHAIN_DB`, default `chain/mft.db`). UTXO model; amounts stored as integer strings.
 
 ## Cryptography (Hash-based PQC approach)
-Implemented in `chain/pqc.py` (stdlib only): **`MFT-PQC-WOTS-MERKLE-SHAKE256-v1`** (WOTS+ with Winternitz `w=16`, authenticated by a Merkle tree, SHAKE256 hashes).
 
-- **Design intent:** hash-based signatures are a conservative post-quantum approach relative to RSA/ECDSA assumptions.
-- **Important limitations:** custom implementation for this project, **not externally audited**. Wallet operation is **stateful** (WOTS one-time leaves; wallet tracks `next_index`). **Never reuse a signature index** and **never restore an old wallet backup/state**. Default height (`H=10`) gives 1024 signatures/key; rotate keys before exhaustion.
+Implemented in `chain/pqc.py` (stdlib only): **`MFT-PQC-WOTS-MERKLE-SHAKE256-v1`** (WOTS+ / Winternitz `w=16`, Merkle-authenticated, SHAKE256).
+
+- **Design intent:** conservative hash-based signatures relative to RSA/ECDSA assumptions.
+- **Limitations:** custom implementation, **not externally audited**. Wallet operation is **stateful** (`next_index`). **Never reuse a signature index** and **never restore an old wallet backup/state**. Default height (`H=10`) gives 1024 signatures/key; rotate before exhaustion.
 
 ## Merkle Abstractions & Proofs
-Implemented in `chain/merkle.py` and `node/proofs.py` (stdlib only):
-- Generic binary Merkle tree (SHA3-256/domain separation, deterministic caller ordering).
-- Tx/block/state/UTXO-style commitments and inclusion proofs via API/service.
-- Purpose: integrity/proof workflows and composable abstractions across chain state — **not** a substitute for consensus validation, audits, or secure operations.
 
-## Node Services
-`node/` provides node-level components beyond raw chain DB: mempool staging (`node/mempool.py`, admission is not consensus authority), Merkle proof service (`node/proofs.py`), and transport-agnostic P2P/sync placeholders where present.
+`chain/merkle.py`, `node/proofs.py` (stdlib only): binary Merkle trees (SHA3-256, domain separation), tx/block/UTXO/state commitments, inclusion proofs, and proof verification. Proofs support integrity workflows — **not** a substitute for consensus validation, audits, or secure operations.
+
+## PiNet / Node Services (SBC-friendly)
+
+`node/` provides:
+- `node/mempool.py`: staging mempool (admission not consensus authority).
+- `node/proofs.py`: proof service.
+- `node/sync.py`: block/header export, validated **tip-append** import, peer pull over stdlib HTTP JSON.
+- `node/pinet.py`: PiNet SBC capture/status (bounded mining rounds, mempool drain with validation, safety metadata).
+
+**Sync model note:** current import/pull is pragmatic and SBC-friendly (tip extension). Treat peer data as untrusted; harden for adversarial/public P2P before production.
 
 ## Wayland-like Node Compositor Desktop
-`compositor/` implements a **Wayland-inspired** in-process model (not libwayland, not DRM/KMS): `wl_display`/registry/globals, `wl_compositor`+surface, output, seat/pointer/keyboard abstractions, `xdg_wm_base`/toplevel/popup semantics, commit/damage, scene graph, and desktop shell tasks/workspaces. `compositor/service.py` exposes state/actions for the web renderer at `#/desktop` and compositor/node APIs.
 
-## M-Pesa / Daraja Withdrawals
-Implemented in `minting/daraja.py` via stdlib `urllib`. Admin-only endpoints:
-- `GET /api/admin/daraja/status` — config presence (no secrets returned).
-- `POST /api/admin/daraja/withdraw` — B2C payout request. Requires admin, CSRF, audit, and `confirm:true`. Requires operator configuration (`DARAJA_CONSUMER_KEY/SECRET`, shortcode, initiator, `DARAJA_SECURITY_CREDENTIAL` pre-encrypted per Safaricom requirements, callbacks).
+`compositor/` implements a **Wayland-inspired in-process model** (not libwayland/DRM/KMS): display/registry/globals, compositor/surface, output, seat/pointer/keyboard abstractions, `xdg_wm_base`/toplevel semantics, commit/damage, scene graph, desktop shell. `compositor/service.py` exposes state/actions for the web renderer at `#/desktop`.
 
-**Operational note:** Fiat settlement depends on Daraja callbacks/reconciliation, float, recipient validity, idempotency, and compliance. Request acceptance is not final settlement.
+## M-Pesa / Daraja Off-ramp & Zero-dep KYC Hooks
+
+- `minting/mpesa_offramp.py` + `minting/daraja.py`: CommCoin → M-Pesa request flow and Daraja B2C integration (stdlib `urllib`). Requires operator config, auth/CSRF/audit, explicit `confirm:true`. **Request acceptance is not settlement.**
+- `minting/kyc.py`: zero-dependency KYC workflow hooks (status, hashed document references, admin review/audit, optional off-ramp gate `MAFUTANI_KYC_REQUIRED_FOR_OFFRAMP`). **Technical plumbing only** — not legal/regulatory compliance, qualified identity verification, or sanctions/AML screening.
 
 ## API Surface (current)
-- Chain: `GET /api/chain/info`, `GET /api/chain/blocks`, `GET /api/chain/balance?address=...`, `GET /api/chain/wallets`, `POST /api/chain/wallet/create`, `POST /api/chain/tx/send`, `POST /api/chain/mine` (admin), `POST /api/chain/epoch/seed` (admin)
-- Merkle/proofs/commitments: `GET /api/chain/proof/tx`, `GET /api/chain/commitment`
-- Node: `GET /api/node/status`
-- Compositor: `GET /api/compositor`, `POST /api/compositor/action`
-- Locale/i18n: `GET /api/i18n`, `GET /api/i18n/messages?lang=...`
-- Policies: `GET /api/policies`
-- Admin Daraja: `GET /api/admin/daraja/status`, `POST /api/admin/daraja/withdraw`
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/chain/info` | chain status, epoch, reference metadata |
+| GET | `/api/chain/blocks` | recent blocks |
+| GET | `/api/chain/balance?address=...` | address balance |
+| GET/POST | wallet/tx/mine/seed endpoints | see `api/routes.py` for exact paths/auth |
+| GET | `/api/chain/proof/tx`, `/api/chain/commitment` | Merkle/proof data |
+| POST | `/api/chain/proof/verify` | verify proof payload |
+| GET | `/api/chain/export`, `/api/chain/headers` | sync/export (range-limited) |
+| POST | `/api/chain/import` | admin+CSRF, validated tip-append |
+| GET | `/api/node/status`, `/api/node/pinet`, `/api/node/mempool` | node/PiNet status |
+| POST | `/api/node/pinet/capture` | auth+CSRF, bounded SBC capture |
+| POST | `/api/node/tx/submit` | auth+CSRF, validated submit |
+| POST | `/api/node/sync/pull` | admin+CSRF, peer pull |
+| GET/POST | `/api/compositor`, `/api/compositor/action` | compositor desktop model |
+| GET/POST | `/api/offramp/mpesa*`, admin offramp | CommCoin → M-Pesa |
+| GET/POST | `/api/kyc/*`, admin KYC | zero-dep workflow hooks |
 
 See `api/routes.py` for authoritative dispatch and auth requirements.
 
 ## Warnings
-This chain, PQC, wallet, node, compositor, and payment integration code is for controlled/experimental use. Do not treat balances, proofs, or reference values as guaranteed financial outcomes. Secure hosts, backups, PQC wallet state, credentials, and admin access. Review [Policies & security stance](POLICIES.md) for privileged-attack controls and residual imbalances.
+
+Experimental, unaudited software. Do not treat balances/proofs/reference values as guaranteed financial outcomes. Secure hosts, backups, PQC wallet state, credentials, and admin access. No guarantees of stability, value, or absence of hacks.

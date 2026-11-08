@@ -1,3 +1,11 @@
+# HANDOFF — Current Status (Documentation Snapshot)
+
+> **Read this first (current):** Mafutani is **stdlib-only** and now centered on **CommCoin/MFT (PiNet, SBC block capture)** with **M-Pesa/Daraja off-ramp** and **zero-dependency KYC workflow hooks**. **Minima and Binance integrations are removed** from the active runtime.  
+> Chain/PQC/PiNet/off-ramp/KYC are **experimental and unaudited**. `$100,000/CommCoin` is **reference/config metadata only** (not a market price/guarantee). Daraja acceptance ≠ settlement; KYC hooks ≠ legal compliance.  
+> See [README.md](README.md), [docs/POLICIES.md](docs/POLICIES.md), [docs/MAFUTANI_CHAIN.md](docs/MAFUTANI_CHAIN.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 # Handoff — Current Stance (updated 2026-11-08)
 
 > **Status note (supersedes where conflicting):** This repository now includes **experimental Mafutani Chain / CommCoin (MFT)** features alongside the trading platform. Core stance: **stdlib-only** (app tree enforced by `tests/test_zero_dependency.py`), paper-trading default, live/gated controls, and explicit operator responsibility for compliance and secure deployment.
