@@ -105,22 +105,49 @@ def prove(tree, index):
             "path": path, "root": tree["root"]}
 
 
-def verify(proof, leaf=None, domain_node="node"):
-    """Verify a Merkle inclusion proof."""
+PROOF_SCHEMA_VERSION = "mft-merkle-proof/v1"
+ALLOWED_DOMAINS = {"leaf","node","tx","txnode","utxo","utxonode","block","commit","chain-info","utxo-set"}
+
+def _is_hex64(x):
+    return isinstance(x, str) and len(x) == 64 and all(c in "0123456789abcdefABCDEF" for c in x)
+
+def verify(proof, leaf=None, domain_node="node", max_path=64):
+    """Verify a Merkle inclusion proof (stdlib-only). Experimental/unaudited.
+    Returns bool. Use verify_detailed() for reasons."""
+    return bool(verify_detailed(proof, leaf=leaf, domain_node=domain_node, max_path=max_path).get("valid"))
+
+def verify_detailed(proof, leaf=None, domain_node="node", max_path=64):
+    """Strict verification with explicit reasons. Not a security/compliance guarantee."""
     try:
-        cur = proof["leaf"] if leaf is None else (
-            leaf if (isinstance(leaf, str) and len(leaf) == 64) else leaf_hash_hex(leaf))
-        if isinstance(cur, str):
-            cur = cur.lower()
-        for step in proof.get("path") or []:
-            sib = step["hash"]
-            if step["side"] == "R":
+        if not isinstance(proof, dict):
+            return {"valid": False, "reason": "proof must be an object"}
+        if domain_node and str(domain_node) not in ALLOWED_DOMAINS:
+            return {"valid": False, "reason": "domain not allowed"}
+        if leaf is None:
+            cur = proof.get("leaf")
+        else:
+            cur = leaf if _is_hex64(leaf) else leaf_hash_hex(leaf)
+        if not _is_hex64(cur): return {"valid": False, "reason": "invalid leaf hash"}
+        root = proof.get("root")
+        if not _is_hex64(root): return {"valid": False, "reason": "invalid root hash"}
+        path = proof.get("path") or []
+        if not isinstance(path, list): return {"valid": False, "reason": "invalid path"}
+        if len(path) > int(max_path): return {"valid": False, "reason": "path too long"}
+        cur = cur.lower()
+        for step in path:
+            if not isinstance(step, dict): return {"valid": False, "reason": "invalid path step"}
+            side = step.get("side")
+            sib = step.get("hash")
+            if side not in ("L","R") or not _is_hex64(sib): return {"valid": False, "reason": "invalid path step"}
+            if side == "R":
                 cur = node_hash_hex(cur, sib, domain_node)
             else:
                 cur = node_hash_hex(sib, cur, domain_node)
-        return cur == str(proof.get("root", "")).lower()
-    except Exception:
-        return False
+        ok = cur == str(root).lower()
+        return {"valid": ok, "reason": "ok" if ok else "root mismatch", "schema_version": PROOF_SCHEMA_VERSION,
+                "domain_node": str(domain_node)}
+    except Exception as e:
+        return {"valid": False, "reason": "verification error"}
 
 
 def commitment(obj, domain="commit"):

@@ -119,10 +119,14 @@ class PiNetNode(object):
 
     def verify_proof(self, proof):
         from chain import merkle
-        domain = "txnode" if (proof or {}).get("mrkl") else "node"
-        # tx proofs use txnode domain in this implementation
-        ok = merkle.verify(proof or {}, domain_node=proof.get("domain_node") or "txnode")
-        return {"ok": bool(ok), "proof": proof}
+        proof = proof or {}
+        domain_node = str(proof.get("domain_node") or ("txnode" if proof.get("mrkl") else "txnode"))
+        if hasattr(merkle, "verify_detailed"):
+            detail = merkle.verify_detailed(proof, domain_node=domain_node)
+            return {"ok": bool(detail.get("valid")), "detail": detail,
+                    "disclaimer": "Proof verification is experimental/unaudited; not a legal/compliance/industry certification."}
+        ok = merkle.verify(proof, domain_node=domain_node)
+        return {"ok": bool(ok), "disclaimer": "Proof verification is experimental/unaudited."}
 
 
 # process-local node cache keyed by db path (lightweight; chain has its own sqlite conn)

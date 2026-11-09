@@ -24,6 +24,11 @@ from hashlib import sha3_256
 from chain import consensus, pqc
 
 DB_PATH_DEFAULT = os.path.join(os.path.dirname(__file__), "mft.db")
+MAX_BLOCK_TXS = 5000
+MAX_TX_INPUTS = 256
+MAX_TX_OUTPUTS = 256
+MAX_MEMO_BYTES = 512
+MAX_SCRIPT_BYTES = 65536
 
 
 class ConsensusError(Exception):
@@ -320,6 +325,16 @@ class Chain(object):
         inputs = tx.get("inputs") or []
         if not outputs:
             raise ConsensusError("tx must have outputs")
+        if len(outputs) > MAX_TX_OUTPUTS: raise ConsensusError("too many outputs")
+        if len(inputs) > MAX_TX_INPUTS: raise ConsensusError("too many inputs")
+        memo = tx.get("memo", "")
+        if isinstance(memo, str) and len(memo.encode("utf-8", "replace")) > MAX_MEMO_BYTES:
+            raise ConsensusError("memo too large")
+        seen_inputs = set()
+        for inp in inputs:
+            k = (str(inp.get("tx")), int(inp.get("n", -1)))
+            if k in seen_inputs: raise ConsensusError("duplicate input in tx")
+            seen_inputs.add(k)
         out_sum = 0
         for o in outputs:
             v = int(o["v"])
@@ -396,6 +411,21 @@ class Chain(object):
         txids = [txid_for(tx) for tx in txs]
         if merkle_root(txids) != block.get("mrkl"):
             raise ConsensusError("merkle root mismatch")
+        computed_hash = block_hash(block)
+        if block.get("hash") and str(block.get("hash")).lower() != computed_hash:
+            raise ConsensusError("block hash mismatch")
+        if len(txs) > MAX_BLOCK_TXS:
+            raise ConsensusError("too many txs in block")
+        seen_txids = set()
+        for tid in txids:
+            if tid in seen_txids: raise ConsensusError("duplicate txid in block")
+            seen_txids.add(tid)
+        # Difficulty enforcement for tip-extension (consensus hardening). Prevents easy-bits bypass.
+        # Genesis and non-standard imports are constrained by tip-extension checks above.
+        if h >= 1:
+            expected_bits = self.next_bits()
+            if int(block["bits"]) != int(expected_bits):
+                raise ConsensusError("difficulty bits mismatch (expected %s, got %s)" % (expected_bits, block["bits"]))
         if not consensus.meets_target(block_header_bytes(block), int(block["nonce"]), int(block["bits"])):
             raise ConsensusError("PoW target not met")
         # validate txs

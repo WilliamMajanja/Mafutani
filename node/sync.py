@@ -54,10 +54,13 @@ def export_headers(chain, start_height=0, limit=2000):
 
 
 def import_blocks(chain, blocks, max_blocks=200):
+    """Validate and append blocks in order. Tip-append only; peers untrusted. Experimental/unaudited."""
     """Validate and append blocks in order. Returns per-block results; stops on first hard failure."""
     results = []
     count = 0
+    if not isinstance(blocks, list): return {"ok": False, "error": "blocks must be a list", "imported": 0, "results": [], "tip": chain.height()}
     for blk in (blocks or [])[:int(max_blocks)]:
+        if not isinstance(blk, dict): results.append({"ok": False, "error": "invalid block object"}); break
         h = int(blk.get("h", blk.get("height", -1)))
         # skip if already known
         existing = chain.get_block_by_hash(str(blk.get("hash") or ""))
@@ -91,10 +94,14 @@ def import_blocks(chain, blocks, max_blocks=200):
     return {"ok": all(r.get("ok") for r in results) if results else True, "imported": count, "results": results, "tip": chain.height()}
 
 
-def fetch_json(url, timeout=20):
+MAX_SYNC_BYTES = 8 * 1024 * 1024  # 8MB preventive DoS bound (not a guarantee)
+
+def fetch_json(url, timeout=20, max_bytes=MAX_SYNC_BYTES):
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "CommCoin-PiNet/1"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read()
+        raw = r.read(int(max_bytes) + 1)
+    if len(raw) > int(max_bytes):
+        raise ValueError("peer response too large")
     return json.loads(raw.decode("utf-8", "replace"))
 
 

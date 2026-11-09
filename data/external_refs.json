@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "policy": "Report-only. NEVER auto-update or auto-apply external code/config. Manual security review required before any change.",
+  "refs": [
+    {
+      "id": "cpip",
+      "name": "CPIP (WilliamMajanja/CPIP-)",
+      "url": "https://github.com/WilliamMajanja/CPIP-",
+      "branch": "master",
+      "pinned_observed_commit": "b269888",
+      "pinned_observed_date": "2026-11-02",
+      "notes": "Inspiration/reference only (not a dependency). HTCPCP/mesh/defense toolkit; contains experimental/non-FIPS crypto per upstream README. Mafutani remains stdlib-only."
+    }
+  ]
+}

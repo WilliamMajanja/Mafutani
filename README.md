@@ -21,6 +21,10 @@
 | **Zero-dep KYC hooks** | Local KYC workflow (status, hashed document references, admin review/audit, optional off-ramp gate). **Technical plumbing only — not legal/regulatory compliance.** |
 | **Web UI + Terminal** | Vanilla JS SPA, SSE quotes, Bloomberg-style terminal (`\`` / `Ctrl+K`), i18n hooks, policies page. No npm build. |
 
+## Consensus / Proofing Hardening (experimental, not certification)
+- Added additive checks (tests passing): ledger tx/block bounds, duplicate input/txid detection, memo/output/input limits, block hash consistency, **difficulty bits enforcement for tip-extension**, sync response size/structure limits, stricter Merkle proof verification (`verify_detailed`, schema/reasons, domain allowlist, path limits). **Not a formal proof of safety/liveness/consensus correctness.**
+- Sync remains **tip-append** with untrusted peers; PoW/PQC/chain **unaudited**. No guarantees for any industry/discipline.
+
 ## Honest Risk Summary
 
 - **Not financial, investment, legal, or tax advice.** Paper default; live/crypto can cause real loss.
@@ -135,7 +139,7 @@ All mutating endpoints typically require an authenticated session and CSRF; admi
 - Admin off-ramp: `GET /api/admin/offramp/mpesa`, `POST /api/admin/offramp/mpesa/<id>/{approve|submit|reject|complete|pending|failed}` (admin+CSRF; `confirm:true`; optional maker-checker `MAFUTANI_OFFRAMP_MAKER_CHECKER=1` requires approve by different admin before submit; optional step-up 2FA via `MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE`). Daraja callback scaffold: `POST /api/offramp/mpesa/callback` (reconciliation only; authenticity not fully verified; optional `MAFUTANI_DARAJA_CALLBACK_SECRET`). Admin callbacks: `GET /api/admin/offramp/mpesa/callbacks`.
 - KYC workflow hooks: `GET/POST /api/kyc/me`, `GET /api/admin/kyc`, `POST /api/admin/kyc/<user_id>/review` (admin+CSRF)
 - Admin Daraja (legacy/admin tool path, as implemented): `GET /api/admin/daraja/status`, `POST /api/admin/daraja/withdraw` (admin+CSRF+`confirm:true`)
-- Admin: `GET /api/admin/overview`, `GET /api/admin/audit`, `GET /api/admin/readiness` (operator checklist; **not** safety/compliance certification)
+- Admin: `GET /api/admin/overview`, `GET /api/admin/audit`, `GET /api/admin/readiness` (operator checklist; **not** safety/compliance certification), `GET /api/admin/external_refs`, `POST /api/admin/external_refs/check` (admin+CSRF+confirm; **report-only, NEVER auto-updates/applies external code**)
 
 ## OpenTerminal
 

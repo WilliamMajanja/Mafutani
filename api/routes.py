@@ -1763,6 +1763,10 @@ class Router:
             return self._admin_offramp_mpesa_callbacks(conn, h, qs)
         if path == "/api/admin/readiness" and method == "GET":
             return self._admin_readiness(conn, h)
+        if path == "/api/admin/external_refs" and method == "GET":
+            return self._admin_external_refs(conn, h)
+        if path == "/api/admin/external_refs/check" and method == "POST":
+            return self._admin_external_refs_check(conn, h)
         if path == "/api/admin/offramp/mpesa" and method == "GET":
             return self._admin_offramp_mpesa_list(conn, h, qs)
         if path.startswith("/api/admin/offramp/mpesa/") and method == "POST":
@@ -5378,6 +5382,62 @@ class Router:
         except Exception as e:
             return _err(h, "callbacks unavailable: %s" % e, 500)
 
+
+    def _load_external_refs(self):
+        import json, os
+        p = os.path.join(ROOT, "data", "external_refs.json")
+        try:
+            with open(p, "r", encoding="utf-8") as f: return json.load(f)
+        except Exception:
+            return {"version": 1, "policy": "Report-only; no auto-update.", "refs": []}
+
+    def _admin_external_refs(self, conn, h):
+        user, _s = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        data = self._load_external_refs()
+        data["disclaimer"] = "Reference tracking only. NEVER auto-updates or applies external code/config. Manual security review required."
+        return _send_json(h, data)
+
+    def _admin_external_refs_check(self, conn, h):
+        user, sess = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        if not self._require_csrf(conn, h, sess): return True
+        body, err = _read_json(h)
+        if err: return _err(h, err, 400)
+        body = body or {}
+        if not body.get("confirm"):
+            return _err(h, "set confirm=true to perform a network check (report-only; no auto-update/apply)", 400)
+        if not self._require_sensitive_stepup(conn, h, user, body): return True
+        data = self._load_external_refs()
+        results = []
+        # Only check known, fixed repos; never fetch user-supplied URLs.
+        for ref in (data.get("refs") or []):
+            r = {"id": ref.get("id"), "pinned": ref.get("pinned_observed_commit"), "status": "not_checked"}
+            if ref.get("id") == "cpip":
+                try:
+                    import urllib.request
+                    url = "https://api.github.com/repos/WilliamMajanja/CPIP-/commits/master"
+                    req = urllib.request.Request(url, headers={"Accept":"application/vnd.github+json","User-Agent":"Mafutani-RefCheck/1"})
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        raw = resp.read(65536)
+                    import json as _j
+                    info = _j.loads(raw.decode("utf-8","replace"))
+                    sha = str(info.get("sha") or "")[:12]
+                    r["latest"] = sha
+                    r["changed_since_pinned_observation"] = (sha[:7] != str(ref.get("pinned_observed_commit") or "")[:7]) if sha else None
+                    r["status"] = "checked"
+                    r["action_required"] = "Manual security review required if changed; NEVER auto-update." if r["changed_since_pinned_observation"] else "No change detected vs pinned observation (manual review still recommended periodically)."
+                except Exception as e:
+                    r["status"] = "check_failed"
+                    r["error"] = "network/check unavailable (%s)" % type(e).__name__
+            results.append(r)
+        ud = _row_to_dict(user)
+        _audit(conn, ud["id"], "admin.external_refs.check", ud.get("tier",""), "admin", {"ids": [r.get("id") for r in results]})
+        return _send_json(h, {"ok": True, "results": results, "policy": "REPORT ONLY. No auto-update, no auto-apply, no code fetch into runtime. Manual security review required."})
+
+
     def _admin_readiness(self, conn, h):
         """Operator readiness checklist (preventive controls). NOT a safety/compliance guarantee."""
         user, _s = self._require_user(conn, h)
@@ -5402,6 +5462,8 @@ class Router:
         add("maker_checker", mc, "Off-ramp maker-checker enabled (preventive control)" if mc else "Consider MAFUTANI_OFFRAMP_MAKER_CHECKER=1", "info")
         cb = bool(os.environ.get("MAFUTANI_DARAJA_CALLBACK_SECRET"))
         add("callback_shared_secret", cb, "Callback shared-secret configured (not full Daraja authenticity verification)" if cb else "Consider MAFUTANI_DARAJA_CALLBACK_SECRET + endpoint protection", "warn")
+        add("cpip_reference_tracking", True, "CPIP/external refs are report-only (GET/POST /api/admin/external_refs*). NEVER auto-update; manual security review required.", "info")
+        add("consensus_crypto_audit", False, "VERIFY MANUALLY: independent consensus/PQC/security audit, adversarial/fork/finality testing, and vetted PQC migration required before production reliance.", "warn")
         add("tls_reverse_proxy", False, "VERIFY MANUALLY: TLS/reverse proxy/WAF, IP allowlists, secret stores, backups, monitoring, incident playbooks", "warn")
         return _send_json(h, {
             "ok": True,
