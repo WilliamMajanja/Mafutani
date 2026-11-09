@@ -5277,20 +5277,25 @@ class Router:
                     mft_addr = Wallet(wp).load().address
             except Exception:
                 pass
+            idem = str(body.get("idempotency_key") or "").strip()[:120]
             row = create_request(conn, ud["id"], body.get("phone"), body.get("amount_mft"),
-                                 mft_address=mft_addr, note=str(body.get("note") or "")[:500])
+                                 mft_address=mft_addr, note=str(body.get("note") or "")[:500],
+                                 idempotency_key=idem)
             cfg = config()
-            if cfg.get("treasury_mft_address") and row.get("status") == "pending":
+            replay = bool(row.get("idempotent_replay")) if isinstance(row, dict) else False
+            if cfg.get("treasury_mft_address") and row.get("status") == "pending" and not replay:
                 row["instructions"] = "Send %s MFT to treasury %s with memo offramp:%s (operator verifies receipt before settlement unless auto-submit is explicitly configured)." % (
                     row.get("amount_mft"), cfg.get("treasury_mft_address"), row.get("id"))
             _audit(conn, ud["id"], "offramp.mpesa.create", ud.get("tier", ""), "offramp", {
                 "request_id": row.get("id"), "amount_mft": row.get("amount_mft"),
-                "amount_kes": row.get("amount_kes"), "status": row.get("status")})
+                "amount_kes": row.get("amount_kes"), "status": row.get("status"), "idempotent_replay": replay})
             row = dict(row) if row else {}
-            row["disclaimer"] = "M-Pesa/Daraja is third-party/operator-configured. Request acceptance is NOT settlement. Reference KES/MFT conversion is not a market price or guarantee. Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment."
+            row.setdefault("disclaimer", "M-Pesa/Daraja is third-party/operator-configured. Request acceptance is NOT settlement. Reference KES/MFT conversion is not a market price or guarantee. Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment.")
             row["reference_only"] = True
             row["acceptance_not_settlement"] = True
-            return _send_json(h, row, status=201)
+            row["guarantees"] = False
+            row["compliance_certified"] = False
+            return _send_json(h, row, status=(200 if replay else 201))
         except Exception as e:
             return _err(h, "off-ramp request failed: %s" % e, 400)
 

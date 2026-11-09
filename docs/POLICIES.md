@@ -6,6 +6,8 @@
 
 ## 1. Risk & No-Advice Disclaimer
 
+> **No system safety, value, liquidity, or compliance is guaranteed by this software.** Technical controls reduce preventable risk; they do not create audits, legal compliance, market value, or liquidity.
+
 - **Not financial, investment, trading, legal, or tax advice.** Outputs are informational/experimental.
 - **Paper trading is default** for trading features. Live trading is gated/audited; real loss is possible.
 - **Digital assets / CommCoin (MFT) carry extreme risk.** Total loss possible. Transfers may be irreversible. Bugs, consensus/PQC failures, key loss, stale PQC state reuse, network/payment failures, fraud, and regulatory action can cause loss.

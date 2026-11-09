@@ -31,6 +31,12 @@
 - **PQC wallets are stateful:** **never reuse signature indexes or restore stale wallet backups/state.** One authoritative wallet state only.
 
 ### Technical remediations (reduce preventable risk; residual risk remains)
+
+### What cannot be guaranteed or created by this code
+- **Safety/security is not guaranteed.** Experimental/unaudited software; bugs, consensus/PQC issues, misconfiguration, and attacks can still cause loss. Controls reduce preventable risk but do not make the system "safe."
+- **No guarantees of value, price, liquidity, convertibility, or stability.** `MAFUTANI_COIN_USD_VALUE` is reference/config metadata only. Real value/liquidity require external markets, participants, adoption, listings, and economics — not code assertions.
+- **Not compliance-certified.** KYC hooks are workflow plumbing only. Legal/regulatory compliance (KYC/AML/sanctions/tax/payments/data protection/licensing) depends on jurisdiction, qualified advice, operator controls, audits, and third-party requirements. Request acceptance is **not** settlement.
+
 - **Irreversible/high-impact actions gated:** explicit `confirm:true` for CommCoin sends, chain import, PiNet sync pull, and off-ramp/admin submission paths (where implemented); auth/CSRF/admin controls and audit logging on sensitive flows.
 - **Stateful PQC wallet safety:** capacity checks before signing, atomic state save (`tmp`+`fsync`+`replace`), and fail-safe if state cannot be persisted (do not use/broadcast tx). **Cannot prevent** stale backup restore or external key misuse.
 - **Reference-only labeling:** chain/node/off-ramp/KYC/market-reference APIs and docs label `MAFUTANI_COIN_USD_VALUE` and MFT quotes as reference/config metadata only (no price/guarantee). Off-ramp responses include settlement disclaimers.

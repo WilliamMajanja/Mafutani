@@ -66,8 +66,13 @@ def config():
         "disclaimer": (
             "Operator-configured reference conversion and third-party payout path. "
             "Not a market price, quote, guarantee, or settlement confirmation. "
-            "Operator must handle callbacks/reconciliation and KYC/AML/sanctions/tax compliance."
+            "Request acceptance is NOT settlement. NOT a compliance certification. "
+            "Operator must handle callbacks/reconciliation, idempotency, credentials, and KYC/AML/sanctions/tax/legal compliance."
         ),
+        "guarantees": False,
+        "compliance_certified": False,
+        "liquidity_guaranteed": False,
+        "value_guaranteed": False,
     }
 
 
@@ -97,6 +102,14 @@ def ensure_schema(conn):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_mft_mpesa_status ON mft_mpesa_requests(status, id)"
     )
+    # idempotency (best-effort; prevents accidental duplicate user submissions)
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(mft_mpesa_requests)").fetchall()]
+        if "idempotency_key" not in cols:
+            conn.execute("ALTER TABLE mft_mpesa_requests ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mft_mpesa_idem ON mft_mpesa_requests(user_id, idempotency_key)")
+    except Exception:
+        pass
 
 
 def _dec_amount_mft(v):
@@ -124,9 +137,19 @@ def _kes_for_mft(amount_mft, rate_kes_per_mft):
     return int(kes)
 
 
-def create_request(conn, user_id, phone, amount_mft, mft_address="", note="",
+def create_request(conn, user_id, phone, amount_mft, mft_address="", note="", idempotency_key="",
                    daraja_client=None):
     ensure_schema(conn)
+    idem = str(idempotency_key or "").strip()[:120]
+    if idem:
+        existing = conn.execute(
+            "SELECT * FROM mft_mpesa_requests WHERE user_id=? AND idempotency_key=? ORDER BY id DESC LIMIT 1",
+            (int(user_id), idem)).fetchone()
+        if existing:
+            row = _row(existing)
+            row["idempotent_replay"] = True
+            row["disclaimer"] = "Duplicate submission detected for idempotency_key; returning existing request. Acceptance is not settlement. Not compliance-certified."
+            return row
     cfg = config()
     if not cfg["rate_configured"]:
         raise OfframpError(
@@ -142,10 +165,10 @@ def create_request(conn, user_id, phone, amount_mft, mft_address="", note="",
     now = int(time.time())
     cur = conn.execute(
         "INSERT INTO mft_mpesa_requests (user_id, mft_address, phone, amount_mft,"
-        " amount_kes, rate_kes_per_mft, status, note, created_at, updated_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " amount_kes, rate_kes_per_mft, status, note, idempotency_key, created_at, updated_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (int(user_id), str(mft_address or "")[:200], msisdn, str(amt), kes,
-         cfg["rate_kes_per_mft"], STATUS_PENDING, str(note or "")[:500], now, now),
+         cfg["rate_kes_per_mft"], STATUS_PENDING, str(note or "")[:500], idem, now, now),
     )
     conn.commit()
     req_id = cur.lastrowid
