@@ -25,26 +25,29 @@
 - **Secrets:** store Daraja credentials in secret stores/env; never in source control, logs, or client responses. `SecurityCredential` handling is operator-controlled.
 - **Zero-dependency KYC hooks** (`minting/kyc.py`, `/api/kyc/*`) provide workflow status, hashed document references, admin review, and optional off-ramp gating. **Not** a substitute for legal/regulatory compliance, qualified identity verification, sanctions/AML screening, or professional advice.
 
-## 4. Security Controls & Privileged-Attack Resistance (honest stance)
+## 4. Remediations, Controls & Residual Risk (honest stance)
 
-Layered controls aim to reduce common web/admin/operational risks, including privileged/key-compromise-style vectors seen in the crypto industry. **No immunity claimed; no fabricated incident details.**
+These are **technical mitigations**, not guarantees. They reduce preventable errors but **cannot eliminate** unaudited/experimental risk, value/stability outcomes, legal/compliance obligations, third-party settlement, or user/operator custody mistakes. **No immunity claimed; no fabricated incident details.**
 
-### Controls present (verify in code/config)
-- Session auth, CSRF on mutating flows, `HttpOnly`/`SameSite` cookies (and `Secure` where applicable).
-- Admin-gated sensitive operations (Daraja/off-ramp admin actions, KYC review, chain import/sync pull, capture/admin chain actions as implemented).
-- Audit logging for key transitions.
-- 2FA capability exists (`/api/auth/2fa*`) — operators must enforce step-up for sensitive actions by deployment policy.
-- Explicit `confirm:true` for payouts/off-ramp/KYC submit paths where implemented.
-- Restrictive permissions for server-managed wallet files where implemented; stateful PQC warnings.
-- Stdlib-only runtime reduces third-party dependency surface (not a substitute for review/hardening).
+### Technical remediations implemented (verify in code/config)
+- **Explicit confirmation (`confirm:true`)** for high-impact/irreversible actions where implemented: CommCoin send (`/api/chain/send`), chain import (`/api/chain/import`, admin), PiNet sync pull (`/api/node/sync/pull`, admin), M-Pesa off-ramp create, admin off-ramp submit, and other gated flows as documented.
+- **Stateful PQC wallet safety (`chain/wallet.py`):** checks signature index capacity before signing, signs inputs then performs atomic state save (`tmp`+`fsync`+`replace`, restrictive mode), and **fails safe** if state cannot be persisted (raises a critical error instructing not to broadcast). **Cannot prevent** stale backup restore, copied wallet files, or external misuse.
+- **Reference-only / no-guarantee labeling:** `MAFUTANI_COIN_USD_VALUE` (default $100,000/coin) and MFT market/reference quotes are labeled metadata/reference only across chain/node/off-ramp APIs and docs — not market price, quote, guarantee, offer, liquidity, or stability.
+- **Settlement honesty:** off-ramp responses/docs state **Daraja/request acceptance is not settlement**; reconciliation, callbacks/idempotency, valid credentials/limits, and operator compliance are required.
+- **Access controls:** session auth, CSRF on mutating flows, admin gates for sensitive operations, `HttpOnly`/`SameSite` cookies (and `Secure` where applicable), 2FA capability (`/api/auth/2fa*`).
+- **Audit logging:** key transitions/actions recorded where implemented.
+- **PiNet/sync validation:** import/pull validates blocks and uses a pragmatic tip-append model; peers treated as untrusted (further adversarial hardening required for public deployment).
+- **Zero-dep KYC workflow hooks:** status/hashed references/admin review/audit and optional off-ramp gate (`MAFUTANI_KYC_REQUIRED_FOR_OFFRAMP`) — **technical workflow only, not legal/regulatory compliance**.
+- **Stdlib-only runtime:** reduces third-party dependency surface (not a substitute for review/hardening). Enforced by `tests/test_zero_dependency.py`.
 
-### Residual risks (operator must mitigate)
+### Residual risks (cannot be fully remediated by code; operator/user responsibility)
+- **Experimental/unaudited:** chain, PQC, Merkle, PiNet, compositor, trading live paths, off-ramp/KYC integrations may contain defects causing loss or incorrect behavior.
+- **Irreversibility / total loss:** blockchain transfers may be irreversible; key loss, stale PQC state reuse, consensus bugs, or operational errors can cause total loss.
+- **No value/stability guarantees:** reference metadata and deterministic protocol rules do not guarantee market value, liquidity, convertibility, stability, adoption, or economic outcomes.
+- **Custody/state misuse:** users/operators can restore stale PQC backups, copy state, leak secrets, or misconfigure hosts. Use secure custody practices; never commit seeds/credentials.
+- **Third-party settlement & compliance:** Daraja/M-Pesa and other services are operator-configured third parties. **Acceptance ≠ settlement.** Operators own callbacks/reconciliation, credentials, fraud controls, KYC/AML/sanctions/tax/compliance, and lawful deployment.
 - **Insufficient dual control:** admin+CSRF+confirm ≠ enforced maker-checker. Add separation of duties, step-up 2FA, allowlists, velocity limits, delays/cooling-off, out-of-band confirmation, and reconciliation.
-- **Custody/secret risk:** use secret stores/HSM-backed processes where appropriate; protect backups without breaking PQC state safety.
-- **2FA not universally enforced as step-up:** verify and enforce.
-- **Experimental/unaudited components:** chain, PQC, Merkle, PiNet, compositor, off-ramp/KYC integrations.
-- **Third-party/network risk:** Daraja, peers, feeds, infrastructure. Monitor, reconcile, handle timeouts/idempotency.
-- **Deployment hardening:** TLS, reverse proxy/WAF, OS/runtime hardening, logging/observability (no secrets), backups, incident playbooks.
+- **Deployment hardening:** TLS, reverse proxy/WAF, OS/runtime hardening, secret stores, logging/observability (no secrets), backups, and incident playbooks are required.
 
 ## 5. Data, Locale, User Protection
 

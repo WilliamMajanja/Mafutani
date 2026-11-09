@@ -67,3 +67,15 @@ See `api/routes.py` for authoritative dispatch and auth requirements.
 ## Warnings
 
 Experimental, unaudited software. Do not treat balances/proofs/reference values as guaranteed financial outcomes. Secure hosts, backups, PQC wallet state, credentials, and admin access. No guarantees of stability, value, or absence of hacks.
+
+
+## Remediations & Residual Risk (honest)
+
+| Area | Technical mitigations | Residual risk |
+|---|---|---|
+| Irreversible transfers | `POST /api/chain/send` requires `confirm:true`; auth/CSRF/audit | Tx may be irreversible; wrong recipient/amount can cause total loss |
+| PQC wallet state | Capacity checks, atomic state save, fail-safe on save error | Unaudited; stale backup restore/copy misuse can break state safety |
+| Value/reference | `MAFUTANI_COIN_USD_VALUE` labeled metadata-only in chain/node/docs | No market price, liquidity, stability, or guarantee |
+| PiNet sync/import | Validated tip-append; admin+CSRF+`confirm` for mutating sync/import | Peers untrusted; adversarial/public P2P hardening needed |
+| Off-ramp | Auth/CSRF/audit/confirm; KYC workflow gate option; settlement disclaimers | **Acceptance ≠ settlement**; operator owns reconciliation/compliance |
+| Design goals | Deterministic rules, SBC capture, validation controls | **Do not guarantee** value, stability, security, adoption, or no bugs/hacks |

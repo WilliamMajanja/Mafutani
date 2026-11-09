@@ -4832,16 +4832,17 @@ class Router:
         return _send_json(h, {
             "ok": True,
             "summary": {
-                "not_financial_advice": True,
-                "paper_default": True,
-                "crypto_risk_total_loss": True,
-                "mft_experimental": True,
-                "pqc_hash_based_stateful": True,
-                "epoch_seed": "100000000000 MFT every 182 days (6 months)",
+                "not_financial_investment_legal_or_tax_advice": True,
+                "paper_default_live_crypto_can_cause_real_loss": True,
+                "commcoin_mft_experimental_unaudited_irreversible_total_loss_possible": True,
+                "coin_reference_usd_metadata_only_not_market_price_or_guarantee": True,
+                "design_goals_not_guarantees": True,
+                "pqc_stateful_never_reuse_indexes_or_restore_stale_backups": True,
+                "mpesa_daraja_third_party_acceptance_not_settlement": True,
+                "operator_owns_credentials_callbacks_reconciliation_compliance": True,
+                "kyc_hooks_zero_dep_workflow_only_not_legal_compliance": True,
+                "epoch_seed": "100000000000 MFT every 182 days (deterministic protocol rule; no economic guarantee)",
                 "token_expiry_replacement": "deterministic per consensus; expired outputs not spendable",
-                "mpesa_daraja_third_party": True,
-                "operator_kyc_aml_sanctions_compliance": True,
-                "locale_global_integratable": True,
             },
             "document": doc,
             "path": "docs/POLICIES.md",
@@ -4879,7 +4880,9 @@ class Router:
             try:
                 info = c.chain_info()
                 tip = c.tip()
-                info["disclaimer"] = "Experimental chain software. Not financial advice. Reference valuations are not market prices or guarantees. Total loss possible."
+                info["disclaimer"] = "Experimental/unaudited chain software. Not financial, investment, legal, or tax advice. CommCoin/MFT keys and transactions may be irreversible; bugs/consensus/key loss can cause total loss."
+                info["reference_value_is_metadata_only"] = True
+                info["no_guarantees"] = "Reference/config values and design goals (deterministic rules, SBC/PiNet capture, validation controls) do not guarantee value, stability, security, liquidity, adoption, or absence of bugs/hacks."
                 info["consensus"] = {
                     "epoch_seconds": 15724800,
                     "epoch_days": 182,
@@ -4932,6 +4935,7 @@ class Router:
                     "spendable_base": bal, "spendable_mft": str(bal // 10**8),
                     "utxos": [{"txid": u["txid"], "vout": u["vout"], "amount": int(u["amount"]),
                                "creation_epoch": int(u["creation_epoch"]), "expired": bool(u["expired"])} for u in utxos[:200]],
+                    "disclaimer": "Experimental/unaudited chain data. Balances/UTXOs are not guarantees of value or spendability in all failure modes. Not financial advice.",
                 })
             finally:
                 c.close()
@@ -4959,7 +4963,8 @@ class Router:
             try:
                 info = w.info(c)
                 info["exists"] = True
-                info["policy"] = "PQC stateful: never reuse/restore old wallet state. Back up securely."
+                info["policy"] = "PQC stateful (unaudited): NEVER reuse signature indexes or restore stale wallet backups/state. One authoritative wallet state only; key loss or state misuse can cause total/irreversible loss."
+                info["disclaimer"] = "Experimental wallet/chain. Not financial advice. Total loss possible."
                 return _send_json(h, info)
             finally:
                 c.close()
@@ -5281,6 +5286,10 @@ class Router:
             _audit(conn, ud["id"], "offramp.mpesa.create", ud.get("tier", ""), "offramp", {
                 "request_id": row.get("id"), "amount_mft": row.get("amount_mft"),
                 "amount_kes": row.get("amount_kes"), "status": row.get("status")})
+            row = dict(row) if row else {}
+            row["disclaimer"] = "M-Pesa/Daraja is third-party/operator-configured. Request acceptance is NOT settlement. Reference KES/MFT conversion is not a market price or guarantee. Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment."
+            row["reference_only"] = True
+            row["acceptance_not_settlement"] = True
             return _send_json(h, row, status=201)
         except Exception as e:
             return _err(h, "off-ramp request failed: %s" % e, 400)
@@ -5332,7 +5341,10 @@ class Router:
             else:
                 return _err(h, "unknown action", 400)
             _audit(conn, ud['id'], 'offramp.mpesa.%s' % action, ud.get('tier',''), 'offramp', {'request_id': rid, 'status': (row or {}).get('status')})
-            return _send_json(h, row or {})
+            row = dict(row) if row else {}
+            if action == 'submit':
+                row['disclaimer'] = 'Daraja/API acceptance is NOT settlement. Verify receipt/reconciliation, callbacks, idempotency, and compliance before treating as complete.'
+            return _send_json(h, row)
         except Exception as e:
             return _err(h, "admin off-ramp action failed: %s" % e, 400)
 
@@ -5371,6 +5383,8 @@ class Router:
             res = self._pinet_node().capture(address, rounds=rounds)
             _audit(conn, ud["id"], "pinet.capture", ud.get("tier",""), "node",
                    {"ok": res.get("ok"), "height": res.get("height"), "rounds": res.get("rounds")})
+            if isinstance(res, dict):
+                res.setdefault("disclaimer", "Experimental SBC capture/mining. No guarantee of block discovery, value, or network acceptance.")
             return _send_json(h, res)
         except Exception as e:
             return _err(h, "capture failed: %s" % e, 500)
@@ -5393,6 +5407,8 @@ class Router:
             res = self._pinet_node().submit_tx(tx)
             ud = _row_to_dict(user)
             _audit(conn, ud["id"], "node.tx.submit", ud.get("tier",""), "node", {"txid": res.get("txid")})
+            if isinstance(res, dict):
+                res.setdefault("disclaimer", "Mempool admission is not confirmation/finality. Experimental/unaudited chain.")
             return _send_json(h, res, status=201)
         except Exception as e:
             return _err(h, "tx rejected: %s" % e, 400)

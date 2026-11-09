@@ -8,7 +8,7 @@
 - **Trading:** paper default; live paths gated/audited. Not financial advice.
 - **CommCoin/MFT:** experimental, unaudited chain (SHAKE256 PoW, hash-based PQC WOTS+/Merkle, 182-day epochs, **100B MFT** deterministic seed, token expiry/replacement, Merkle proofs, PiNet SBC capture/sync). `$100,000/CommCoin` is **reference/config metadata only** — not a market price or guarantee.
 - **Off-ramps:** CommCoin → M-Pesa (Daraja) user/admin flows when operator-configured; **acceptance ≠ settlement**. Zero-dep KYC hooks are workflow plumbing, not legal compliance.
-- **Security:** layered controls exist, but privileged-attack resistance is **not absolute**. See [Policies](POLICIES.md) and [SECURITY.md](../SECURITY.md).
+- **Security/remediations:** explicit `confirm` gates, PQC state save fail-safes, reference-only labeling, and off-ramp settlement disclaimers reduce preventable risk; **residual risk remains** (unaudited, irreversible/key loss, no guarantees, third-party settlement/compliance). See [Policies](POLICIES.md) and [SECURITY.md](../SECURITY.md).
 
 ## Read First
 

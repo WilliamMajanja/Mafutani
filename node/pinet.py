@@ -56,9 +56,14 @@ class PiNetNode(object):
             "state": state,
             "mempool": self.mempool.snapshot(limit=20),
             "safety": {
-                "pqc_stateful_warning": "MFT PQC wallets are stateful; never reuse/restore stale signature state.",
-                "expiry_note": "Outputs expire by deterministic consensus (token lifetime epochs) and are replaced by epoch seeding; this is protocol behavior, not a hidden hack.",
-                "reference_value": "Configured/reference valuation metadata only, not a market price/guarantee.",
+                "experimental_unaudited": True,
+                "not_financial_legal_or_tax_advice": True,
+                "irreversible_total_loss_possible": True,
+                "pqc_stateful_warning": "MFT PQC wallets are stateful (unaudited). NEVER reuse signature indexes or restore stale wallet backups/state.",
+                "expiry_note": "Outputs expire by deterministic consensus (token lifetime epochs) and are replaced by epoch seeding; protocol behavior, not a guarantee of value/safety.",
+                "reference_value": "MAFUTANI_COIN_USD_VALUE is reference/config metadata only — not a market price, quote, guarantee, offer, liquidity, or stability guarantee.",
+                "design_goals_not_guarantees": "Deterministic rules, SBC/PiNet capture, and validation controls do not guarantee value, stability, security, adoption, or absence of bugs/hacks.",
+                "daraja_settlement": "If using off-ramps: request acceptance is not settlement; operators own credentials, callbacks/reconciliation, and compliance.",
             },
         }
 

@@ -27,8 +27,16 @@
 - **CommCoin/MFT is experimental and unaudited.** Keys/transactions may be irreversible; bugs/consensus issues/key loss can cause total loss.
 - **`$100,000` per CommCoin/MFT is reference/config metadata only** (`MAFUTANI_COIN_USD_VALUE`) — **not** a market price, quote, guarantee, offer, liquidity promise, or stability guarantee.
 - **Design goals ≠ guarantees:** deterministic supply/epoch rules, SBC/PiNet capture, validation controls, and “no unnecessary token loss” design intent do **not** guarantee value, stability, security, adoption, or absence of bugs/hacks.
-- **M-Pesa/Daraja:** third-party/operator-configured. Request acceptance ≠ settlement. Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment.
-- **PQC wallets are stateful:** never reuse signature indexes or restore stale wallet backups/state.
+- **M-Pesa/Daraja:** third-party/operator-configured. **Request acceptance ≠ settlement.** Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment.
+- **PQC wallets are stateful:** **never reuse signature indexes or restore stale wallet backups/state.** One authoritative wallet state only.
+
+### Technical remediations (reduce preventable risk; residual risk remains)
+- **Irreversible/high-impact actions gated:** explicit `confirm:true` for CommCoin sends, chain import, PiNet sync pull, and off-ramp/admin submission paths (where implemented); auth/CSRF/admin controls and audit logging on sensitive flows.
+- **Stateful PQC wallet safety:** capacity checks before signing, atomic state save (`tmp`+`fsync`+`replace`), and fail-safe if state cannot be persisted (do not use/broadcast tx). **Cannot prevent** stale backup restore or external key misuse.
+- **Reference-only labeling:** chain/node/off-ramp/KYC/market-reference APIs and docs label `MAFUTANI_COIN_USD_VALUE` and MFT quotes as reference/config metadata only (no price/guarantee). Off-ramp responses include settlement disclaimers.
+- **Validation/sync controls:** PiNet import/pull is validated and currently tip-append oriented; peers remain untrusted. Harden further for adversarial/public P2P.
+- **KYC/off-ramp workflow controls:** zero-dep KYC hooks (optional gate) + admin review/audit; **not** legal/compliance verification. Daraja flows require operator config and reconciliation; acceptance ≠ settlement.
+- **Not remediable by code alone:** unaudited/experimental status, value/stability/liquidity outcomes, legal/tax/regulatory compliance, third-party settlement/reconciliation, user/operator custody mistakes, and absence of bugs/hacks.
 
 ## Quick Start
 

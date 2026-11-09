@@ -33,16 +33,21 @@ Include, when possible:
 Please treat these as high impact:
 
 - **Keys/custody/PQC state:** MFT PQC wallets are stateful (`next_index`).
-  Signature state reuse or stale-backup restore can cause catastrophic loss.
+  Signature state reuse or stale-backup restore can cause catastrophic/irreversible loss.
+  `chain/wallet.py` enforces signature capacity checks, atomic state saves, and a fail-safe
+  if state cannot be persisted (do not broadcast). **This does not prevent** stale backup
+  restore or copied wallet state misuse.
 - **Admin/off-ramp controls:** M-Pesa/Daraja actions, funding/admin approvals,
-  KYC review, chain import/sync controls. Require admin+CSRF+explicit confirm
-  where implemented; operators should add step-up 2FA, dual control, allowlists,
-  velocity limits, and reconciliation.
+  KYC review, chain import/sync controls. High-impact flows require auth/CSRF and
+  explicit `confirm:true` where implemented (e.g., chain send/import, sync pull,
+  off-ramp create/admin submit). **Acceptance is not settlement.** Operators must add
+  step-up 2FA, dual control/maker-checker, allowlists, velocity limits, delays,
+  out-of-band confirmation, callbacks/reconciliation, and compliance controls.
 - **Chain/consensus/PQC/proofs:** experimental, unaudited; validation bugs may
   affect integrity or funds.
-- **PiNet sync/import:** import validates and appends at tip in the current model;
-  do not treat peer data as trusted. Harden for adversarial networks before
-  production use.
+- **PiNet sync/import:** import/pull validates and uses a pragmatic tip-append model;
+  peers are untrusted. Admin+CSRF+`confirm:true` required for mutating sync/import APIs
+  as implemented. Harden for adversarial/public networks before production use.
 - **Secrets:** never commit `.env`, credentials, Daraja secrets, or wallet seed
   files (`chain/mft.db`, `data/trading.db`, `data/wallets/*seed*.json` are ignored
   by `.gitignore` patterns where applicable).
