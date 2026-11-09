@@ -16,8 +16,11 @@ Mafutani Chain is a **zero-dependency**, stdlib-only blockchain in `chain/`, wit
 
 Implemented in `chain/pqc.py` (stdlib only): **`MFT-PQC-WOTS-MERKLE-SHAKE256-v1`** (WOTS+ / Winternitz `w=16`, Merkle-authenticated, SHAKE256).
 
-- **Design intent:** conservative hash-based signatures relative to RSA/ECDSA assumptions.
-- **Limitations:** custom implementation, **not externally audited**. Wallet operation is **stateful** (`next_index`). **Never reuse a signature index** and **never restore an old wallet backup/state**. Default height (`H=10`) gives 1024 signatures/key; rotate before exhaustion.
+- **Design intent:** hash-based signatures rely on hash preimage/collision resistance assumptions (different from RSA/ECDSA factoring/discrete-log assumptions).
+- **Critical limitations (honest):** custom implementation, **not externally audited**. Wallet operation is **stateful** (`next_index`).
+  - **State reuse breaks security:** **Never reuse a signature index** and **never restore an old wallet backup/state/copy**. Use one authoritative wallet state; rotate before exhaustion (`H=10` default = 1024 signatures/key).
+  - **Implementation/CWE/CVE risk:** stateful hash-based signature *implementations* and protocols (XMSS/XMSS^MT/LMS/WOTS+ components) have had real-world vulnerabilities in specific products/libraries (e.g., memory-safety/input-validation bugs, and state-management failures). Fault-injection research has also targeted WOTS/OTS operations. **This codebase has not been audited** and may contain similar or different defects.
+  - **Not a production recommendation:** stateful HBS signing is safest with robust state controls (often HSM-grade operational controls). Standardized stateless options (e.g., SLH-DSA/FIPS 205) or vetted audited implementations (e.g., ML-DSA/FIPS 204 or audited HBS libraries) are preferable for production migrations — but replacing crypto requires expert review, test vectors, and a versioned migration; do **not** ship a from-scratch replacement as “safe.”
 
 ## Merkle Abstractions & Proofs
 

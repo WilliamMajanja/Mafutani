@@ -16,6 +16,10 @@ Practical notes / limits (stated honestly):
 - This is an original, clear implementation of standard WOTS+ ideas for this
   codebase; it is NOT a drop-in replacement for audited SLH-DSA/XMSS libraries.
   Use on production mainnet money only after independent cryptographic review.
+- Stateful hash-based signature implementations have had real-world CVEs/CWEs
+  (memory-safety/input-validation/state-management issues) in other products;
+  fault-injection attacks against WOTS/OTS flows have been published. This
+  custom implementation is unaudited and may contain defects.
 
 Parameters (WOTS+, SHAKE256, n=32 bytes):
 - w = 16 (Winternitz parameter)
