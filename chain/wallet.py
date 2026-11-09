@@ -6,6 +6,7 @@ both copies can reuse a WOTS+ index and FORGE-PROOFING IS LOST. Always keep a
 single authoritative wallet state; back up before use and never restore an old
 backup over a newer state.
 """
+import copy
 import json
 import os
 import time
@@ -113,12 +114,22 @@ class Wallet(object):
             raise ValueError("insufficient spendable balance (expired tokens are not spendable)")
         return selected, total
 
+    def _append_signing_journal(self, entry):
+        """Best-effort append-only intent journal (evidence/control aid, not a security guarantee)."""
+        try:
+            jp = self.path + ".signing.journal"
+            with open(jp, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
+
     def build_transfer(self, chain, to_address, amount_mft, memo="", fee_base=0):
         if not str(to_address).startswith(pqc.ADDR_PREFIX):
             raise ValueError("invalid recipient address")
         amount_base = int(amount_mft) * consensus.COIN if isinstance(amount_mft, int) and amount_mft >= 0 else None
         if amount_base is None:
-            # accept decimal string or int base? keep simple: integer MFT or base via dict callers
             amount_base = int(float(str(amount_mft)) * consensus.COIN)
         if amount_base <= 0:
             raise ValueError("amount must be positive")
@@ -136,8 +147,8 @@ class Wallet(object):
             "outputs": outputs,
             "memo": memo or "",
         }
-        # Stateful PQC safety: each input signature consumes one WOTS+ leaf/index.
-        # Never reuse indexes; never restore stale wallet state/backups.
+        # Stateful PQC safety (experimental/unaudited): one WOTS+ leaf/index per signature.
+        # NEVER reuse indexes; NEVER restore stale wallet backups/state/copies.
         max_sigs = (1 << int(self.priv.get("h", pqc.TREE_HEIGHT)))
         used = int(self.priv.get("next_index", 0))
         need_sigs = len(tx["inputs"])
@@ -147,16 +158,30 @@ class Wallet(object):
             raise ValueError(
                 "insufficient PQC signature capacity (%s used, %s needed, %s max). "
                 "Rotate to a new wallet; do NOT reuse/restore old state." % (used, need_sigs, max_sigs))
-        # Sign all inputs, then persist advanced state atomically before returning tx.
-        # If save fails, the signed tx must NOT be used/broadcast.
+        # Operate on a deep copy of private state; commit only after atomic save succeeds.
+        priv_work = copy.deepcopy(self.priv)
+        intent = {"ts": int(time.time()), "event": "sign_intent", "address": self.address,
+                  "next_index_before": used, "need_sigs": need_sigs, "max_sigs": max_sigs,
+                  "inputs": len(tx["inputs"]), "outputs": len(tx["outputs"]), "amount_base": amount_base}
+        self._append_signing_journal(intent)
         for i in range(len(tx["inputs"])):
-            tx["inputs"][i]["sig"] = pqc.sign_message(self.priv, sighash(tx, i))
+            tx["inputs"][i]["sig"] = pqc.sign_message(priv_work, sighash(tx, i))
+        # Commit advanced state atomically before exposing tx as usable.
+        old_priv = self.data.get("priv")
+        self.data["priv"] = priv_work
         try:
             self.save()
         except Exception as e:
+            self.data["priv"] = old_priv  # keep in-memory state unchanged; on-disk unchanged
+            self._append_signing_journal({"ts": int(time.time()), "event": "save_failed_critical",
+                                          "next_index_before": used, "error": str(e)[:200]})
             raise ValueError(
                 "CRITICAL: signatures were generated but wallet state could not be saved (%s). "
-                "Do NOT broadcast the returned transaction. Inspect wallet file integrity and "
-                "PQC index state before any further signing." % e)
+                "Do NOT broadcast/use the transaction. Inspect wallet file integrity and "
+                "PQC index state before any further signing. Never reuse/restore stale state." % e)
+        self._append_signing_journal({"ts": int(time.time()), "event": "sign_committed",
+                                      "next_index_before": used, "next_index_after": int(self.data["priv"].get("next_index", 0))})
         tx["txid"] = txid_for(tx)
+        tx["pqc_safety"] = {"stateful": True, "index_range_consumed": [used, int(self.data["priv"].get("next_index", 0)) - 1],
+                            "warning": "Never reuse/restore stale wallet state/backups."}
         return tx

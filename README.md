@@ -93,7 +93,11 @@ python3 app.py
 | `MAFUTANI_COIN_SYMBOL` / `MAFUTANI_COIN_NAME` / `MAFUTANI_COIN_ALIAS` | Coin display metadata |
 | `MAFUTANI_PINET_ROUNDS` / `MAFUTANI_PINET_MAX_ROUNDS` | SBC mining/capture bounds |
 | `MAFUTANI_MFT_KES_RATE` | Operator-configured KES/MFT reference rate for off-ramp (0 disables) |
-| `MAFUTANI_MPESA_OFFRAMP_MIN_MFT` / `MAX_MFT` | Off-ramp limits |
+| `MAFUTANI_MPESA_OFFRAMP_MIN_MFT` / `MAX_MFT` | Off-ramp amount limits |
+| `MAFUTANI_OFFRAMP_MAX_PENDING_PER_USER` / `COOLDOWN_SECONDS` / `MAX_PER_DAY` | Preventive velocity/cooldown controls (not compliance) |
+| `MAFUTANI_OFFRAMP_MAKER_CHECKER=1` | Require approve→submit by different admin (preventive) |
+| `MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE=1|strict` | Step-up TOTP for sensitive admin actions |
+| `MAFUTANI_DARAJA_CALLBACK_SECRET` | Optional shared-secret gate for callback scaffold (not full Daraja verification) |
 | `MAFUTANI_OFFRAMP_TREASURY_MFT_ADDRESS` | Optional treasury instruction for user off-ramp requests |
 | `MAFUTANI_MPESA_OFFRAMP_AUTO_SUBMIT=1` | Explicit opt-in auto-submit to Daraja (if B2C-ready); **not settlement** |
 | `MAFUTANI_KYC_REQUIRED_FOR_OFFRAMP=1` | Require approved KYC workflow status before off-ramp requests |
@@ -128,10 +132,10 @@ All mutating endpoints typically require an authenticated session and CSRF; admi
 
 ### Off-ramp / KYC / Admin
 - User M-Pesa off-ramp: `GET /api/offramp/mpesa/info`, `GET /api/offramp/mpesa`, `POST /api/offramp/mpesa` (`confirm:true`)
-- Admin off-ramp: `GET /api/admin/offramp/mpesa`, `POST /api/admin/offramp/mpesa/<id>/{submit|reject|complete|pending|failed}` (admin+CSRF; submit requires `confirm:true`)
+- Admin off-ramp: `GET /api/admin/offramp/mpesa`, `POST /api/admin/offramp/mpesa/<id>/{approve|submit|reject|complete|pending|failed}` (admin+CSRF; `confirm:true`; optional maker-checker `MAFUTANI_OFFRAMP_MAKER_CHECKER=1` requires approve by different admin before submit; optional step-up 2FA via `MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE`). Daraja callback scaffold: `POST /api/offramp/mpesa/callback` (reconciliation only; authenticity not fully verified; optional `MAFUTANI_DARAJA_CALLBACK_SECRET`). Admin callbacks: `GET /api/admin/offramp/mpesa/callbacks`.
 - KYC workflow hooks: `GET/POST /api/kyc/me`, `GET /api/admin/kyc`, `POST /api/admin/kyc/<user_id>/review` (admin+CSRF)
 - Admin Daraja (legacy/admin tool path, as implemented): `GET /api/admin/daraja/status`, `POST /api/admin/daraja/withdraw` (admin+CSRF+`confirm:true`)
-- Admin: `GET /api/admin/overview`, `GET /api/admin/audit`
+- Admin: `GET /api/admin/overview`, `GET /api/admin/audit`, `GET /api/admin/readiness` (operator checklist; **not** safety/compliance certification)
 
 ## OpenTerminal
 

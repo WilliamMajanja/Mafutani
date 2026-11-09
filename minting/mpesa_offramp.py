@@ -53,6 +53,9 @@ def config():
         max_mft_d = Decimal(max_mft)
     except Exception:
         max_mft_d = Decimal("1000000000")
+    def _env_int(name, default):
+        try: return int(_env(name, str(default)))
+        except Exception: return int(default)
     return {
         "enabled": rate > 0,
         "rate_kes_per_mft": str(rate),
@@ -63,6 +66,11 @@ def config():
         "auto_submit_daraja": _env("MAFUTANI_MPESA_OFFRAMP_AUTO_SUBMIT", "").strip() == "1",
         "currency": "KES",
         "provider": "daraja",
+        "limits": {
+            "max_pending_per_user": _env_int("MAFUTANI_OFFRAMP_MAX_PENDING_PER_USER", 5),
+            "cooldown_seconds": _env_int("MAFUTANI_OFFRAMP_COOLDOWN_SECONDS", 0),
+            "max_requests_per_day": _env_int("MAFUTANI_OFFRAMP_MAX_PER_DAY", 0),
+        },
         "disclaimer": (
             "Operator-configured reference conversion and third-party payout path. "
             "Not a market price, quote, guarantee, or settlement confirmation. "
@@ -105,11 +113,28 @@ def ensure_schema(conn):
     # idempotency (best-effort; prevents accidental duplicate user submissions)
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(mft_mpesa_requests)").fetchall()]
-        if "idempotency_key" not in cols:
-            conn.execute("ALTER TABLE mft_mpesa_requests ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mft_mpesa_idem ON mft_mpesa_requests(user_id, idempotency_key)")
+        for col, ddl in [("idempotency_key","TEXT NOT NULL DEFAULT ''"), ("approved_by","INTEGER"), ("approved_at","INTEGER"), ("approval_note","TEXT NOT NULL DEFAULT ''")]:
+            if col not in cols:
+                conn.execute("ALTER TABLE mft_mpesa_requests ADD COLUMN %s %s" % (col, ddl))
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mft_mpesa_idem ON mft_mpesa_requests(user_id, idempotency_key)")
     except Exception:
         pass
+    # Callback reconciliation scaffold (raw events; authenticity NOT verified by this code).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mft_daraja_callbacks ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " received_at INTEGER NOT NULL,"
+        " path TEXT NOT NULL DEFAULT '',"
+        " remote_note TEXT NOT NULL DEFAULT '',"
+        " payload_json TEXT NOT NULL DEFAULT '{}',"
+        " conversation_id TEXT NOT NULL DEFAULT '',"
+        " originator_conversation_id TEXT NOT NULL DEFAULT '',"
+        " result_code TEXT NOT NULL DEFAULT '',"
+        " matched_request_id INTEGER,"
+        " reconcile_status TEXT NOT NULL DEFAULT 'received',"
+        " note TEXT NOT NULL DEFAULT '' )")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mft_daraja_cb_conv ON mft_daraja_callbacks(conversation_id, id)")
+
 
 
 def _dec_amount_mft(v):
@@ -146,11 +171,35 @@ def create_request(conn, user_id, phone, amount_mft, mft_address="", note="", id
             "SELECT * FROM mft_mpesa_requests WHERE user_id=? AND idempotency_key=? ORDER BY id DESC LIMIT 1",
             (int(user_id), idem)).fetchone()
         if existing:
-            row = _row(existing)
+            row = dict(existing) if hasattr(existing,"keys") else {}
             row["idempotent_replay"] = True
             row["disclaimer"] = "Duplicate submission detected for idempotency_key; returning existing request. Acceptance is not settlement. Not compliance-certified."
             return row
     cfg = config()
+    # Preventive velocity/cooldown controls (not compliance guarantees).
+    lim = cfg.get("limits") or {}
+    now_ts = int(time.time())
+    max_pending = int(lim.get("max_pending_per_user") or 0)
+    if max_pending > 0:
+        n = conn.execute("SELECT COUNT(*) AS c FROM mft_mpesa_requests WHERE user_id=? AND status IN ('pending','submitted')",
+                         (int(user_id),)).fetchone()
+        if n and int(n["c"] if hasattr(n,"keys") else n[0]) >= max_pending:
+            raise OfframpError("too many pending off-ramp requests (limit %s); not a compliance guarantee" % max_pending)
+    cooldown = int(lim.get("cooldown_seconds") or 0)
+    if cooldown > 0:
+        last = conn.execute("SELECT created_at FROM mft_mpesa_requests WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                            (int(user_id),)).fetchone()
+        if last:
+            la = int(last["created_at"] if hasattr(last,"keys") else last[0])
+            if now_ts - la < cooldown:
+                raise OfframpError("off-ramp cooldown active (%ss remaining); preventive control only" % max(1, cooldown - (now_ts-la)))
+    max_day = int(lim.get("max_requests_per_day") or 0)
+    if max_day > 0:
+        day_ago = now_ts - 86400
+        n = conn.execute("SELECT COUNT(*) AS c FROM mft_mpesa_requests WHERE user_id=? AND created_at>=?",
+                         (int(user_id), day_ago)).fetchone()
+        if n and int(n["c"] if hasattr(n,"keys") else n[0]) >= max_day:
+            raise OfframpError("daily off-ramp request limit reached (%s); preventive control only" % max_day)
     if not cfg["rate_configured"]:
         raise OfframpError(
             "M-Pesa off-ramp is not configured (set MAFUTANI_MFT_KES_RATE)")
@@ -200,6 +249,14 @@ def submit_request(conn, req_id, admin_user_id=None, daraja_client=None, remarks
     row = dict(row)
     if row["status"] not in (STATUS_PENDING, STATUS_FAILED):
         raise OfframpError("request is %s" % row["status"])
+    # Maker-checker hook (preventive control; not compliance/guarantee). When enabled, require
+    # a recorded approval by a different admin before submit.
+    if str(_env("MAFUTANI_OFFRAMP_MAKER_CHECKER", "")).strip() == "1":
+        approved_by = row.get("approved_by")
+        if not approved_by:
+            raise OfframpError("maker-checker enabled: request must be approved before submit (POST /approve)")
+        if admin_user_id is not None and int(approved_by) == int(admin_user_id):
+            raise OfframpError("maker-checker enabled: approver and submitter must differ (preventive control)")
     client = daraja_client or DarajaClient()
     res = client.b2c_payment(
         row["phone"], row["amount_kes"],
@@ -275,5 +332,68 @@ def update_status(conn, req_id, status, admin_note=""):
         "UPDATE mft_mpesa_requests SET status=?, admin_note=?, updated_at=?, confirmed_at=COALESCE(?, confirmed_at) WHERE id=?",
         (status, str(admin_note or "")[:500], now, confirmed, int(req_id)),
     )
+    conn.commit()
+    return get_request(conn, req_id)
+
+
+def record_callback(conn, payload, path="", remote_note=""):
+    """Store raw Daraja callback payload for operator reconciliation.
+    NOT a settlement confirmation. Authenticity is NOT verified here - operators must
+    protect the callback endpoint (network controls, TLS, Daraja practices) and reconcile."""
+    ensure_schema(conn)
+    if not isinstance(payload, dict):
+        payload = {"raw": str(payload)[:4000]}
+    raw = json.dumps(payload, default=str)[:12000]
+    # best-effort extraction of common Daraja fields
+    conv = orig = result = ""
+    try:
+        res = payload.get("Result") or payload.get("result") or {}
+        if isinstance(res, dict):
+            conv = str(res.get("ConversationID") or res.get("conversationID") or "")
+            orig = str(res.get("OriginatorConversationID") or res.get("originatorConversationID") or "")
+            result = str(res.get("ResultCode") if res.get("ResultCode") is not None else res.get("resultCode") or "")
+        conv = conv or str(payload.get("ConversationID") or payload.get("conversationID") or "")
+        orig = orig or str(payload.get("OriginatorConversationID") or payload.get("originatorConversationID") or "")
+    except Exception:
+        pass
+    matched = None
+    if conv or orig:
+        row = conn.execute(
+            "SELECT id FROM mft_mpesa_requests WHERE (conversation_id<>'' AND conversation_id=?) OR (originator_conversation_id<>'' AND originator_conversation_id=?) ORDER BY id DESC LIMIT 1",
+            (conv, orig)).fetchone()
+        if row:
+            matched = int(row["id"] if hasattr(row,"keys") else row[0])
+    now = int(time.time())
+    cur = conn.execute(
+        "INSERT INTO mft_daraja_callbacks(received_at,path,remote_note,payload_json,conversation_id,originator_conversation_id,result_code,matched_request_id,reconcile_status,note) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (now, str(path or "")[:200], str(remote_note or "")[:200], raw, conv[:120], orig[:120], str(result)[:40], matched,
+         "matched" if matched else "received",
+         "Callback stored for reconciliation. Authenticity NOT verified. Acceptance/result is NOT settlement."))
+    conn.commit()
+    return {"ok": True, "callback_id": cur.lastrowid, "matched_request_id": matched,
+            "disclaimer": "Callback stored for reconciliation only. Authenticity not verified; not settlement; not compliance-certified."}
+
+
+def list_callbacks(conn, limit=100):
+    ensure_schema(conn)
+    rows = conn.execute("SELECT * FROM mft_daraja_callbacks ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r) if hasattr(r, "keys") else {}
+        try:
+            d["payload"] = json.loads(d.get("payload_json") or "{}")
+        except Exception:
+            d["payload"] = {}
+        d.pop("payload_json", None)
+        out.append(d)
+    return out
+
+
+def approve_request(conn, req_id, admin_user_id, note=""):
+    ensure_schema(conn)
+    now = int(time.time())
+    conn.execute("UPDATE mft_mpesa_requests SET approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?",
+                 (int(admin_user_id), now, str(note or "")[:500], now, int(req_id)))
     conn.commit()
     return get_request(conn, req_id)

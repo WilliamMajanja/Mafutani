@@ -1757,6 +1757,12 @@ class Router:
             return self._offramp_mpesa_list(conn, h, qs)
         if path == "/api/offramp/mpesa" and method == "POST":
             return self._offramp_mpesa_create(conn, h)
+        if path == "/api/offramp/mpesa/callback" and method == "POST":
+            return self._offramp_mpesa_callback(h)
+        if path == "/api/admin/offramp/mpesa/callbacks" and method == "GET":
+            return self._admin_offramp_mpesa_callbacks(conn, h, qs)
+        if path == "/api/admin/readiness" and method == "GET":
+            return self._admin_readiness(conn, h)
         if path == "/api/admin/offramp/mpesa" and method == "GET":
             return self._admin_offramp_mpesa_list(conn, h, qs)
         if path.startswith("/api/admin/offramp/mpesa/") and method == "POST":
@@ -2085,6 +2091,36 @@ class Router:
             pass
         _err(h, "admin only", 403)
         return False
+
+    def _require_sensitive_stepup(self, conn, h, user, body=None):
+        """Preventive control (not a compliance guarantee). When MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE
+        is enabled, require step-up TOTP for sensitive admin actions. '1'/'true' = require code if
+        user has 2FA enabled; 'strict' = require 2FA enrollment and valid code."""
+        mode = str(os.environ.get("MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE", "") or "").strip().lower()
+        if mode not in ("1", "true", "yes", "strict"):
+            return True
+        ud = _row_to_dict(user) if not isinstance(user, dict) else user
+        enabled = int(ud.get("totp_enabled") or 0) == 1
+        secret = str(ud.get("totp_secret") or "")
+        body = body or {}
+        code = str(body.get("stepup_code") or body.get("totp_code") or body.get("code") or "").strip()
+        try:
+            from core import authz as _az
+        except Exception:
+            _az = None
+        if mode == "strict" and not enabled:
+            _err(h, "sensitive action requires 2FA enrollment (MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE=strict); not a compliance guarantee", 403)
+            return False
+        if enabled:
+            if not code:
+                _err(h, "sensitive action requires stepup_code (2FA/TOTP)", 403)
+                return False
+            if _az is None or not _az.verify_totp(secret, code):
+                _err(h, "invalid stepup_code", 403)
+                return False
+            return True
+        # mode 1/true but user not enrolled: allow (operator policy choice), but this is weaker.
+        return True
 
     # -- auth endpoints ------------------------------------------------
     def _signup(self, conn, h):
@@ -5299,6 +5335,85 @@ class Router:
         except Exception as e:
             return _err(h, "off-ramp request failed: %s" % e, 400)
 
+
+
+    def _offramp_mpesa_callback(self, h):
+        """Daraja callback reconciliation scaffold (stdlib). NOT settlement; authenticity NOT fully verified.
+        Optional shared-secret gate: if MAFUTANI_DARAJA_CALLBACK_SECRET is set, require matching X-Callback-Secret header."""
+        try:
+            secret = str(os.environ.get("MAFUTANI_DARAJA_CALLBACK_SECRET", "") or "")
+            if secret:
+                got = str(h.headers.get("X-Callback-Secret") or h.headers.get("x-callback-secret") or "")
+                if got != secret:
+                    return _send_json(h, {"ok": False, "error": "callback not accepted"}, status=403)
+            body, err = _read_json(h)
+            if err and body is None:
+                body = {}
+            from minting.mpesa_offramp import record_callback
+            import sqlite3
+            db = os.path.join(ROOT, "data", "trading.db")
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            try:
+                res = record_callback(conn, body or {}, path=getattr(h, "path", "/api/offramp/mpesa/callback"), remote_note="http-callback")
+            finally:
+                conn.close()
+            # Return Daraja-friendly acknowledgement shape; do not imply settlement.
+            return _send_json(h, {"ResultCode": 0, "ResultDesc": "Accepted for reconciliation (scaffold; not settlement; authenticity not fully verified)", "record": res})
+        except Exception:
+            return _send_json(h, {"ResultCode": 0, "ResultDesc": "Accepted (reconciliation scaffold)"})
+
+    def _admin_offramp_mpesa_callbacks(self, conn, h, qs):
+        user, _s = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        try:
+            limit = min(500, max(1, int((qs.get("limit") or [100])[0])))
+        except Exception:
+            limit = 100
+        try:
+            from minting.mpesa_offramp import list_callbacks
+            return _send_json(h, {"callbacks": list_callbacks(conn, limit=limit),
+                                  "disclaimer": "Reconciliation scaffold only. Callback authenticity not verified; not settlement; not compliance-certified."})
+        except Exception as e:
+            return _err(h, "callbacks unavailable: %s" % e, 500)
+
+    def _admin_readiness(self, conn, h):
+        """Operator readiness checklist (preventive controls). NOT a safety/compliance guarantee."""
+        user, _s = self._require_user(conn, h)
+        if user is None: return True
+        if not self._require_admin(conn, h, user): return True
+        checks = []
+        def add(name, ok, detail, severity="info"):
+            checks.append({"name": name, "ok": bool(ok), "detail": str(detail)[:300], "severity": severity})
+        try:
+            from minting.daraja import DarajaClient
+            ds = DarajaClient().status()
+            add("daraja_configured", ds.get("configured"), "Daraja credentials/config present (not verified as valid)" if ds.get("configured") else "Set DARAJA_* env vars in secure store", "warn" if not ds.get("configured") else "info")
+        except Exception as e:
+            add("daraja_configured", False, "Daraja status unavailable: %s" % e, "warn")
+        kyc_req = str(os.environ.get("MAFUTANI_KYC_REQUIRED_FOR_OFFRAMP","") or "").strip() == "1"
+        add("kyc_gate_enabled", kyc_req, "KYC workflow gate enabled (workflow only, not legal compliance)" if kyc_req else "Consider MAFUTANI_KYC_REQUIRED_FOR_OFFRAMP=1 for workflow gating", "info")
+        rate = str(os.environ.get("MAFUTANI_MFT_KES_RATE","0") or "0")
+        add("offramp_rate_configured", rate not in ("", "0", "0.0"), "MFT/KES reference rate configured (metadata only, not market price)" if rate not in ("","0","0.0") else "Set MAFUTANI_MFT_KES_RATE if off-ramp needed", "warn")
+        sec = str(os.environ.get("MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE","") or "").strip().lower()
+        add("stepup_2fa_policy", sec in ("1","true","strict"), "Sensitive step-up 2FA policy enabled" if sec else "Consider MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE=1|strict", "warn" if not sec else "info")
+        mc = str(os.environ.get("MAFUTANI_OFFRAMP_MAKER_CHECKER","") or "").strip() == "1"
+        add("maker_checker", mc, "Off-ramp maker-checker enabled (preventive control)" if mc else "Consider MAFUTANI_OFFRAMP_MAKER_CHECKER=1", "info")
+        cb = bool(os.environ.get("MAFUTANI_DARAJA_CALLBACK_SECRET"))
+        add("callback_shared_secret", cb, "Callback shared-secret configured (not full Daraja authenticity verification)" if cb else "Consider MAFUTANI_DARAJA_CALLBACK_SECRET + endpoint protection", "warn")
+        add("tls_reverse_proxy", False, "VERIFY MANUALLY: TLS/reverse proxy/WAF, IP allowlists, secret stores, backups, monitoring, incident playbooks", "warn")
+        return _send_json(h, {
+            "ok": True,
+            "checks": checks,
+            "summary": {
+                "guaranteed_safe": False,
+                "compliant": False,
+                "value_or_liquidity_guaranteed": False,
+                "note": "Readiness checklist only. Technical controls reduce preventable risk; they do not guarantee safety, compliance, value, liquidity, or settlement."
+            }
+        })
+
     def _admin_offramp_mpesa_list(self, conn, h, qs):
         user, _s = self._require_user(conn, h)
         if user is None:
@@ -5334,9 +5449,16 @@ class Router:
             return _err(h, err, 400)
         body = body or {}
         ud = _row_to_dict(user)
+        if action in ('submit', 'approve'):
+            if not self._require_sensitive_stepup(conn, h, user, body):
+                return True
         try:
-            from minting.mpesa_offramp import submit_request, update_status
-            if action == 'submit':
+            from minting.mpesa_offramp import submit_request, update_status, approve_request
+            if action == 'approve':
+                if not body.get('confirm'):
+                    return _err(h, "set confirm=true: approval is a preventive maker-checker control (not compliance/guarantee)", 400)
+                row = approve_request(conn, rid, ud['id'], note=str(body.get('note') or '')[:500])
+            elif action == 'submit':
                 if not body.get('confirm'):
                     return _err(h, "set confirm=true after verifying MFT receipt/compliance before Daraja submission", 400)
                 row = submit_request(conn, rid, admin_user_id=ud['id'])
@@ -5344,7 +5466,7 @@ class Router:
                 status = 'completed' if action == 'complete' else action
                 row = update_status(conn, rid, status, admin_note=str(body.get('note') or '')[:500])
             else:
-                return _err(h, "unknown action", 400)
+                return _err(h, "unknown action (submit|approve|reject|complete|pending|failed)", 400)
             _audit(conn, ud['id'], 'offramp.mpesa.%s' % action, ud.get('tier',''), 'offramp', {'request_id': rid, 'status': (row or {}).get('status')})
             row = dict(row) if row else {}
             if action == 'submit':
@@ -5426,6 +5548,8 @@ class Router:
         body, err = _read_json(h)
         if err: return _err(h, err, 400)
         body = body or {}
+        if not self._require_sensitive_stepup(conn, h, user, body):
+            return True
         if not body.get("confirm"):
             return _err(h, "set confirm=true: sync pull fetches and imports peer blocks (validated, tip-append); treat peers as untrusted", 400)
         peer = body.get("peer") or body.get("url")
@@ -5454,6 +5578,8 @@ class Router:
         body, err = _read_json(h)
         if err: return _err(h, err, 400)
         body = body or {}
+        if not self._require_sensitive_stepup(conn, h, user, body):
+            return True
         if not body.get("confirm"):
             return _err(h, "set confirm=true: chain import validates but mutates local chain state; treat peer data as untrusted", 400)
         blocks = body.get("blocks") or []
