@@ -12,7 +12,7 @@ import os
 import time
 
 from chain import consensus, pqc
-from chain.ledger import Chain, canonical_tx_bytes, sighash, txid_for
+from chain.ledger import Chain, canonical_tx_bytes, sighash, txid_for, MAX_MEMO_BYTES, MAX_RECORD_BYTES, _normalize_record
 
 
 class Wallet(object):
@@ -125,18 +125,61 @@ class Wallet(object):
         except Exception:
             pass
 
-    def build_transfer(self, chain, to_address, amount_mft, memo="", fee_base=0):
+    @staticmethod
+    def _parse_amount_base(amount_mft=None, amount_base=None):
+        """Parse transfer amount to base units (COIN = 10**8). Accepts large ints/strings."""
+        if amount_base is not None and amount_base != "":
+            try:
+                ab = int(str(amount_base).strip())
+            except Exception:
+                raise ValueError("amount_base must be an integer (base units)")
+            if ab <= 0:
+                raise ValueError("amount_base must be positive")
+            return ab
+        if amount_mft is None or amount_mft == "":
+            raise ValueError("amount_mft or amount_base required")
+        if isinstance(amount_mft, bool):
+            raise ValueError("invalid amount_mft")
+        if isinstance(amount_mft, int):
+            ab = amount_mft * consensus.COIN
+        else:
+            s = str(amount_mft).strip()
+            if not s:
+                raise ValueError("amount_mft required")
+            # Prefer exact integer MFT strings; allow decimal strings for compatibility.
+            if s.lstrip("+-").isdigit():
+                ab = int(s) * consensus.COIN
+            else:
+                try:
+                    from decimal import Decimal, ROUND_DOWN
+                    d = Decimal(s)
+                except Exception:
+                    raise ValueError("invalid amount_mft")
+                if d <= 0:
+                    raise ValueError("amount must be positive")
+                ab = int((d * Decimal(consensus.COIN)).to_integral_value(rounding=ROUND_DOWN))
+        if ab <= 0:
+            raise ValueError("amount must be positive")
+        return ab
+
+    def build_transfer(self, chain, to_address, amount_mft=None, memo="", fee_base=0, *, amount_base=None, record=None):
         if not str(to_address).startswith(pqc.ADDR_PREFIX):
             raise ValueError("invalid recipient address")
-        amount_base = int(amount_mft) * consensus.COIN if isinstance(amount_mft, int) and amount_mft >= 0 else None
-        if amount_base is None:
-            amount_base = int(float(str(amount_mft)) * consensus.COIN)
-        if amount_base <= 0:
-            raise ValueError("amount must be positive")
+        amount_base_v = self._parse_amount_base(amount_mft=amount_mft, amount_base=amount_base)
+        if amount_base_v > consensus.MAX_MONEY:
+            raise ValueError("amount exceeds MAX_MONEY sanity cap (%s base units); split or review consensus/policy" % consensus.MAX_MONEY)
+        memo_s = "" if memo is None else str(memo)
+        if len(memo_s.encode("utf-8", "replace")) > MAX_MEMO_BYTES:
+            raise ValueError("memo too large (max %s bytes; anchor large data by hash/reference)" % MAX_MEMO_BYTES)
+        rec_n = _normalize_record(record) if record is not None and record != "" and record != {} else None
+        if rec_n is not None:
+            rec_bytes = json.dumps(rec_n, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            if len(rec_bytes) > MAX_RECORD_BYTES:
+                raise ValueError("record too large (max %s bytes; anchor large off-chain data by hash/reference)" % MAX_RECORD_BYTES)
         epoch = chain.current_epoch()
-        need = amount_base + int(fee_base)
+        need = amount_base_v + int(fee_base)
         selected, total = self._select_utxos(chain, need, epoch)
-        outputs = [{"a": to_address, "v": amount_base, "ce": epoch}]
+        outputs = [{"a": to_address, "v": amount_base_v, "ce": epoch}]
         change = total - need
         if change > 0:
             outputs.append({"a": self.address, "v": change, "ce": epoch})
@@ -145,8 +188,10 @@ class Wallet(object):
             "epoch": epoch,
             "inputs": [{"tx": u["txid"], "n": int(u["vout"]), "pub": self.pub, "sig": None} for u in selected],
             "outputs": outputs,
-            "memo": memo or "",
+            "memo": memo_s,
         }
+        if rec_n is not None:
+            tx["record"] = rec_n
         # Stateful PQC safety (experimental/unaudited): one WOTS+ leaf/index per signature.
         # NEVER reuse indexes; NEVER restore stale wallet backups/state/copies.
         max_sigs = (1 << int(self.priv.get("h", pqc.TREE_HEIGHT)))
@@ -162,7 +207,7 @@ class Wallet(object):
         priv_work = copy.deepcopy(self.priv)
         intent = {"ts": int(time.time()), "event": "sign_intent", "address": self.address,
                   "next_index_before": used, "need_sigs": need_sigs, "max_sigs": max_sigs,
-                  "inputs": len(tx["inputs"]), "outputs": len(tx["outputs"]), "amount_base": amount_base}
+                  "inputs": len(tx["inputs"]), "outputs": len(tx["outputs"]), "amount_base": amount_base_v}
         self._append_signing_journal(intent)
         for i in range(len(tx["inputs"])):
             tx["inputs"][i]["sig"] = pqc.sign_message(priv_work, sighash(tx, i))

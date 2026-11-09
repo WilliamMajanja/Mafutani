@@ -2903,7 +2903,7 @@
       }
       var areaW = Math.max(900, (out.w||1280)-20), areaH = Math.max(520, (out.h||800)-220);
       view().innerHTML = "<h2>CommCoin Node Compositor <span class='kpi-l'>(Wayland-like desktop, stdlib model + web renderer)</span></h2>" +
-        "<div class='warn' style='margin:8px 0;padding:8px;border:1px solid #2f6'>Wayland-inspired compositor: wl_display/registry, wl_compositor+wl_surface, wl_output, wl_seat, xdg_wm_base/toplevel, scene+damage, shell tasks. Merkle-ized chain commitments & proofs exposed. Experimental.</div>" +
+        "<div class='warn' style='margin:8px 0;padding:8px;border:1px solid #2f6'>Wayland-inspired compositor (experimental/unaudited): wl_display/registry, wl_compositor+wl_surface, wl_output, wl_seat, xdg_wm_base/toplevel, scene+damage, shell tasks. Merkle-ized chain commitments & proofs exposed. Not hardened/certified for all industries/disciplines; no guaranteed security/consensus/value/compliance. CPIP/external refs report-only (no auto-apply). Land/asset anchors are not legal title/registry proof.</div>" +
         "<div class='kpi-row' style='gap:8px;flex-wrap:wrap'><span class='badge'>display "+esc((comp.display||{}).id)+"</span><span class='badge'>globals "+esc(((comp.display||{}).globals||[]).length)+"</span><span class='badge'>output "+esc(out.w)+"x"+esc(out.h)+"</span><span class='badge'>surfaces "+esc(surfs.length)+"</span><span class='badge'>damage "+esc((comp.scene||{}).damage_serial)+"</span><button id='desk-new'>New Toplevel</button><button id='desk-refresh'>Refresh</button></div>" +
         "<div id='desk-area' style='position:relative;margin-top:10px;width:"+areaW+"px;height:"+areaH+"px;background:linear-gradient(180deg,#0b1220,#081018);border:1px solid #334;border-radius:8px;overflow:hidden'>" + surfs.map(surfHtml).join("") + "</div>" +
         "<div class='card' style='margin-top:10px'><h3>Shell Tasks / Globals</h3><div class='kpi-l'>"+tasks.map(function(t){ return esc(t.title)+" (#"+esc(t.surface_id)+", "+esc(t.app_id)+")"; }).join(" · ")+"</div><div class='kpi-l' style='margin-top:6px'>"+((comp.display||{}).globals||[]).map(function(g){ return esc(g.interface)+"@v"+esc(g.version); }).join(" · ")+"</div></div>";
@@ -2918,12 +2918,19 @@
     view().innerHTML = "<h2>Policies</h2><p class='kpi-l'>Loading…</p>";
     api("GET", "/api/policies").then(function (r) {
       var sum = r.summary || {};
-      var badges = Object.keys(sum).map(function (k) { return "<span class='badge'>" + esc(k.replace(/_/g," ")) + ": " + esc(String(sum[k])) + "</span>"; }).join(" ");
+      var caveats = r.caveats || [];
+      var badges = Object.keys(sum).map(function (k) { return "<span class='badge'>" + esc(k.replace(/_/g," ")) + ": " + esc(typeof sum[k] === 'string' ? sum[k] : String(sum[k])) + "</span>"; }).join(" ");
+      var caveatHtml = caveats.length ? "<ul style='margin:6px 0 0 18px'>" + caveats.map(function(c){ return "<li>" + esc(c) + "</li>"; }).join("") + "</ul>" : "";
       var doc = esc(r.document || "See docs/POLICIES.md").replace(/\n/g, "<br>");
       view().innerHTML = "<h2>Policies & Risk Disclosures</h2>" +
         "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'>" +
-        "<b>Not financial/legal/tax advice.</b> Experimental crypto/payment features: total loss possible; transfers/keys may be irreversible. " +
-        "Operators must satisfy KYC/AML/sanctions/tax and local-law requirements.</div>" +
+        "<b>EXPERIMENTAL / UNAUDITED — NOT HARDENED OR CERTIFIED FOR ALL INDUSTRIES OR DISCIPLINES.</b><br>" +
+        "Not financial, investment, legal, tax, or real-estate/title advice. No guaranteed security, consensus correctness, value, liquidity, settlement, or compliance. " +
+        "Transfers/keys may be irreversible; total loss possible. " +
+        "CPIP/external references are <b>report-only</b> — no safe auto-update/auto-apply. " +
+        "Land/asset chain anchors are <b>not legal title or a registry</b>. " +
+        "Production reliance requires independent audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration with versioned test vectors, and operator compliance/custody controls." +
+        caveatHtml + "</div>" +
         "<div class='kpi-row' style='flex-wrap:wrap;gap:6px;margin:8px 0'>" + badges + "</div>" +
         "<h3>Full Policy</h3><div class='card' style='max-height:60vh;overflow:auto;font-size:13px;line-height:1.45'>" + doc + "</div>";
     }).catch(function (e) { view().innerHTML = "<h2>Policies</h2><p class='error'>" + esc(e.message) + "</p>"; });
@@ -2951,14 +2958,19 @@
       }).join("") || "<tr><td colspan='5' class='dim'>No requests yet</td></tr>";
       var offDisabled = !off.enabled;
       view().innerHTML = "<h2>Mafutani Chain (MFT / CommCoin)</h2>" +
-        "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'>CommCoin/MFT is the primary chain. Experimental zero-dep blockchain: SBC-mineable PoW (SHAKE256), hash-based PQC signatures. <b>6-month epochs seed 100,000,000,000 " + esc(info.coin_symbol||"MFT") + "</b>; outputs expire and are replaced by deterministic epoch seeding. <b>$100,000/CommCoin is reference/config metadata only</b> (not a market price/guarantee). Not financial advice; total loss possible.</div>" +
+        "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'><b>EXPERIMENTAL / UNAUDITED.</b> CommCoin/MFT is SBC-mineable PoW (SHAKE256) with hash-based PQC signatures. <b>6-month epochs seed 100,000,000,000 " + esc(info.coin_symbol||"MFT") + "</b>; outputs may expire/be replaced by deterministic epoch seeding. <b>$100,000/CommCoin is reference/config metadata only</b> (not a market price/guarantee). <b>Not hardened/certified for all industries or disciplines.</b> No guaranteed security, consensus, value, liquidity, settlement, or compliance. CPIP/external refs are report-only (no auto-apply). <b>Land/asset anchors are NOT legal title/registry/ownership proof</b>; current token expiry may be unsuitable for durable land/title. Total loss possible.</div>" +
         "<div class='grid'>" +
         "<div class='card'><h3>Chain</h3><p>Height <b>" + esc(info.height) + "</b> · epoch <b>" + esc(info.epoch) + "</b> · seeded " + esc(String(info.epoch_seeded)) + " · next bits " + esc(info.next_bits) + "</p><p class='kpi-l'>Coin <b>" + esc(info.coin_name||"Mafutani Coin") + " (" + esc(info.coin_symbol||"MFT") + ", " + esc(info.coin_alias||"CommCoin") + ")</b> · reward " + esc(info.epoch_reward_mft) + " / epoch · lifetime " + esc(info.token_lifetime_epochs) + " epoch(s)</p><p class='kpi-l'><b>Reference value:</b> $ " + esc(Number(info.reference_value_usd||100000).toLocaleString()) + " USD / " + esc(info.coin_symbol||"MFT") + " <span style='opacity:.8'>(" + esc(info.reference_value_note||"reference only, not a market price/guarantee") + ")</span></p><p class='kpi-l'>" + esc(info.pqc) + "</p></div>" +
         "<div class='card'><h3>Wallet</h3>" + walletHtml + "</div>" +
         "</div>" +
         "<div class='card'><h3>Mine (SBC-friendly rounds)</h3><p class='kpi-l'>Runs a limited PoW search on the server and submits a block if found. Use small rounds on shared/SBC hosts.</p>" +
         "<button id='mft-mine'>Mine rounds</button> <input id='mft-rounds' type='number' value='200000' min='1000' max='2000000' style='width:120px'> <span id='mft-mine-out' class='kpi-l'></span></div>" +
-        "<div class='card'><h3>Send MFT</h3><p><input id='mft-to' placeholder='mft1… address' style='width:60%'> <input id='mft-amt' type='number' min='1' placeholder='amount MFT' style='width:140px'> <button id='mft-send'>Sign & Mine</button></p><p id='mft-send-out' class='kpi-l'></p></div>" +
+        "<div class='card'><h3>Send MFT / Anchor Record</h3>" +
+        "<p class='kpi-l'>Requires explicit confirmation. Transfers may be irreversible. Amount/data capacity is technically bounded (UTXOs, tx/block bounds, memo/record byte limits, wallet PQC signature capacity, token expiry). Memo/record anchors are <b>not legal title, not a registry, not proof of ownership</b>. Large records must be anchored by hash/reference off-chain.</p>" +
+        "<p><input id='mft-to' placeholder='mft1… address' style='width:60%'> <input id='mft-amt' type='number' min='0' step='any' placeholder='amount MFT' style='width:140px'> <button id='mft-send'>Confirm, Sign & Mine</button></p>" +
+        "<p><input id='mft-memo' placeholder='Memo (bounded)' style='width:95%'></p>" +
+        "<p><textarea id='mft-record' placeholder='Optional record JSON anchor (bounded), e.g. {\"kind\":\"land_anchor\",\"hashes\":[{\"alg\":\"sha256\",\"value\":\"...\"}],\"parcel\":\"...\",\"jurisdiction\":\"...\"}. NOT legal title/registry.' rows='3' style='width:95%'></textarea></p>" +
+        "<p id='mft-send-out' class='kpi-l'></p></div>" +
         "<div class='card'><h3>Off-ramp to M-Pesa (Daraja)</h3>" +
         "<p class='kpi-l'>Easy user off-ramp flow for CommCoin/MFT. Requires operator config: <code>MAFUTANI_MFT_KES_RATE</code> and Daraja credentials. Conversion is operator-configured reference metadata — <b>not a market price/guarantee</b>. Daraja acceptance is <b>not settlement</b>; callbacks/reconciliation and KYC/AML/sanctions/tax compliance are operator responsibilities.</p>" +
         "<p class='kpi-l'>Rate: <b>" + esc(off.rate_kes_per_mft||"0") + " KES / MFT</b> · enabled " + esc(String(!!off.enabled)) + " · Daraja ready " + esc(String(!!off.daraja_b2c_ready)) + (off.treasury_mft_address ? " · treasury <code>"+esc(off.treasury_mft_address)+"</code>" : "") + "</p>" +
@@ -2981,8 +2993,29 @@
       };
       var sb = document.getElementById("mft-send");
       if (sb) sb.onclick = function () {
-        var out = document.getElementById("mft-send-out"); sb.disabled = true; out.textContent = "signing/mining…";
-        api("POST", "/api/chain/send", {to: document.getElementById("mft-to").value.trim(), amount_mft: parseInt(document.getElementById("mft-amt").value||"0",10)})
+        var out = document.getElementById("mft-send-out");
+        var to = document.getElementById("mft-to").value.trim();
+        var amtRaw = document.getElementById("mft-amt").value;
+        var memo = (document.getElementById("mft-memo").value || "");
+        var recRaw = (document.getElementById("mft-record").value || "").trim();
+        var record = null;
+        if (!to) { out.textContent = "Recipient address required."; return; }
+        if (!amtRaw) { out.textContent = "Amount required."; return; }
+        if (recRaw) {
+          try { record = JSON.parse(recRaw); } catch (e) { out.textContent = "Record must be valid JSON: " + e.message; return; }
+        }
+        var msg = "Confirm CommCoin/MFT transfer?\n\nTo: " + to + "\nAmount (MFT): " + amtRaw +
+          "\n\nEXPERIMENTAL/UNAUDITED. Transfers may be irreversible; total loss possible. " +
+          "No guaranteed security/consensus/value/liquidity/compliance. " +
+          "Not hardened/certified for all industries or disciplines. " +
+          "Memo/record anchors are NOT legal title, NOT a land registry, NOT proof of ownership. " +
+          "Current token expiry/UTXO semantics may be unsuitable for durable land/title. " +
+          "Stateful PQC wallet: never reuse/restore stale backups/state.\n\nContinue?";
+        if (!window.confirm(msg)) return;
+        sb.disabled = true; out.textContent = "signing/mining…";
+        var payload = {to: to, amount_mft: amtRaw, memo: memo, confirm: true};
+        if (record) payload.record = record;
+        api("POST", "/api/chain/send", payload)
           .then(function(r){ out.textContent = JSON.stringify(r); if(r.mined) pageChain(); else sb.disabled=false; })
           .catch(function(e){ out.textContent = e.message; sb.disabled=false; });
       };

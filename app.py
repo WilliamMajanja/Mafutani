@@ -832,8 +832,20 @@ def main():
         t.start()
     port = int(os.environ.get("PORT", "8000"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print("Mafutani CTA serving on :{} (web={}, db={})".format(
-        port, WEB_DIR, os.environ.get("DB_PATH", os.path.join("data", "trading.db"))))
+    banner = [
+        "Mafutani CTA serving on :{} (web={}, db={})".format(
+            port, WEB_DIR, os.environ.get("DB_PATH", os.path.join("data", "trading.db"))),
+        "WARNING: EXPERIMENTAL/UNAUDITED. Not hardened/certified for all industries or disciplines.",
+        "No guaranteed security, consensus correctness, value, liquidity, settlement, or compliance.",
+        "Reference MFT/USD values are metadata only (not market price/guarantee). Acceptance != settlement.",
+        "CPIP/external refs are REPORT-ONLY; no safe auto-update/auto-apply (intentionally excluded).",
+        "Land/asset anchors are NOT legal title/registry records; current token expiry may not suit durable title.",
+        "Production reliance requires independent audits, formal/threat modeling, adversarial/fuzz/fork-stall testing,",
+        "vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA/audited impls) with versioned test vectors,",
+        "and operator compliance/custody controls. See docs/POLICIES.md and SECURITY.md.",
+    ]
+    for line in banner:
+        print(line)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

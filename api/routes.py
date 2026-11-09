@@ -4869,21 +4869,36 @@ class Router:
                     doc = f.read(); break
             except Exception:
                 pass
+        summary = {
+            "experimental_unaudited": True,
+            "not_hardened_or_certified_for_all_industries_or_disciplines": True,
+            "not_financial_investment_legal_tax_or_title_advice": True,
+            "paper_default_live_crypto_can_cause_real_loss": True,
+            "commcoin_mft_irreversible_total_loss_possible": True,
+            "no_guaranteed_security_consensus_value_liquidity_settlement_or_compliance": True,
+            "coin_reference_usd_metadata_only_not_market_price_or_guarantee": True,
+            "design_goals_not_guarantees": True,
+            "pqc_stateful_never_reuse_indexes_or_restore_stale_backups": True,
+            "mpesa_daraja_third_party_acceptance_not_settlement": True,
+            "operator_owns_credentials_callbacks_reconciliation_compliance": True,
+            "kyc_hooks_zero_dep_workflow_only_not_legal_compliance": True,
+            "land_asset_records_not_legal_title_registry_or_proof_of_ownership": True,
+            "cpip_external_refs_report_only_no_safe_auto_update_or_auto_apply": True,
+            "no_replacement_for_audits_formal_threat_adversarial_testing_vetted_pqc_migration_operator_controls": True,
+            "epoch_seed": "100000000000 MFT every 182 days (deterministic protocol rule; no economic guarantee)",
+            "token_expiry_replacement": "deterministic per consensus; expired outputs not spendable",
+        }
+        caveats = [
+            "Not hardened/certified for any industry or discipline (finance, land/title/registry, healthcare, government, safety-critical, regulated use).",
+            "No guaranteed security, consensus correctness, value, liquidity, convertibility, settlement, or compliance. System is experimental/unaudited.",
+            "CPIP/external references are report-only. No safe auto-update or auto-apply from CPIP; auto-apply is intentionally excluded. Manual security review required.",
+            "No replacement for audits. Production reliance requires independent crypto/consensus/security audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA or audited implementations) with versioned test vectors, and operator compliance/custody controls.",
+            "Land/asset transaction metadata/hash anchors are NOT legal title, NOT a registry, and NOT proof of ownership/enforceability. 'Any size' is technically bounded (UTXOs, tx/block bounds, memo/record limits, wallet PQC signature capacity, token expiry). Current token expiry semantics may be unsuitable for durable land/title.",
+        ]
         return _send_json(h, {
             "ok": True,
-            "summary": {
-                "not_financial_investment_legal_or_tax_advice": True,
-                "paper_default_live_crypto_can_cause_real_loss": True,
-                "commcoin_mft_experimental_unaudited_irreversible_total_loss_possible": True,
-                "coin_reference_usd_metadata_only_not_market_price_or_guarantee": True,
-                "design_goals_not_guarantees": True,
-                "pqc_stateful_never_reuse_indexes_or_restore_stale_backups": True,
-                "mpesa_daraja_third_party_acceptance_not_settlement": True,
-                "operator_owns_credentials_callbacks_reconciliation_compliance": True,
-                "kyc_hooks_zero_dep_workflow_only_not_legal_compliance": True,
-                "epoch_seed": "100000000000 MFT every 182 days (deterministic protocol rule; no economic guarantee)",
-                "token_expiry_replacement": "deterministic per consensus; expired outputs not spendable",
-            },
+            "summary": summary,
+            "caveats": caveats,
             "document": doc,
             "path": "docs/POLICIES.md",
         })
@@ -4920,9 +4935,11 @@ class Router:
             try:
                 info = c.chain_info()
                 tip = c.tip()
-                info["disclaimer"] = "Experimental/unaudited chain software. Not financial, investment, legal, or tax advice. CommCoin/MFT keys and transactions may be irreversible; bugs/consensus/key loss can cause total loss."
+                info["disclaimer"] = "Experimental/unaudited chain software. Not financial, investment, legal, tax, or title advice. CommCoin/MFT keys and transactions may be irreversible; bugs/consensus/key loss can cause total loss."
                 info["reference_value_is_metadata_only"] = True
-                info["no_guarantees"] = "Reference/config values and design goals (deterministic rules, SBC/PiNet capture, validation controls) do not guarantee value, stability, security, liquidity, adoption, or absence of bugs/hacks."
+                info["no_guarantees"] = "No guaranteed security, consensus correctness, value, liquidity, settlement, or compliance. Reference/config values and design goals do not guarantee fitness for any industry/discipline, including land/title/registry."
+                info["cpip_policy"] = "CPIP/external refs are report-only; no safe auto-update/auto-apply (intentionally excluded)."
+                info["land_records"] = "Memo/record fields can anchor bounded metadata/hashes only. NOT legal title, NOT a registry, NOT proof of ownership. Current token expiry/UTXO semantics may be unsuitable for durable land/title. Requires audits, legal/registry process, and operator controls."
                 info["consensus"] = {
                     "epoch_seconds": 15724800,
                     "epoch_days": 182,
@@ -4975,7 +4992,8 @@ class Router:
                     "spendable_base": bal, "spendable_mft": str(bal // 10**8),
                     "utxos": [{"txid": u["txid"], "vout": u["vout"], "amount": int(u["amount"]),
                                "creation_epoch": int(u["creation_epoch"]), "expired": bool(u["expired"])} for u in utxos[:200]],
-                    "disclaimer": "Experimental/unaudited chain data. Balances/UTXOs are not guarantees of value or spendability in all failure modes. Not financial advice.",
+                    "disclaimer": "Experimental/unaudited chain data. Balances/UTXOs are not guarantees of value, spendability, security, consensus, or compliance. Not financial/legal/title advice.",
+                    "land_records": "On-chain memo/record anchors are NOT legal title/registry/ownership proof. Token expiry/UTXO semantics may be unsuitable for durable land/title.",
                 })
             finally:
                 c.close()
@@ -5090,11 +5108,16 @@ class Router:
             return _err(h, err, 400)
         body = body or {}
         if not body.get("confirm"):
-            return _err(h, "set confirm=true: CommCoin transfers may be irreversible; experimental/unaudited chain; verify recipient and amount", 400)
+            return _err(h, "set confirm=true: CommCoin transfers may be irreversible; experimental/unaudited chain; verify recipient, amount, memo/record, and jurisdictional/legal/title suitability. Land/asset records are anchors only, NOT legal title/registry ownership.", 400)
         to = str(body.get("to") or "").strip()
         amt = body.get("amount_mft")
-        if not to or amt is None:
-            return _err(h, "to and amount_mft required", 400)
+        amount_base = body.get("amount_base")
+        if not to or (amt is None and amount_base is None):
+            return _err(h, "to and (amount_mft or amount_base) required", 400)
+        memo = "" if body.get("memo") is None else str(body.get("memo"))
+        record = body.get("record")
+        if isinstance(record, dict) and not record:
+            record = None
         path = self._mft_wallet_path(ud["id"])
         if not os.path.isfile(path):
             return _err(h, "no chain wallet", 400)
@@ -5103,7 +5126,7 @@ class Router:
             w = Wallet(path).load()
             c = self._mft_chain()
             try:
-                tx = w.build_transfer(c, to, amt, memo=str(body.get("memo", ""))[:140])
+                tx = w.build_transfer(c, to, amt, memo=memo, amount_base=amount_base, record=record)
                 # In this local-node model, a transfer is accepted when included in a mined block.
                 # For usability, attempt to mine it in a small block.
                 from chain.miner import Miner
@@ -5113,11 +5136,13 @@ class Router:
                        "mined": res.get("ok"), "mine_result": res}
                 if res.get("ok"):
                     _audit(conn, ud["id"], "mft.send", ud.get("tier", ""), "chain",
-                           {"txid": tx.get("txid"), "to": to, "amount_mft": str(amt)})
+                           {"txid": tx.get("txid"), "to": to, "amount_mft": str(amt), "has_record": bool(record)})
                 else:
                     out["note"] = "Transaction signed but not mined in this call (no PoW solution found). Keep tx and mine/include via node tooling."
                     out["tx"] = tx
-                out["disclaimer"] = "Transfers may be irreversible. Experimental chain."
+                out["disclaimer"] = "Transfers may be irreversible. Experimental/unaudited chain; no guaranteed security, consensus, value, liquidity, or compliance."
+                out["record_disclaimer"] = "Any memo/record is bounded on-chain metadata/anchor only. NOT legal title, NOT a land/asset registry, NOT proof of ownership/enforceability. Large records must be anchored by hash/reference off-chain. Current token expiry/UTXO semantics may be unsuitable for durable land/title."
+                out["limits_note"] = "Amount/data capacity is technically bounded (UTXOs, MAX_TX_INPUTS/OUTPUTS, memo/record byte limits, wallet PQC signature capacity, token expiry). Not a guarantee of fitness for any transaction size or industry."
                 return _send_json(h, out)
             finally:
                 c.close()
@@ -5462,17 +5487,26 @@ class Router:
         add("maker_checker", mc, "Off-ramp maker-checker enabled (preventive control)" if mc else "Consider MAFUTANI_OFFRAMP_MAKER_CHECKER=1", "info")
         cb = bool(os.environ.get("MAFUTANI_DARAJA_CALLBACK_SECRET"))
         add("callback_shared_secret", cb, "Callback shared-secret configured (not full Daraja authenticity verification)" if cb else "Consider MAFUTANI_DARAJA_CALLBACK_SECRET + endpoint protection", "warn")
-        add("cpip_reference_tracking", True, "CPIP/external refs are report-only (GET/POST /api/admin/external_refs*). NEVER auto-update; manual security review required.", "info")
-        add("consensus_crypto_audit", False, "VERIFY MANUALLY: independent consensus/PQC/security audit, adversarial/fork/finality testing, and vetted PQC migration required before production reliance.", "warn")
+        add("cpip_reference_tracking", True, "CPIP/external refs are report-only (GET/POST /api/admin/external_refs*). NEVER auto-update/auto-apply; intentionally excluded. Manual security review required.", "info")
+        add("consensus_crypto_audit", False, "VERIFY MANUALLY: independent crypto/consensus/security audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, and vetted standardized PQC migration (SLH-DSA/ML-DSA or audited implementations) with versioned test vectors required before production reliance.", "warn")
+        add("industry_discipline_hardening", False, "NOT certified/hardened for all industries/disciplines (finance, land/title/registry, healthcare, government, safety-critical, regulated use). Independent controls required.", "warn")
+        add("land_asset_records", False, "Chain memo/record anchors are NOT legal title/registry/ownership proof. Current token expiry/UTXO semantics may be unsuitable for durable land/title. VERIFY MANUALLY: legal/registry process, authority/identity controls, audits.", "warn")
         add("tls_reverse_proxy", False, "VERIFY MANUALLY: TLS/reverse proxy/WAF, IP allowlists, secret stores, backups, monitoring, incident playbooks", "warn")
         return _send_json(h, {
             "ok": True,
             "checks": checks,
+            "caveats": [
+                "Experimental/unaudited. No guaranteed security, consensus, value, liquidity, settlement, or compliance.",
+                "CPIP/external refs: report-only; no safe auto-update/auto-apply.",
+                "No replacement for audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted PQC migration with versioned test vectors, and operator compliance/custody controls.",
+            ],
             "summary": {
                 "guaranteed_safe": False,
                 "compliant": False,
+                "hardened_for_all_industries_or_disciplines": False,
                 "value_or_liquidity_guaranteed": False,
-                "note": "Readiness checklist only. Technical controls reduce preventable risk; they do not guarantee safety, compliance, value, liquidity, or settlement."
+                "land_title_registry_certified": False,
+                "note": "Readiness checklist only. Technical controls reduce preventable risk; they do not guarantee safety, compliance, value, liquidity, settlement, industry fitness, or legal title/registry validity."
             }
         })
 

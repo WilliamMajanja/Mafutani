@@ -1,7 +1,7 @@
 # Mafutani RFC/RFF Summary (current stance)
 
 > **Current (2026-11):** Mafutani is **stdlib-only** and centered on **CommCoin/MFT (PiNet, SBC block capture)** plus an operator-configured **M-Pesa/Daraja off-ramp** and **zero-dependency KYC workflow hooks**. **Minima and Binance integrations are removed** from the active runtime.  
-> Chain/PQC/PiNet/compositor/off-ramp/KYC are **experimental and unaudited**. `$100,000/CommCoin` is **reference/config metadata only** (not a market price/guarantee). Daraja acceptance ≠ settlement; KYC hooks ≠ legal compliance.
+> Chain/PQC/PiNet/compositor/off-ramp/KYC/record anchors are **experimental and unaudited**. **Not hardened/certified for all industries or disciplines.** No guaranteed security, consensus correctness, value, liquidity, settlement, or compliance. `$100,000/CommCoin` is **reference/config metadata only** (not a market price/guarantee). Daraja acceptance ≠ settlement; KYC hooks ≠ legal compliance. Land/asset anchors are **not legal title/registry/ownership proof**; technical size is bounded and token expiry may be unsuitable for durable title. **CPIP/external refs: report-only; no safe auto-update/auto-apply.** Production reliance requires audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration with versioned test vectors, and operator controls.
 
 ## RFCs
 

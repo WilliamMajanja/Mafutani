@@ -4,8 +4,22 @@
 
 Mafutani is **experimental software**. Components including the CommCoin/MFT
 chain, hash-based PQC wallet/signature implementation, PiNet/sync flows,
-compositor node model, trading/risk/live-order paths, and payment/off-ramp
-integrations are **not externally audited** and may contain security defects.
+compositor node model, trading/risk/live-order paths, payment/off-ramp, KYC
+workflow hooks, and any record/anchor features are **not externally audited**
+and may contain security defects.
+
+**Not hardened or certified for all industries and disciplines.** No guarantee
+of security, consensus correctness, value, liquidity, convertibility,
+settlement, or compliance. Not suitable to claim fitness for finance,
+land/title/registry, healthcare, government, safety-critical, or regulated use
+without independent audits, formal/threat modeling, adversarial/fuzz/fork-stall
+testing, vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA or audited
+implementations) with versioned test vectors, and operator compliance/custody
+controls.
+
+**CPIP/external references:** report-only. **No safe auto-update or auto-apply**
+from CPIP/external sources; auto-apply is intentionally excluded. Never fetch or
+apply external code/config into the runtime automatically.
 
 There is currently **no guarantee** of security updates, response times, or
 supported release branches. Operators and users should deploy with appropriate

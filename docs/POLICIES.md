@@ -1,18 +1,21 @@
 # Mafutani Policies & Security Stance
 
-**Scope:** Mafutani platform, APIs, web UI, terminal, CommCoin/MFT chain, PiNet/node sync, compositor desktop, wallet/mining, M-Pesa/Daraja off-ramp, and zero-dependency KYC workflow hooks.
+**Scope:** Mafutani platform, APIs, web UI, terminal, CommCoin/MFT chain, PiNet/node sync, compositor desktop, wallet/mining, M-Pesa/Daraja off-ramp, zero-dependency KYC workflow hooks, and any record/anchor features.
 
 > Operational safeguards and disclosures — **not legal advice**. Operators must obtain qualified legal, tax, and compliance advice for their jurisdictions.
 
 ## 1. Risk & No-Advice Disclaimer
 
-> **No system safety, value, liquidity, or compliance is guaranteed by this software.** Technical controls reduce preventable risk; they do not create audits, legal compliance, market value, or liquidity.
+> **No system safety, value, liquidity, settlement, consensus correctness, or compliance is guaranteed by this software.** Technical controls reduce preventable risk; they do not create audits, legal compliance, market value, liquidity, or fitness for any industry or discipline.
 
-- **Not financial, investment, trading, legal, or tax advice.** Outputs are informational/experimental.
+- **Not hardened or certified for all industries and disciplines.** No code, test, document, or control in this repository certifies suitability for finance, payments, land/title/registry, healthcare, government, safety-critical, critical infrastructure, or any regulated use.
+- **Not financial, investment, trading, legal, tax, or real-estate/title advice.** Outputs are informational/experimental.
 - **Paper trading is default** for trading features. Live trading is gated/audited; real loss is possible.
-- **Digital assets / CommCoin (MFT) carry extreme risk.** Total loss possible. Transfers may be irreversible. Bugs, consensus/PQC failures, key loss, stale PQC state reuse, network/payment failures, fraud, and regulatory action can cause loss.
-- **No guarantee of value, liquidity, convertibility, or stability.** The configured CommCoin/MFT reference value (default **$100,000 USD**, `MAFUTANI_COIN_USD_VALUE`) is **reference/config metadata only** — not a market price, quote, guarantee, offer, or payout promise.
-- **Design goals are not guarantees.** Deterministic epoch seeding/expiry replacement, SBC/PiNet capture, validation controls, and “no unnecessary token loss / no nonsense hacks” are design intents and technical controls — **not** proof of security, stability, or economic outcomes.
+- **Digital assets / CommCoin (MFT) carry extreme risk.** Total loss possible. Transfers may be irreversible. Bugs, consensus/PQC failures, key loss, stale PQC state reuse, network/payment failures, fraud, forks/stalls, and regulatory action can cause loss.
+- **No guarantee of security, consensus, value, liquidity, convertibility, or stability.** The configured CommCoin/MFT reference value (default **$100,000 USD**, `MAFUTANI_COIN_USD_VALUE`) is **reference/config metadata only** — not a market price, quote, guarantee, offer, or payout promise.
+- **Design goals are not guarantees.** Deterministic epoch seeding/expiry replacement, SBC/PiNet capture, validation controls, and “no unnecessary token loss / no nonsense hacks” are design intents and technical controls — **not** proof of security, stability, consensus correctness, or economic outcomes.
+- **CPIP/external reference tracking is report-only.** No safe auto-update or auto-apply from CPIP or other external sources. Auto-apply is intentionally excluded. External code/config must never be fetched into the runtime automatically; manual security review is required.
+- **No replacement for audits.** Production reliance requires independent crypto/consensus/security audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA or audited implementations) with versioned test vectors, and operator compliance/custody controls.
 
 ## 2. CommCoin / MFT / PiNet Policy
 
@@ -26,6 +29,15 @@
 - **M-Pesa/Daraja** is operator-configured (third-party). User/admin off-ramp flows require auth/CSRF/audit and explicit `confirm:true` as implemented. **Acceptance is not settlement.** Callbacks/reconciliation, idempotency, float/limits, recipient validity, and compliance are required.
 - **Secrets:** store Daraja credentials in secret stores/env; never in source control, logs, or client responses. `SecurityCredential` handling is operator-controlled.
 - **Zero-dependency KYC hooks** (`minting/kyc.py`, `/api/kyc/*`) provide workflow status, hashed document references, admin review, and optional off-ramp gating. **Not** a substitute for legal/regulatory compliance, qualified identity verification, sanctions/AML screening, or professional advice.
+
+## 3a. Land / Real-Estate / Asset-Record Transactions (experimental; NOT a registry)
+
+> **This blockchain does NOT ensure legal validity, title, ownership, enforceability, registry acceptance, or fitness for land/real-estate transactions of any size. NOT legal title.** Technical record anchoring is not a substitute for authoritative land registries, conveyancing, identity/authority verification, surveys, liens/encumbrance checks, escrow/settlement, dispute resolution, or jurisdiction-specific law.
+
+- **Technical capability only, where implemented:** the chain may carry bounded transaction metadata and/or hash/reference anchors for off-chain records. This is **record-anchoring plumbing**, not proof of ownership or legal transfer.
+- **“Any size” is technically bounded and context-dependent:** value transfers are limited by available unexpired spendable UTXOs, consensus/transaction/block bounds, wallet PQC signature capacity, and chain rules. Data/records are bounded for safety/DoS resistance; large records should be represented by cryptographic hashes/anchors of off-chain content, not unbounded on-chain payloads.
+- **Token expiry warning:** current consensus rules may expire outputs after the configured token lifetime (e.g., next epoch in the current MFT model). Durable land/title semantics require explicit, reviewed consensus/design changes, migration, and legal/registry integration — **not** assumed from the current chain behavior.
+- **Operator/legal requirements:** any real-world land use requires qualified legal advice, authoritative registry integration/processes, KYC/AML/sanctions/tax compliance as applicable, identity and signing authority controls, secure custody, and independent audits. Do not deploy for real property transfer without those controls.
 
 ## 4. Remediations, Controls & Residual Risk (honest stance)
 
@@ -43,13 +55,16 @@ These are **technical mitigations**, not guarantees. They reduce preventable err
 - **Stdlib-only runtime:** reduces third-party dependency surface (not a substitute for review/hardening). Enforced by `tests/test_zero_dependency.py`.
 
 ### Residual risks (cannot be fully remediated by code; operator/user responsibility)
-- **Experimental/unaudited:** chain, PQC, Merkle, PiNet, compositor, trading live paths, off-ramp/KYC integrations may contain defects causing loss or incorrect behavior.
-- **Irreversibility / total loss:** blockchain transfers may be irreversible; key loss, stale PQC state reuse, consensus bugs, or operational errors can cause total loss.
-- **No value/stability guarantees:** reference metadata and deterministic protocol rules do not guarantee market value, liquidity, convertibility, stability, adoption, or economic outcomes.
+- **Experimental/unaudited; not hardened for all industries/disciplines:** chain, PQC, Merkle, PiNet, compositor, trading live paths, off-ramp/KYC integrations, and any record/anchor features may contain defects causing loss or incorrect behavior. No certification for finance, land/title, healthcare, government, safety-critical, or regulated use.
+- **Irreversibility / total loss:** blockchain transfers may be irreversible; key loss, stale PQC state reuse, consensus bugs, forks/stalls, or operational errors can cause total loss.
+- **No value/stability/consensus guarantees:** reference metadata and deterministic protocol rules do not guarantee market value, liquidity, convertibility, stability, adoption, or consensus/security correctness.
 - **Custody/state misuse:** users/operators can restore stale PQC backups, copy state, leak secrets, or misconfigure hosts. Use secure custody practices; never commit seeds/credentials.
 - **Third-party settlement & compliance:** Daraja/M-Pesa and other services are operator-configured third parties. **Acceptance ≠ settlement.** Operators own callbacks/reconciliation, credentials, fraud controls, KYC/AML/sanctions/tax/compliance, and lawful deployment.
 - **Insufficient dual control:** admin+CSRF+confirm ≠ enforced maker-checker. Add separation of duties, step-up 2FA, allowlists, velocity limits, delays/cooling-off, out-of-band confirmation, and reconciliation.
 - **Deployment hardening:** TLS, reverse proxy/WAF, OS/runtime hardening, secret stores, logging/observability (no secrets), backups, and incident playbooks are required.
+- **Land/asset records:** on-chain anchors/metadata do not create legal title, ownership, or registry effect. Current token expiry/UTXO semantics may be unsuitable for durable title. Requires authoritative registries, legal process, and independent controls.
+- **External updates/CPIP:** report-only only. No safe auto-update/auto-apply; manual security review required. Unreviewed external changes can introduce compromise.
+- **Audits/PQC migration required for production reliance:** independent crypto/consensus/security audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA or audited implementations) with versioned test vectors, and operator compliance/custody controls are required before relying on this system in production.
 
 ## 5. Data, Locale, User Protection
 

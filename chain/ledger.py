@@ -27,7 +27,17 @@ DB_PATH_DEFAULT = os.path.join(os.path.dirname(__file__), "mft.db")
 MAX_BLOCK_TXS = 5000
 MAX_TX_INPUTS = 256
 MAX_TX_OUTPUTS = 256
-MAX_MEMO_BYTES = 512
+# Memo/record bounds: prevent DoS/bloat while allowing anchored metadata.
+# "Any size" data should be anchored as hashes/references off-chain; on-chain
+# payloads remain bounded. Operators may lower limits via env if needed.
+def _env_int(name, default):
+    try:
+        return max(0, int(os.environ.get(name, str(default)) or default))
+    except Exception:
+        return default
+
+MAX_MEMO_BYTES = _env_int("MAFUTANI_MAX_MEMO_BYTES", 8192)
+MAX_RECORD_BYTES = _env_int("MAFUTANI_MAX_RECORD_BYTES", 16384)
 MAX_SCRIPT_BYTES = 65536
 
 
@@ -49,6 +59,30 @@ def txid_for(tx):
     return sha3_256(canonical_tx_bytes(tx, include_sigs=False)).hexdigest()
 
 
+def _normalize_record(record):
+    """Normalize a tx record/anchor payload for canonicalization and bounds checks.
+
+    Records are metadata/anchors (e.g., land/asset references). They are NOT
+    legal title, registry records, or proof of ownership. Large off-chain data
+    should be represented by hashes/references; on-chain payloads are bounded.
+    """
+    if record is None or record == "" or record == {} or record == []:
+        return None
+    if isinstance(record, str):
+        s = record.strip()
+        return {"text": s} if s else None
+    if not isinstance(record, dict):
+        raise ConsensusError("record must be an object or string")
+    # Keep only JSON-safe scalar/list/dict content via deterministic dump/load path.
+    try:
+        norm = json.loads(json.dumps(record, sort_keys=True, separators=(",", ":")))
+    except Exception:
+        raise ConsensusError("record must be JSON-serializable")
+    if not isinstance(norm, dict) or not norm:
+        return None
+    return norm
+
+
 def canonical_tx_bytes(tx, include_sigs=True):
     obj = {
         "type": tx.get("type", "transfer"),
@@ -60,6 +94,9 @@ def canonical_tx_bytes(tx, include_sigs=True):
         "epoch": int(tx.get("epoch", 0)),
         "memo": tx.get("memo", ""),
     }
+    rec = _normalize_record(tx.get("record"))
+    if rec is not None:
+        obj["record"] = rec
     for i in tx.get("inputs", []):
         ii = {"tx": i["tx"], "n": int(i["n"]), "pub": i.get("pub")}
         if include_sigs:
@@ -328,8 +365,17 @@ class Chain(object):
         if len(outputs) > MAX_TX_OUTPUTS: raise ConsensusError("too many outputs")
         if len(inputs) > MAX_TX_INPUTS: raise ConsensusError("too many inputs")
         memo = tx.get("memo", "")
-        if isinstance(memo, str) and len(memo.encode("utf-8", "replace")) > MAX_MEMO_BYTES:
-            raise ConsensusError("memo too large")
+        if memo is None:
+            memo = ""
+        if not isinstance(memo, str):
+            raise ConsensusError("memo must be a string")
+        if len(memo.encode("utf-8", "replace")) > MAX_MEMO_BYTES:
+            raise ConsensusError("memo too large (max %s bytes; use record hashes/anchors for large data)" % MAX_MEMO_BYTES)
+        rec = _normalize_record(tx.get("record"))
+        if rec is not None:
+            rec_bytes = json.dumps(rec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            if len(rec_bytes) > MAX_RECORD_BYTES:
+                raise ConsensusError("record too large (max %s bytes; anchor large off-chain data by hash/reference)" % MAX_RECORD_BYTES)
         seen_inputs = set()
         for inp in inputs:
             k = (str(inp.get("tx")), int(inp.get("n", -1)))

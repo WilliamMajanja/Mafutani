@@ -27,19 +27,31 @@
 
 ## Honest Risk Summary
 
-- **Not financial, investment, legal, or tax advice.** Paper default; live/crypto can cause real loss.
-- **CommCoin/MFT is experimental and unaudited.** Keys/transactions may be irreversible; bugs/consensus issues/key loss can cause total loss.
+- **Not hardened or certified for all industries and disciplines.** No code/test/doc/control certifies suitability for finance, payments, land/title/registry, healthcare, government, safety-critical, or regulated use.
+- **Not financial, investment, legal, tax, or real-estate/title advice.** Paper default; live/crypto can cause real loss.
+- **CommCoin/MFT is experimental and unaudited.** Keys/transactions may be irreversible; bugs/consensus/PQC/fork-stall issues/key loss can cause total loss. **No guaranteed security, consensus correctness, value, liquidity, convertibility, compliance, or settlement.**
 - **`$100,000` per CommCoin/MFT is reference/config metadata only** (`MAFUTANI_COIN_USD_VALUE`) — **not** a market price, quote, guarantee, offer, liquidity promise, or stability guarantee.
-- **Design goals ≠ guarantees:** deterministic supply/epoch rules, SBC/PiNet capture, validation controls, and “no unnecessary token loss” design intent do **not** guarantee value, stability, security, adoption, or absence of bugs/hacks.
+- **Design goals ≠ guarantees:** deterministic supply/epoch rules, SBC/PiNet capture, validation controls, and “no unnecessary token loss” design intent do **not** guarantee value, stability, security, adoption, consensus correctness, or absence of bugs/hacks.
 - **M-Pesa/Daraja:** third-party/operator-configured. **Request acceptance ≠ settlement.** Operators own credentials, callbacks/reconciliation, KYC/AML/sanctions/tax/compliance, and lawful deployment.
 - **PQC wallets are stateful:** **never reuse signature indexes or restore stale wallet backups/state.** One authoritative wallet state only.
+- **CPIP/external references are report-only.** No safe auto-update or auto-apply; auto-apply is intentionally excluded. Never fetch/apply external code/config into the runtime automatically. Manual security review required.
+- **Land/asset transactions:** the chain may carry bounded metadata/hash anchors, but this is **not** a land registry, not legal title/ownership, and not proof of enforceability. “Any size” is technically bounded (UTXOs, tx/block/memo/record limits, wallet signature capacity, token expiry rules). Current token expiry semantics may be unsuitable for durable land/title. Requires authoritative registries, jurisdictional legal process, KYC/authority controls, and audits.
+- **No replacement for audits.** Production reliance requires independent crypto/consensus/security audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration (e.g., SLH-DSA/ML-DSA or audited implementations) with versioned test vectors, and operator compliance/custody controls.
 
 ### Technical remediations (reduce preventable risk; residual risk remains)
 
+- **Irreversible/high-impact actions gated:** explicit `confirm:true` for CommCoin sends, chain import, PiNet sync pull, and off-ramp/admin submission paths (where implemented); auth/CSRF/admin controls and audit logging on sensitive flows.
+- **Stateful PQC wallet safety:** capacity checks before signing, atomic state save (`tmp`+`fsync`+`replace`), and fail-safe if state cannot be persisted (do not use/broadcast tx). **Cannot prevent** stale backup restore or external key misuse.
+- **Reference-only labeling:** chain/node/off-ramp/KYC/market-reference APIs and docs label `MAFUTANI_COIN_USD_VALUE` and MFT quotes as reference/config metadata only (no price/guarantee). Off-ramp responses include settlement disclaimers.
+- **Validation/sync controls:** PiNet import/pull is validated and currently tip-append oriented; peers remain untrusted. Harden further for adversarial/public P2P.
+- **KYC/off-ramp workflow controls:** zero-dep KYC hooks (optional gate) + admin review/audit; **not** legal/compliance verification. Daraja flows require operator config and reconciliation; acceptance ≠ settlement.
+- **CPIP/external refs controls:** admin report-only check/list endpoints (`/api/admin/external_refs*`); **never auto-update/apply external code**.
+- **Not remediable by code alone:** unaudited/experimental status, industry/discipline fitness, consensus/security correctness, value/stability/liquidity outcomes, legal/tax/regulatory/title compliance, third-party settlement/reconciliation, CPIP/external change review, user/operator custody mistakes, and absence of bugs/hacks.
+
 ### What cannot be guaranteed or created by this code
-- **Safety/security is not guaranteed.** Experimental/unaudited software; bugs, consensus/PQC issues, misconfiguration, and attacks can still cause loss. Controls reduce preventable risk but do not make the system "safe."
+- **Safety/security/consensus is not guaranteed.** Experimental/unaudited software; bugs, consensus/PQC issues, forks/stalls, misconfiguration, and attacks can still cause loss. Controls reduce preventable risk but do not make the system "safe."
 - **No guarantees of value, price, liquidity, convertibility, or stability.** `MAFUTANI_COIN_USD_VALUE` is reference/config metadata only. Real value/liquidity require external markets, participants, adoption, listings, and economics — not code assertions.
-- **Not compliance-certified.** KYC hooks are workflow plumbing only. Legal/regulatory compliance (KYC/AML/sanctions/tax/payments/data protection/licensing) depends on jurisdiction, qualified advice, operator controls, audits, and third-party requirements. Request acceptance is **not** settlement.
+- **Not compliance-certified or industry-hardened.** KYC hooks are workflow plumbing only. Land/asset anchors are not legal title/registry records. Legal/regulatory/title/compliance fitness depends on jurisdiction, qualified advice, authoritative registries/processes, operator controls, audits, and third-party requirements. Request acceptance is **not** settlement.
 
 - **Irreversible/high-impact actions gated:** explicit `confirm:true` for CommCoin sends, chain import, PiNet sync pull, and off-ramp/admin submission paths (where implemented); auth/CSRF/admin controls and audit logging on sensitive flows.
 - **Stateful PQC wallet safety:** capacity checks before signing, atomic state save (`tmp`+`fsync`+`replace`), and fail-safe if state cannot be persisted (do not use/broadcast tx). **Cannot prevent** stale backup restore or external key misuse.

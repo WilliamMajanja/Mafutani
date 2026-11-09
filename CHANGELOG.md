@@ -8,6 +8,15 @@ added when release discipline is established.
 
 ## [Unreleased]
 
+### Added (caveat delivery + land/record anchors; experimental/unaudited)
+- **Caveat delivery surfaces:** explicit experimental/unaudited and “not hardened/certified for all industries or disciplines” warnings across startup banner, `README.md`, `SECURITY.md`, `docs/POLICIES.md`, `/api/policies`, admin readiness, chain/off-ramp/wallet responses, and web UI (policies/chain/desktop).
+- **CPIP/external ref policy reinforcement:** report-only; **no safe auto-update/auto-apply** (intentionally excluded). Manual security review required. No replacement for audits/formal/threat modeling/adversarial/fuzz/fork-stall testing/vetted standardized PQC migration with versioned test vectors/operator controls.
+- **Land/asset technical anchors (bounded):** optional `memo`/`record` metadata/anchor support for chain transfers (`record` included in canonical tx/sighash when present; bounded by `MAX_MEMO_BYTES`/`MAX_RECORD_BYTES`, env-configurable). Web chain send supports memo/record JSON with explicit confirmation. **Not legal title, not a registry, not proof of ownership/enforceability.** “Any size” is technically bounded (UTXOs, tx/block bounds, memo/record limits, wallet PQC signature capacity, token expiry). Current token expiry/UTXO semantics may be unsuitable for durable land/title.
+- **Wallet/chain send robustness:** `build_transfer` accepts `amount_base` and large integer/string amounts (avoids float precision for large values) and optional `record`; `/api/chain/send` requires `confirm:true`, accepts memo/record, and returns explicit disclaimers.
+
+### Changed
+- Memo truncation removed in chain send API path (was 140 chars); memo/record are now validated/bounded by chain limits with clear errors. Existing txs without `record` remain compatible.
+
 ### Added (preventive controls; not guarantees/compliance)
 - Off-ramp: `idempotency_key` support, velocity/cooldown/pending limits (env-configured), Daraja callback reconciliation scaffold (`POST /api/offramp/mpesa/callback`, admin callback list), maker-checker approve→submit hook (`MAFUTANI_OFFRAMP_MAKER_CHECKER`), step-up 2FA enforcement hook for sensitive admin actions (`MAFUTANI_REQUIRE_2FA_FOR_SENSITIVE`), admin readiness checklist (`GET /api/admin/readiness`).
 - Wallet/PQC protocol safety (stdlib-only, experimental): sign on deep-copied key state, commit only after atomic save, best-effort append-only signing journal, fail-safe rollback in memory on save error; tx carries `pqc_safety` metadata.
