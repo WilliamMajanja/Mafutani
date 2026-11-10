@@ -40,6 +40,7 @@ __all__ = [
 REAL_SOURCES = frozenset([
     "venue", "coinbase", "kraken", "okx", "bybit",
     "yahoo-chart", "stooq", "alphavantage", "fred", "cftc",
+    "commcoin",  # Mafutani native CommCoin/MFT chain reference (operator-configured)
 ])
 
 # Explicitly not observations of a market.

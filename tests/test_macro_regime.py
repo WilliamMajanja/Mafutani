@@ -64,7 +64,7 @@ class TestUnmeasuredIsNotNeutral(MacroBase):
     def test_neutral_is_distinguishable_from_unmeasured(self):
         """These must never collapse into each other."""
         self.assertIsNone(macro.regime(self.conn)["regime"])
-        _seed(self.conn, "VIXCLS", [("2026-10-14", 17.0)])
+        _seed(self.conn, "VIXCLS", [("2026-11-09", 17.0)])
         self.conn.commit()
         r = macro.regime(self.conn)
         self.assertIsNotNone(r["regime"])

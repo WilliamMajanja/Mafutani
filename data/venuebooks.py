@@ -74,7 +74,6 @@ longer exists.
 VENUE_FEES_BPS = {
     "coinbase": 60.0,    # ~0.06% taker + spread crossing
     "kraken": 26.0,      # 0.26% FX/metal taker
-    "commcoin": 0.0,     # native CommCoin/MFT chain/reference (no external exchange fee)
     "venue1": 30.0,      # generic known venue (diagnostics/tests; no external integration)
     "venue2": 30.0,
     "synthetic": 50.0,   # worst case, never a reason to "profit"
@@ -146,7 +145,6 @@ VENUE_ROUTES = {
 # crypto venue from being credited with an FX book.
 VENUE_ASSET_CLASS = {
     "coinbase": "crypto",
-    "commcoin": "crypto",
     "kraken": "multi",   # FX + metals + crypto
     "synthetic": "multi",
 }
