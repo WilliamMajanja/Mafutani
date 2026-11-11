@@ -1,1 +1,4 @@
-/*    /index.html   200
+/api/*    https://idea-third-create-idol.trycloudflare.com/api/:splat    200!
+/stream/*  https://idea-third-create-idol.trycloudflare.com/stream/:splat  200!
+/*         /index.html   200
+
