@@ -6,7 +6,7 @@
 
   // Fetch wrapper: JSON in/out, CSRF header on mutating requests.
   function api(method, path, body) {
-    var headers = { "Content-Type": "application/json" };
+    var headers = { "Content-Type": "application/json", "Accept": "application/json" };
     if (csrfToken) { headers["X-CSRF"] = csrfToken; headers["X-CSRF-Token"] = csrfToken; }
     var opts = { method: method, headers: headers, credentials: "same-origin" };
     if (body !== undefined) opts.body = JSON.stringify(body);
