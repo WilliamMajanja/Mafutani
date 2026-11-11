@@ -1,0 +1,24 @@
+[build]
+  publish = "web"
+  # No build step: vanilla JS/CSS served from web/
+
+# Proxy API and SSE/stream endpoints to the local backend exposed via tunnel.
+# Update this URL if the tunnel restarts/changes, then redeploy Netlify.
+[[redirects]]
+  from = "/api/*"
+  to = "https://idea-third-create-idol.trycloudflare.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/stream/*"
+  to = "https://idea-third-create-idol.trycloudflare.com/stream/:splat"
+  status = 200
+  force = true
+
+# SPA fallback: serve index.html for client-side routes.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
