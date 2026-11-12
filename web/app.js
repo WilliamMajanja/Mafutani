@@ -31,6 +31,11 @@
   function api(method, path, body) {
     var headers = { "Content-Type": "application/json", "Accept": "application/json" };
     if (csrfToken) { headers["X-CSRF"] = csrfToken; headers["X-CSRF-Token"] = csrfToken; }
+    // Token-based auth fallback (for proxied/browser contexts where cookies may be blocked)
+    try {
+      var st = localStorage.getItem("mafutani_session");
+      if (st) headers["X-Session"] = st;
+    } catch (e) {}
     var opts = { method: method, headers: headers, credentials: "include" };
     if (body !== undefined) opts.body = JSON.stringify(body);
     return fetch(path, opts).then(function (r) {
@@ -3184,6 +3189,7 @@
       api("POST", "/api/auth/login", body)
         .then(function (r) {
           if (r.csrf_token || r.csrf) csrfToken = r.csrf_token || r.csrf;
+          if (r.session_token) { try { localStorage.setItem("mafutani_session", r.session_token); } catch (e) {} }
           show2fa(false);
           if (codeInput) codeInput.value = "";
           return refreshMe();
@@ -3219,6 +3225,7 @@
       api("POST", "/api/auth/signup", { email: email, password: password })
         .then(function (r) {
           if (r.csrf_token || r.csrf) csrfToken = r.csrf_token || r.csrf;
+          if (r.session_token) { try { localStorage.setItem("mafutani_session", r.session_token); } catch (e) {} }
           return refreshMe();
         })
         .then(function (me) {
@@ -3240,6 +3247,7 @@
         });
     };
     document.getElementById("logout-btn").onclick = function () {
+      try { localStorage.removeItem("mafutani_session"); } catch (e) {}
       api("POST", "/api/auth/logout", {}).catch(function () {})
         .then(function () { state.me = null; csrfToken = null; location.hash = "#/login"; router(); });
     };

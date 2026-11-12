@@ -571,7 +571,14 @@ def _cookies(handler):
 
 
 def _session_token(handler):
-    return _cookies(handler).get("session", "")
+    # Prefer cookie, fall back to X-Session header (for proxied/browser contexts)
+    tok = _cookies(handler).get("session", "")
+    if not tok:
+        try:
+            tok = handler.headers.get("X-Session", "") or ""
+        except Exception:
+            tok = ""
+    return tok.strip()
 
 
 def _get_user_and_session(conn, handler):
@@ -2214,6 +2221,7 @@ class Router:
                 return _redirect(h, "/#/dashboard", cookie)
             return _send_json(h, {"user": {"id": uid, "email": email, "tier": "Free"},
                                   "csrf": csrf, "csrf_token": csrf,
+                                  "session_token": token,
                                   "provisioned": prov},
                                   extra_headers=cookie)
         except Exception as e:
@@ -2342,7 +2350,8 @@ class Router:
             return _redirect(h, "/#/dashboard", cookie)
         return _send_json(h, {"user": {"id": rd["id"], "email": rd["email"],
                                        "tier": rd.get("tier", "Free")},
-                              "csrf": csrf, "csrf_token": csrf},
+                              "csrf": csrf, "csrf_token": csrf,
+                              "session_token": token},
                           extra_headers=cookie)
 
     def _logout(self, conn, h):
