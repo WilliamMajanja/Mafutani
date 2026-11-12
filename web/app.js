@@ -4,6 +4,29 @@
   var csrfToken = null;
   var state = { me: null, quotes: {}, sse: null };
 
+  // ---- Toast notifications ----
+  function toast(msg, type) {
+    type = type || "info";
+    var container = document.getElementById("toast-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "toast-container";
+      container.className = "toast-container";
+      document.body.appendChild(container);
+    }
+    var el = document.createElement("div");
+    el.className = "toast " + type;
+    el.textContent = msg;
+    el.addEventListener("click", function () { removeToast(el); });
+    container.appendChild(el);
+    setTimeout(function () { removeToast(el); }, 4000);
+  }
+  function removeToast(el) {
+    if (!el.parentNode) return;
+    el.classList.add("removing");
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+  }
+
   // Fetch wrapper: JSON in/out, CSRF header on mutating requests.
   function api(method, path, body) {
     var headers = { "Content-Type": "application/json", "Accept": "application/json" };
@@ -3153,8 +3176,11 @@
       var code = codeInput ? codeInput.value.trim() : "";
       var err = document.getElementById("login-error");
       err.textContent = "";
+      err.classList.remove("visible");
+      var btn = document.getElementById("login-btn");
       var body = { email: email, password: password };
       if (code) body.code = code;
+      if (btn) { btn.disabled = true; btn.classList.add("btn-loading"); }
       api("POST", "/api/auth/login", body)
         .then(function (r) {
           if (r.csrf_token || r.csrf) csrfToken = r.csrf_token || r.csrf;
@@ -3163,14 +3189,23 @@
           return refreshMe();
         })
         .then(function (me) {
-          if (!me) { err.textContent = "Login succeeded but session check failed. Check browser cookies."; return; }
+          if (!me) { 
+            err.textContent = "Login succeeded but session check failed. Please try again.";
+            err.classList.add("visible");
+            return; 
+          }
+          toast("Welcome back, " + (me.user ? me.user.email : "user") + "!", "success");
           location.hash = "#/dashboard"; router();
         })
         .catch(function (e) {
           console.error("Login error:", e);
           err.textContent = e.message;
+          err.classList.add("visible");
           // password was right, second factor missing -> reveal the field
           if (is2faChallenge(e)) show2fa(true);
+        })
+        .finally(function () {
+          if (btn) { btn.disabled = false; btn.classList.remove("btn-loading"); }
         });
     });
     document.getElementById("signup-btn").onclick = function () {
@@ -3178,13 +3213,31 @@
       var password = document.getElementById("login-password").value;
       var err = document.getElementById("login-error");
       err.textContent = "";
+      err.classList.remove("visible");
+      var btn = document.getElementById("signup-btn");
+      if (btn) { btn.disabled = true; btn.classList.add("btn-loading"); }
       api("POST", "/api/auth/signup", { email: email, password: password })
         .then(function (r) {
           if (r.csrf_token || r.csrf) csrfToken = r.csrf_token || r.csrf;
           return refreshMe();
         })
-        .then(function () { location.hash = "#/dashboard"; router(); })
-        .catch(function (e) { err.textContent = e.message; });
+        .then(function (me) {
+          if (!me) { 
+            err.textContent = "Signup succeeded but session check failed. Please try again.";
+            err.classList.add("visible");
+            return; 
+          }
+          toast("Account created! Welcome to Mafutani.", "success");
+          location.hash = "#/dashboard"; router();
+        })
+        .catch(function (e) {
+          console.error("Signup error:", e);
+          err.textContent = e.message;
+          err.classList.add("visible");
+        })
+        .finally(function () {
+          if (btn) { btn.disabled = false; btn.classList.remove("btn-loading"); }
+        });
     };
     document.getElementById("logout-btn").onclick = function () {
       api("POST", "/api/auth/logout", {}).catch(function () {})

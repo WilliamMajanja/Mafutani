@@ -183,16 +183,129 @@ a { color: var(--accent); }
 
 /* ---- login ---- */
 #login-section {
-  max-width: 400px; margin: 48px auto; padding: 20px 22px;
+  max-width: 420px; margin: 48px auto; padding: 28px 32px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
-  border: 1px solid var(--line-hi); border-radius: var(--r);
-  box-shadow: 0 0 40px rgba(43, 255, 163, 0.07);
+  border: 1px solid var(--line-hi); border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(43, 255, 163, 0.05);
 }
 #login-section h2 {
-  font-family: var(--mono); font-size: 14px; letter-spacing: 2px;
-  text-transform: uppercase; color: var(--up); margin: 0 0 12px;
+  font-family: var(--mono); font-size: 16px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--up); margin: 0 0 6px;
 }
 #login-section h2::before { content: "> "; }
+#login-section .login-subtitle {
+  font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+  margin: 0 0 20px; letter-spacing: 0.5px;
+}
+#login-section label {
+  display: block; margin: 12px 0 4px; font-size: 12px; color: var(--dim);
+  font-family: var(--mono); letter-spacing: 0.5px; text-transform: uppercase;
+}
+#login-section input {
+  padding: 10px 12px; border-radius: 4px; font-size: 13.5px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+#login-section input:focus {
+  border-color: var(--up); box-shadow: 0 0 0 2px rgba(43, 255, 163, 0.15);
+}
+#login-section .row { margin-top: 16px; gap: 10px; }
+#login-section button {
+  flex: 1; padding: 10px 16px; border-radius: 4px;
+  font-size: 12.5px; letter-spacing: 1.5px; transition: all 0.2s ease;
+}
+#login-section button[type="submit"] {
+  background: var(--up-dim); border-color: var(--up); color: var(--up);
+}
+#login-section button[type="submit"]:hover {
+  background: rgba(43, 255, 163, 0.2); box-shadow: 0 0 16px rgba(43, 255, 163, 0.3);
+}
+#login-section button[type="submit"]:disabled {
+  opacity: 0.5; cursor: not-allowed; transform: none;
+}
+#login-section button#signup-btn {
+  background: var(--panel3); border-color: var(--line-hi); color: var(--dim);
+}
+#login-section button#signup-btn:hover {
+  border-color: var(--accent); color: var(--accent);
+}
+#login-section .login-error {
+  margin-top: 12px; padding: 8px 12px; border-radius: 4px;
+  background: rgba(255, 84, 112, 0.08); border: 1px solid var(--down-dim);
+  font-family: var(--mono); font-size: 12px; color: var(--down);
+  display: none;
+}
+#login-section .login-error.visible { display: block; }
+#login-section .login-hint {
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px; color: var(--faint);
+  text-align: center; letter-spacing: 0.5px;
+}
+#login-section .login-hint a { color: var(--accent); text-decoration: none; }
+#login-section .login-hint a:hover { text-decoration: underline; }
+
+/* ---- loading states ---- */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--line-hi); border-top-color: var(--up);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+  vertical-align: middle; margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-loading { position: relative; color: transparent !important; }
+.btn-loading::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 2px solid var(--line-hi); border-top-color: var(--up);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+
+/* ---- toast notifications ---- */
+.toast-container {
+  position: fixed; top: 60px; right: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 10px 16px; border-radius: 6px; font-family: var(--mono);
+  font-size: 12.5px; letter-spacing: 0.5px; max-width: 360px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: toast-in 0.3s ease-out;
+  pointer-events: auto; cursor: pointer;
+}
+.toast.success { background: rgba(43, 255, 163, 0.12); border: 1px solid var(--up-dim); color: var(--up); }
+.toast.error { background: rgba(255, 84, 112, 0.12); border: 1px solid var(--down-dim); color: var(--down); }
+.toast.info { background: rgba(65, 199, 255, 0.12); border: 1px solid var(--accent); color: var(--accent); }
+@keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+.toast.removing { animation: toast-out 0.3s ease-in forwards; }
+
+/* ---- empty states ---- */
+.empty-state {
+  text-align: center; padding: 40px 20px; color: var(--dim);
+  font-family: var(--mono); font-size: 13px;
+}
+.empty-state .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+.empty-state .empty-title { font-size: 14px; color: var(--txt); margin-bottom: 4px; }
+.empty-state .empty-desc { font-size: 12px; color: var(--faint); }
+
+/* ---- skeleton loading ---- */
+.skeleton {
+  background: linear-gradient(90deg, var(--panel) 25%, var(--panel2) 50%, var(--panel) 75%);
+  background-size: 200% 100%; animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ---- better mobile ---- */
+@media (max-width: 600px) {
+  #topbar { padding: 6px 10px; }
+  #nav a { padding: 4px 6px; font-size: 11px; }
+  #login-section { margin: 24px 12px; padding: 20px 18px; }
+  .cards { grid-template-columns: 1fr; }
+  table { font-size: 11px; }
+  th, td { padding: 5px 6px; }
+  #view { padding: 10px 8px 20px; }
+}
 
 /* ---- chart ---- */
 canvas.chart {

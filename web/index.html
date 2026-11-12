@@ -49,21 +49,23 @@
 </footer>
 <section id="login-section">
   <h2>Login / Signup</h2>
+  <p class="login-subtitle">Sign in to your Mafutani account</p>
   <!-- action/method are a real fallback: if app.js fails to parse (a
        SyntaxError once silently killed login) the browser still posts
        credentials to the API, which redirects back to #/dashboard, instead
        of silently re-rendering the SPA with a 200 and no session. -->
   <form id="login-form" method="POST" action="/api/auth/login">
-    <label>Email <input id="login-email" type="email" name="email" required autocomplete="username"></label>
-    <label>Password <input id="login-password" type="password" name="password" required autocomplete="current-password"></label>
+    <label>Email <input id="login-email" type="email" name="email" required autocomplete="username" placeholder="you@example.com"></label>
+    <label>Password <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="••••••••"></label>
     <label id="login-2fa-row" hidden>Authenticator code
       <input id="login-code" type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="9" placeholder="6-digit code or recovery code" autocomplete="one-time-code">
     </label>
     <div class="row">
-      <button type="submit" data-mode="login">Login</button>
+      <button type="submit" data-mode="login" id="login-btn">Login</button>
       <button type="button" id="signup-btn">Signup</button>
     </div>
-    <p id="login-error" class="error" aria-live="polite"></p>
+    <p id="login-error" class="login-error" aria-live="polite"></p>
+    <p class="login-hint">Demo: <code>demo@local</code> / <code>demo1234</code></p>
   </form>
 </section>
 <script src="i18n.js"></script>
