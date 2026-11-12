@@ -1,4 +1,4 @@
-/api/*    https://idea-third-create-idol.trycloudflare.com/api/:splat    200!
-/stream/*  https://idea-third-create-idol.trycloudflare.com/stream/:splat  200!
+/api/*    https://packaging-gives-real-distinct.trycloudflare.com/api/:splat    200!
+/stream/*  https://packaging-gives-real-distinct.trycloudflare.com/stream/:splat  200!
 /*         /index.html   200
 

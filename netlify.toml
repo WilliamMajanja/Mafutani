@@ -6,13 +6,13 @@
 # Update this URL if the tunnel restarts/changes, then redeploy Netlify.
 [[redirects]]
   from = "/api/*"
-  to = "https://idea-third-create-idol.trycloudflare.com/api/:splat"
+  to = "https://packaging-gives-real-distinct.trycloudflare.com/api/:splat"
   status = 200
   force = true
 
 [[redirects]]
   from = "/stream/*"
-  to = "https://idea-third-create-idol.trycloudflare.com/stream/:splat"
+  to = "https://packaging-gives-real-distinct.trycloudflare.com/stream/:splat"
   status = 200
   force = true
 
