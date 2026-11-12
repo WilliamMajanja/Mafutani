@@ -618,8 +618,9 @@ def _check_csrf(handler, sess):
 
 
 def _session_cookie_flags():
-    # SameSite=Lax blocks cross-site CSRF; Secure only when served over TLS.
-    base = "HttpOnly; SameSite=Lax"
+    # SameSite=None; Secure allows the cookie to be sent in all contexts
+    # (including proxied requests). Secure only when served over TLS.
+    base = "HttpOnly; SameSite=None"
     if os.environ.get("HTTPS", "0") == "1":
         base += "; Secure"
     return base

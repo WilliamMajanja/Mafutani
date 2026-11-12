@@ -8,7 +8,7 @@
   function api(method, path, body) {
     var headers = { "Content-Type": "application/json", "Accept": "application/json" };
     if (csrfToken) { headers["X-CSRF"] = csrfToken; headers["X-CSRF-Token"] = csrfToken; }
-    var opts = { method: method, headers: headers, credentials: "same-origin" };
+    var opts = { method: method, headers: headers, credentials: "include" };
     if (body !== undefined) opts.body = JSON.stringify(body);
     return fetch(path, opts).then(function (r) {
       var ct = r.headers.get("Content-Type") || "";
@@ -3162,8 +3162,12 @@
           if (codeInput) codeInput.value = "";
           return refreshMe();
         })
-        .then(function () { location.hash = "#/dashboard"; router(); })
+        .then(function (me) {
+          if (!me) { err.textContent = "Login succeeded but session check failed. Check browser cookies."; return; }
+          location.hash = "#/dashboard"; router();
+        })
         .catch(function (e) {
+          console.error("Login error:", e);
           err.textContent = e.message;
           // password was right, second factor missing -> reveal the field
           if (is2faChallenge(e)) show2fa(true);
