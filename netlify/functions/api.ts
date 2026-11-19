@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword, newToken, newCsrf } from "./lib/authpw";
 import { storage, BUCKET } from "./lib/storage";
 import { chat, listModels, AI_BASE } from "./lib/ai";
 import { authConfig, AUTH_BASE } from "./lib/auth";
+import { listSymbols, getQuotes, getCandles, listExchanges, listMarkets } from "./lib/market";
 
 const router = new Router();
 
@@ -110,6 +111,44 @@ router.on("GET", "/api/auth/config", async () => json(authConfig()));
 router.on("GET", "/api/realtime/config", async () =>
   json({ url: process.env.NEON_REALTIME_URL || "", hasSecret: !!process.env.NEON_REALTIME_SECRET }),
 );
+
+router.on("GET", "/api/symbols", async () => {
+  try { return json({ symbols: await listSymbols(db()) }); }
+  catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/quotes", async () => {
+  try { return json({ quotes: await getQuotes(db()) }); }
+  catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/markets", async () => {
+  try { return json({ markets: await listMarkets(db()) }); }
+  catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/exchanges", async () => {
+  try { return json({ exchanges: await listExchanges(db()) }); }
+  catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/candles", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || "";
+    const limit = parseInt(query.get("limit") || "200", 10);
+    if (!symbol) return error(400, "symbol required");
+    const candles = await getCandles(db(), symbol, limit);
+    return json({ symbol, candles });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/quote", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || "";
+    const rows: any = await db()`SELECT * FROM quotes_l1 WHERE symbol = ${symbol} ORDER BY ts DESC LIMIT 1`;
+    return json({ quote: rows[0] || null });
+  } catch (e) { return error(500, (e as Error).message); }
+});
 
 export default async (req: Request): Promise<Response> => {
   const { pathname } = new URL(req.url);
