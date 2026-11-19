@@ -625,12 +625,17 @@ def _check_csrf(handler, sess):
 
 
 def _session_cookie_flags():
-    # SameSite=None; Secure allows the cookie to be sent in all contexts
-    # (including proxied requests). Secure only when served over TLS.
-    base = "HttpOnly; SameSite=None"
-    if os.environ.get("HTTPS", "0") == "1":
-        base += "; Secure"
-    return base
+    # Cross-origin/proxied frontends (e.g. Netlify -> tunnel/backend) need
+    # SameSite=None; Secure. Browsers reject SameSite=None cookies without
+    # Secure, which breaks local HTTP dev, so default to Lax for non-TLS.
+    https = str(os.environ.get("HTTPS", "0")).lower() in ("1", "true", "yes")
+    cross_site = str(os.environ.get("MAFUTANI_COOKIE_SAMESITE_NONE", "0")).lower() in ("1", "true", "yes")
+    if https or cross_site:
+        flags = "HttpOnly; SameSite=None"
+        if https:
+            flags += "; Secure"
+        return flags
+    return "HttpOnly; SameSite=Lax"
 
 
 def _set_session_cookie(handler_extra, token):

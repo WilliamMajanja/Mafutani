@@ -1,0 +1,99 @@
+version: "3.8"
+
+# Mafutani self-hosted stack (PC): backend + Traefik reverse proxy + Grafana/Prometheus.
+# Usage:
+#   cd deploy && docker compose up -d --build
+# Notes:
+# - Mafutani is experimental/unaudited. See repo README/SECURITY.md/POLICIES.
+# - Adjust ports/hosts if 80/443/3001/9090 conflict with existing services.
+# - Persisted data: ./data -> Mafutani data/ (SQLite, chain DB, wallets as configured).
+
+services:
+  mafutani:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mafutani
+    restart: unless-stopped
+    environment:
+      PORT: "8000"
+      MAFUTANI_NO_FEED: "1"
+      # Set to 1 when serving cross-origin via proxied HTTPS frontends
+      MAFUTANI_COOKIE_SAMESITE_NONE: "0"
+    volumes:
+      - ../data:/srv/Mafutani/data
+      - ../chain:/srv/Mafutani/chain
+    ports:
+      - "8000:8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mafutani.rule=Host(`mafutani.localhost`) || PathPrefix(`/`)"
+      - "traefik.http.routers.mafutani.entrypoints=web"
+      - "traefik.http.services.mafutani.loadbalancer.server.port=8000"
+
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      # Uncomment for TLS/Let's Encrypt (requires public DNS + port 443)
+      # - "--entrypoints.websecure.address=:443"
+      # - "--certificatesresolvers.le.acme.email=you@example.com"
+      # - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      # - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+    ports:
+      - "80:80"
+      # - "443:443"
+      - "8080:8080" # Traefik dashboard (insecure; restrict in production)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # - ./letsencrypt:/letsencrypt
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - "/:/host:ro,rslave"
+    ports:
+      - "9100:9100"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -41,3 +41,9 @@ env/
 *mt5build-*
 data/wallets/*.json
 data/wallets/*seed*.json
+
+# Node / Netlify
+node_modules/
+.netlify/
+.neon
+.env.local

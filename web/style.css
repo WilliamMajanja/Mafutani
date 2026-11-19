@@ -298,13 +298,25 @@ a { color: var(--accent); }
 
 /* ---- better mobile ---- */
 @media (max-width: 600px) {
-  #topbar { padding: 6px 10px; }
-  #nav a { padding: 4px 6px; font-size: 11px; }
-  #login-section { margin: 24px 12px; padding: 20px 18px; }
+  #topbar { padding: 6px 10px; flex-direction: column; align-items: stretch; gap: 6px; }
+  #nav { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+  #nav a { padding: 4px 6px; font-size: 11px; white-space: nowrap; }
+  #userbox { margin-left: 0; justify-content: space-between; flex-wrap: wrap; }
+  #login-section { margin: 24px 12px; padding: 20px 18px; max-width: calc(100% - 24px); }
   .cards { grid-template-columns: 1fr; }
-  table { font-size: 11px; }
-  th, td { padding: 5px 6px; }
-  #view { padding: 10px 8px 20px; }
+  table { font-size: 11px; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  th, td { padding: 5px 6px; white-space: nowrap; }
+  #view { padding: 10px 8px 20px; max-width: 100%; }
+  .grid2 { grid-template-columns: 1fr; }
+  canvas.chart { height: 220px; }
+  #disclaimer { font-size: 10px; padding: 4px 8px; }
+}
+@media (max-width: 760px) {
+  #view { padding: 12px 10px 24px; max-width: 100%; }
+  #topbar { gap: 8px; }
+  .kpi-v { font-size: 22px; }
+  #statusbar { gap: 8px; font-size: 10.5px; padding: 5px 10px; }
+  #statusbar .sb-right { margin-left: 0; width: 100%; }
 }
 
 /* ---- chart ---- */
