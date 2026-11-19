@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 import { Router } from "./lib/router";
-import { json, error } from "./lib/http";
+import { json, error, readBody } from "./lib/http";
 import { db } from "./lib/db";
 import { SCHEMA } from "./lib/schema";
 import { hashPassword, verifyPassword, newToken, newCsrf } from "./lib/authpw";
@@ -62,7 +62,7 @@ router.on("POST", "/api/admin/seed", async () => {
 
 router.on("POST", "/api/auth/signup", async ({ req }) => {
   try {
-    const body = await req.json();
+    const body = await readBody(req);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     if (!email || !password) return error(400, "email and password required");
@@ -79,7 +79,7 @@ router.on("POST", "/api/auth/signup", async ({ req }) => {
 
 router.on("POST", "/api/auth/login", async ({ req }) => {
   try {
-    const body = await req.json();
+    const body = await readBody(req);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     const rows: any = await db()`SELECT id, email, password_hash, tier, disabled FROM users WHERE email = ${email}`;
@@ -124,7 +124,7 @@ router.on("GET", "/api/ai/models", async () => {
 
 router.on("POST", "/api/ai/chat", async ({ req }) => {
   try {
-    const body = await req.json();
+    const body = await readBody(req);
     return json(await chat(body.messages ?? [], body.model));
   } catch (e) {
     return error(400, (e as Error).message);
@@ -217,7 +217,7 @@ router.on("POST", "/api/orders", async ({ req }) => {
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
-    const body = await req.json();
+    const body = await readBody(req);
     const rows: any = await db()`
       INSERT INTO orders (user_id, symbol, side, type, qty, price, mode, status)
       VALUES (${uid}, ${body.symbol || ''}, ${body.side || 'buy'}, ${body.type || 'market'}, ${body.qty || 0}, ${body.price ?? null}, ${body.mode || 'paper'}, 'open')
@@ -260,7 +260,7 @@ router.on("POST", "/api/journal", async ({ req }) => {
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
-    const body = await req.json();
+    const body = await readBody(req);
     const rows: any = await db()`
       INSERT INTO journal (user_id, symbol, strategy, note, pnl_ref)
       VALUES (${uid}, ${body.symbol || ''}, ${body.strategy || ''}, ${body.note || ''}, ${body.pnl_ref ?? null})
@@ -313,7 +313,7 @@ router.on("POST", "/api/backtests", async ({ req }) => {
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
-    const body = await req.json();
+    const body = await readBody(req);
     const rows: any = await db()`
       INSERT INTO backtests (user_id, symbol, params_json, status)
       VALUES (${uid}, ${body.symbol || ''}, ${JSON.stringify(body.params || {})}, 'done')
