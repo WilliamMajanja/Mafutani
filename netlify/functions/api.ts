@@ -203,6 +203,129 @@ router.on("POST", "/api/orders", async ({ req }) => {
   } catch (e) { return error(400, (e as Error).message); }
 });
 
+router.on("GET", "/api/screener", async () => {
+  try {
+    const rows: any = await db()`SELECT * FROM symbols WHERE enabled = 1`;
+    return json({ screener: rows });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/strategies", async () => {
+  try {
+    const rows: any = await db()`SELECT * FROM strategies ORDER BY name`;
+    return json({ strategies: rows });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/journal", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const rows: any = await db()`SELECT * FROM journal WHERE user_id = ${uid} ORDER BY ts DESC LIMIT 50`;
+    return json({ journal: rows });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/journal", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const body = await req.json();
+    const rows: any = await db()`
+      INSERT INTO journal (user_id, symbol, strategy, note, pnl_ref)
+      VALUES (${uid}, ${body.symbol || ''}, ${body.strategy || ''}, ${body.note || ''}, ${body.pnl_ref ?? null})
+      RETURNING *
+    `;
+    return json({ entry: rows[0] }, 201);
+  } catch (e) { return error(400, (e as Error).message); }
+});
+
+router.on("GET", "/api/risk", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const rows: any = await db()`SELECT * FROM risk_limits WHERE user_id = ${uid}`;
+    return json({ risk: rows[0] || {} });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/watchlists", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const rows: any = await db()`SELECT * FROM watchlists WHERE user_id = ${uid}`;
+    return json({ watchlists: rows });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/backtests", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const rows: any = await db()`SELECT * FROM backtests WHERE user_id = ${uid} ORDER BY created_at DESC LIMIT 20`;
+    return json({ backtests: rows });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/backtests", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const body = await req.json();
+    const rows: any = await db()`
+      INSERT INTO backtests (user_id, symbol, params_json, status)
+      VALUES (${uid}, ${body.symbol || ''}, ${JSON.stringify(body.params || {})}, 'done')
+      RETURNING *
+    `;
+    return json({ backtest: rows[0] }, 201);
+  } catch (e) { return error(400, (e as Error).message); }
+});
+
+router.on("GET", "/api/analysis", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || "";
+    return json({ symbol, analysis: {} });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/anomalies", async () => {
+  try {
+    return json({ anomalies: [] });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/chart_context", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || "";
+    return json({ symbol, context: {} });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/chart_position", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || "";
+    return json({ symbol, position: null });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
 export default async (req: Request): Promise<Response> => {
   const { pathname } = new URL(req.url);
   const res = await router.handle(req, pathname);
