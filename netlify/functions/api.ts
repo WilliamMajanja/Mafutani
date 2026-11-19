@@ -2,6 +2,8 @@ import type { Config } from "@netlify/functions";
 import { Router } from "./lib/router";
 import { json, error } from "./lib/http";
 import { db } from "./lib/db";
+import { SCHEMA } from "./lib/schema";
+import { hashPassword, verifyPassword, newToken, newCsrf } from "./lib/authpw";
 import { storage, BUCKET } from "./lib/storage";
 import { chat, listModels, AI_BASE } from "./lib/ai";
 import { authConfig, AUTH_BASE } from "./lib/auth";
@@ -14,7 +16,7 @@ router.on("GET", "/api/status", async () => {
     await db()`SELECT 1`;
     checks.db = "up";
   } catch (e) {
-    checks.db = "down";
+    checks.db = "down: " + (e as Error).message;
   }
   checks.ai = AI_BASE ? "configured" : "missing";
   checks.auth = AUTH_BASE ? "configured" : "missing";
@@ -23,11 +25,63 @@ router.on("GET", "/api/status", async () => {
   return json({ ok: checks.db === "up", checks });
 });
 
+router.on("POST", "/api/admin/init", async () => {
+  try {
+    await db()`${SCHEMA}`;
+    return json({ ok: true });
+  } catch (e) {
+    return error(500, (e as Error).message);
+  }
+});
+
+router.on("POST", "/api/auth/signup", async ({ req }) => {
+  try {
+    const body = await req.json();
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    if (!email || !password) return error(400, "email and password required");
+    const hash = hashPassword(password);
+    const rows: any = await db()`
+      INSERT INTO users (email, password_hash) VALUES (${email}, ${hash})
+      RETURNING id, email, tier
+    `;
+    return json({ user: rows[0] }, 201);
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+});
+
+router.on("POST", "/api/auth/login", async ({ req }) => {
+  try {
+    const body = await req.json();
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const rows: any = await db()`SELECT id, email, password_hash, tier, disabled FROM users WHERE email = ${email}`;
+    if (rows.length === 0) return error(401, "invalid credentials");
+    const u = rows[0];
+    if (u.disabled) return error(403, "account disabled");
+    if (!verifyPassword(password, u.password_hash)) return error(401, "invalid credentials");
+    const token = newToken();
+    const csrf = newCsrf();
+    const expires = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+    await db()`INSERT INTO sessions (token, user_id, expires_at, csrf_token) VALUES (${token}, ${u.id}, ${expires}, ${csrf})`;
+    return json({ token, csrf_token: csrf, user: { id: u.id, email: u.email, tier: u.tier } });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+});
+
+router.on("POST", "/api/auth/logout", async ({ req }) => {
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  if (token) await db()`DELETE FROM sessions WHERE token = ${token}`;
+  return json({ ok: true });
+});
+
 router.on("GET", "/api/storage/list", async () => {
   try {
-    const res = await storage().send(
-      new (await import("@aws-sdk/client-s3")).ListObjectsV2Command({ Bucket: BUCKET }),
-    );
+    const { ListObjectsV2Command } = await import("@aws-sdk/client-s3");
+    const res = await storage().send(new ListObjectsV2Command({ Bucket: BUCKET }));
     return json({ bucket: BUCKET, objects: res.Contents ?? [] });
   } catch (e) {
     return error(500, (e as Error).message);
