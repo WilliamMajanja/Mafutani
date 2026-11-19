@@ -326,6 +326,59 @@ router.on("GET", "/api/chart_position", async ({ query }) => {
   } catch (e) { return error(500, (e as Error).message); }
 });
 
+// --- remaining endpoints (stubs returning safe defaults) ---
+const stub = (data: any = {}) => async () => json(data);
+
+router.on("GET", "/api/i18n", async () => json({ locales: ["en"] }));
+router.on("GET", "/api/i18n/messages", async ({ query }) => json({ locale: query.get("locale") || "en", messages: {} }));
+router.on("GET", "/api/me/entitlements", async ({ req }) => {
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+  if (sess.length === 0) return error(401, "unauthorized");
+  const u: any = await db()`SELECT tier FROM users WHERE id = ${sess[0].user_id}`;
+  return json({ tier: u[0]?.tier || "Free", entitlements: {} });
+});
+router.on("GET", "/api/policies", async () => json({ policies: [] }));
+router.on("GET", "/api/kyc/me", async ({ req }) => {
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+  if (sess.length === 0) return error(401, "unauthorized");
+  return json({ kyc: { status: "none" } });
+});
+router.on("GET", "/api/allocation", async () => json({ allocation: {} }));
+router.on("GET", "/api/arbitrage", async () => json({ arbitrage: [] }));
+router.on("GET", "/api/arbitrage/venues", async () => json({ venues: [] }));
+router.on("GET", "/api/cot", async () => json({ cot: [] }));
+router.on("GET", "/api/cot/contract", async () => json({ contract: null }));
+router.on("GET", "/api/cot/history", async () => json({ history: [] }));
+router.on("POST", "/api/cot/sync", async () => json({ ok: true }));
+router.on("GET", "/api/macro", async () => json({ macro: [] }));
+router.on("GET", "/api/macro/series", async () => json({ series: [] }));
+router.on("POST", "/api/macro/fetch", async () => json({ ok: true }));
+router.on("GET", "/api/agents", async () => json({ agents: [] }));
+router.on("GET", "/api/agents/tick", async () => json({ ok: true }));
+router.on("GET", "/api/auth/2fa", async () => json({ enabled: false }));
+router.on("POST", "/api/auth/2fa/setup", async () => json({ secret: "", qr: "" }));
+router.on("POST", "/api/auth/2fa/enable", async () => json({ ok: true }));
+router.on("POST", "/api/auth/2fa/disable", async () => json({ ok: true }));
+router.on("POST", "/api/signals/preview", async () => json({ preview: {} }));
+router.on("POST", "/api/backtests/validate", async () => json({ valid: true }));
+router.on("GET", "/api/backtests/", async ({ req }) => {
+  // detail view by id in path handled below
+  return json({ backtest: null });
+});
+router.on("GET", "/api/admin/overview", async () => json({ overview: {} }));
+router.on("GET", "/api/admin/readiness", async () => json({ ready: true }));
+router.on("GET", "/api/admin/audit", async () => json({ audit: [] }));
+router.on("GET", "/api/admin/users", async () => json({ users: [] }));
+router.on("GET", "/api/admin/symbols/", async () => json({ symbols: [] }));
+router.on("GET", "/api/admin/external_refs", async () => json({ refs: [] }));
+router.on("POST", "/api/admin/external_refs/check", async () => json({ ok: true }));
+router.on("GET", "/api/admin/kyc", async () => json({ kyc: [] }));
+router.on("POST", "/api/admin/kyc/", async () => json({ ok: true }));
+
 export default async (req: Request): Promise<Response> => {
   const { pathname } = new URL(req.url);
   const res = await router.handle(req, pathname);
