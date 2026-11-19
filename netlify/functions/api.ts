@@ -8,6 +8,7 @@ import { storage, BUCKET } from "./lib/storage";
 import { chat, listModels, AI_BASE } from "./lib/ai";
 import { authConfig, AUTH_BASE } from "./lib/auth";
 import { listSymbols, getQuotes, getCandles, listExchanges, listMarkets } from "./lib/market";
+import { listNews } from "./lib/news";
 
 const router = new Router();
 
@@ -148,6 +149,58 @@ router.on("GET", "/api/quote", async ({ query }) => {
     const rows: any = await db()`SELECT * FROM quotes_l1 WHERE symbol = ${symbol} ORDER BY ts DESC LIMIT 1`;
     return json({ quote: rows[0] || null });
   } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/news", async ({ query }) => {
+  try {
+    const symbol = query.get("symbol") || undefined;
+    const limit = parseInt(query.get("limit") || "20", 10);
+    return json({ news: await listNews(db(), symbol, limit) });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/portfolio", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const acct: any = await db()`SELECT cash, starting_cash FROM accounts WHERE user_id = ${uid}`;
+    const pos: any = await db()`SELECT * FROM positions WHERE user_id = ${uid}`;
+    const ords: any = await db()`SELECT * FROM orders WHERE user_id = ${uid} ORDER BY created_at DESC LIMIT 20`;
+    return json({ portfolio: { cash: acct[0]?.cash ?? 0, starting_cash: acct[0]?.starting_cash ?? 0, positions: pos, orders: ords } });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/orders", async ({ req, query }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const limit = parseInt(query.get("limit") || "20", 10);
+    const ords: any = await db()`SELECT * FROM orders WHERE user_id = ${uid} ORDER BY created_at DESC LIMIT ${limit}`;
+    return json({ orders: ords });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/orders", async ({ req }) => {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
+    if (sess.length === 0) return error(401, "unauthorized");
+    const uid = sess[0].user_id;
+    const body = await req.json();
+    const rows: any = await db()`
+      INSERT INTO orders (user_id, symbol, side, type, qty, price, mode, status)
+      VALUES (${uid}, ${body.symbol || ''}, ${body.side || 'buy'}, ${body.type || 'market'}, ${body.qty || 0}, ${body.price ?? null}, ${body.mode || 'paper'}, 'open')
+      RETURNING *
+    `;
+    return json({ order: rows[0] }, 201);
+  } catch (e) { return error(400, (e as Error).message); }
 });
 
 export default async (req: Request): Promise<Response> => {

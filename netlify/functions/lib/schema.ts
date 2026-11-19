@@ -40,6 +40,50 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS news (
+  id SERIAL PRIMARY KEY,
+  ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+  symbol TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol, ts DESC);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  cash REAL NOT NULL DEFAULT 0,
+  starting_cash REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS positions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  symbol TEXT NOT NULL DEFAULT '',
+  qty REAL NOT NULL DEFAULT 0,
+  avg_price REAL NOT NULL DEFAULT 0,
+  realized_pnl REAL NOT NULL DEFAULT 0,
+  updated_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+  PRIMARY KEY (user_id, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  symbol TEXT NOT NULL DEFAULT '',
+  side TEXT NOT NULL DEFAULT 'buy',
+  type TEXT NOT NULL DEFAULT 'market',
+  qty REAL NOT NULL DEFAULT 0,
+  price REAL,
+  stop_price REAL,
+  status TEXT NOT NULL DEFAULT 'open',
+  mode TEXT NOT NULL DEFAULT 'paper',
+  venue_order_id TEXT NOT NULL DEFAULT '',
+  client_order_id TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+
 CREATE TABLE IF NOT EXISTS symbols (
   symbol TEXT PRIMARY KEY,
   asset_type TEXT NOT NULL DEFAULT 'equity',
