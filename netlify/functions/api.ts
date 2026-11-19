@@ -36,6 +36,30 @@ router.on("POST", "/api/admin/init", async () => {
   }
 });
 
+router.on("POST", "/api/admin/seed", async () => {
+  const accounts = [
+    { email: "admin@local", password: "donttrytoplaythefoolwithmeniggesh", tier: "Admin" },
+    { email: "demo@local", password: "demo1234", tier: "Pro" },
+    { email: "prouser@local", password: "propass123!", tier: "Pro" },
+    { email: "institutional@local", password: "institutepass123!", tier: "Institutional" },
+    { email: "testuser1@local", password: "testpass123!", tier: "Free" },
+    { email: "testuser2@local", password: "testpass123!", tier: "Free" },
+  ];
+  const results: any[] = [];
+  for (const a of accounts) {
+    try {
+      const hash = hashPassword(a.password);
+      await db()`INSERT INTO users (email, password_hash, tier) VALUES (${a.email}, ${hash}, ${a.tier}) ON CONFLICT (email) DO UPDATE SET password_hash = ${hash}, tier = ${a.tier}`;
+      await db()`INSERT INTO accounts (user_id, cash, starting_cash) SELECT id, 100000, 100000 FROM users WHERE email = ${a.email} ON CONFLICT (user_id) DO NOTHING`;
+      await db()`INSERT INTO risk_limits (user_id) SELECT id FROM users WHERE email = ${a.email} ON CONFLICT (user_id) DO NOTHING`;
+      results.push({ email: a.email, status: "ok" });
+    } catch (e) {
+      results.push({ email: a.email, status: "error", error: (e as Error).message });
+    }
+  }
+  return json({ seeded: results });
+});
+
 router.on("POST", "/api/auth/signup", async ({ req }) => {
   try {
     const body = await req.json();
