@@ -9,5 +9,3 @@ export async function listNews(db: any, symbol?: string, limit = 20): Promise<an
     return [];
   }
 }
-EOF
-echo done
