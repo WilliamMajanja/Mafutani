@@ -29,7 +29,8 @@ router.on("GET", "/api/status", async () => {
 
 router.on("POST", "/api/admin/init", async () => {
   try {
-    await db()`${SCHEMA}`;
+    const sql = db();
+    await (sql as any).query(SCHEMA);
     return json({ ok: true });
   } catch (e) {
     return error(500, (e as Error).message);
