@@ -3280,7 +3280,7 @@
   }
 
   window.addEventListener("hashchange", router);
-  bindAuth();
+  try { bindAuth(); } catch (e) { console.error("bindAuth failed:", e); }
   if (!location.hash) location.hash = "#/dashboard";
   try {
     if (window.OpenTerminal) {

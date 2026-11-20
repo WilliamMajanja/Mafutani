@@ -54,7 +54,7 @@
        SyntaxError once silently killed login) the browser still posts
        credentials to the API, which redirects back to #/dashboard, instead
        of silently re-rendering the SPA with a 200 and no session. -->
-  <form id="login-form" method="POST" action="/api/auth/login">
+  <form id="login-form" method="POST" action="/api/auth/login" onsubmit="return false;">
     <label>Email <input id="login-email" type="email" name="email" required autocomplete="username" placeholder="you@example.com"></label>
     <label>Password <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="••••••••"></label>
     <label id="login-2fa-row" hidden>Authenticator code
