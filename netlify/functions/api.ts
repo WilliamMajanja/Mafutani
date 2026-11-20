@@ -30,7 +30,10 @@ router.on("GET", "/api/status", async () => {
 router.on("POST", "/api/admin/init", async () => {
   try {
     const sql = db();
-    await (sql as any).query(SCHEMA);
+    const statements = SCHEMA.split(";").map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+    for (const stmt of statements) {
+      await sql(stmt as any);
+    }
     return json({ ok: true });
   } catch (e) {
     return error(500, (e as Error).message);
