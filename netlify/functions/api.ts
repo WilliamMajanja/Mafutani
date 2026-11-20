@@ -55,7 +55,7 @@ router.on("POST", "/api/admin/seed", async () => {
       const hash = hashPassword(a.password);
       await db()`INSERT INTO users (email, password_hash, tier) VALUES (${a.email}, ${hash}, ${a.tier}) ON CONFLICT (email) DO UPDATE SET password_hash = ${hash}, tier = ${a.tier}`;
       await db()`INSERT INTO accounts (user_id, cash, starting_cash) SELECT id, 100000, 100000 FROM users WHERE email = ${a.email} ON CONFLICT (user_id) DO NOTHING`;
-      await db()`INSERT INTO risk_limits (user_id) SELECT id FROM users WHERE email = ${a.email} ON CONFLICT (user_id) DO NOTHING`;
+      try { await db()`INSERT INTO risk_limits (user_id) SELECT id FROM users WHERE email = ${a.email} ON CONFLICT (user_id) DO NOTHING`; } catch (e) { /* table may not exist */ }
       results.push({ email: a.email, status: "ok" });
     } catch (e) {
       results.push({ email: a.email, status: "error", error: (e as Error).message });
