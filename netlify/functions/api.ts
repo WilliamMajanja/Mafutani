@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 import { Router } from "./lib/router";
-import { json, error, readBody } from "./lib/http";
+import { json, error, readBody, getSessionToken } from "./lib/http";
 import { db } from "./lib/db";
 import { SCHEMA } from "./lib/schema";
 import { hashPassword, verifyPassword, newToken, newCsrf } from "./lib/authpw";
@@ -95,15 +95,14 @@ router.on("POST", "/api/auth/login", async ({ req }) => {
     const csrf = newCsrf();
     const expires = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
     await db()`INSERT INTO sessions (token, user_id, expires_at, csrf_token) VALUES (${token}, ${u.id}, ${expires}, ${csrf})`;
-    return json({ token, csrf_token: csrf, user: { id: u.id, email: u.email, tier: u.tier } });
+    return json({ token, session_token: token, csrf, csrf_token: csrf, user: { id: u.id, email: u.email, tier: u.tier } });
   } catch (e) {
     return error(400, (e as Error).message);
   }
 });
 
 router.on("POST", "/api/auth/logout", async ({ req }) => {
-  const auth = req.headers.get("authorization") || "";
-  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  const token = getSessionToken(req);
   if (token) await db()`DELETE FROM sessions WHERE token = ${token}`;
   return json({ ok: true });
 });
@@ -189,8 +188,7 @@ router.on("GET", "/api/news", async ({ query }) => {
 
 router.on("GET", "/api/portfolio", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -203,8 +201,7 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
 
 router.on("GET", "/api/orders", async ({ req, query }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -216,8 +213,7 @@ router.on("GET", "/api/orders", async ({ req, query }) => {
 
 router.on("POST", "/api/orders", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -247,8 +243,7 @@ router.on("GET", "/api/strategies", async () => {
 
 router.on("GET", "/api/journal", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -259,8 +254,7 @@ router.on("GET", "/api/journal", async ({ req }) => {
 
 router.on("POST", "/api/journal", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -276,8 +270,7 @@ router.on("POST", "/api/journal", async ({ req }) => {
 
 router.on("GET", "/api/risk", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -288,8 +281,7 @@ router.on("GET", "/api/risk", async ({ req }) => {
 
 router.on("GET", "/api/watchlists", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -300,8 +292,7 @@ router.on("GET", "/api/watchlists", async ({ req }) => {
 
 router.on("GET", "/api/backtests", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -312,8 +303,7 @@ router.on("GET", "/api/backtests", async ({ req }) => {
 
 router.on("POST", "/api/backtests", async ({ req }) => {
   try {
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.replace(/^Bearer\s+/i, "").trim();
+    const token = getSessionToken(req);
     const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
     if (sess.length === 0) return error(401, "unauthorized");
     const uid = sess[0].user_id;
@@ -360,8 +350,7 @@ const stub = (data: any = {}) => async () => json(data);
 router.on("GET", "/api/i18n", async () => json({ locales: ["en"] }));
 router.on("GET", "/api/i18n/messages", async ({ query }) => json({ locale: query.get("locale") || "en", messages: {} }));
 router.on("GET", "/api/me/entitlements", async ({ req }) => {
-  const auth = req.headers.get("authorization") || "";
-  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  const token = getSessionToken(req);
   const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
   if (sess.length === 0) return error(401, "unauthorized");
   const u: any = await db()`SELECT tier FROM users WHERE id = ${sess[0].user_id}`;
@@ -369,8 +358,7 @@ router.on("GET", "/api/me/entitlements", async ({ req }) => {
 });
 router.on("GET", "/api/policies", async () => json({ policies: [] }));
 router.on("GET", "/api/kyc/me", async ({ req }) => {
-  const auth = req.headers.get("authorization") || "";
-  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  const token = getSessionToken(req);
   const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
   if (sess.length === 0) return error(401, "unauthorized");
   return json({ kyc: { status: "none" } });

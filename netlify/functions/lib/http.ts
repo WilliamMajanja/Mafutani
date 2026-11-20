@@ -9,6 +9,13 @@ export function error(status: number, message: string): Response {
   return json({ error: message }, status);
 }
 
+export function getSessionToken(req: Request): string {
+  const auth = req.headers.get("authorization") || "";
+  const bearer = auth.replace(/^Bearer\s+/i, "").trim();
+  if (bearer) return bearer;
+  return (req.headers.get("x-session") || "").trim();
+}
+
 export async function readBody(req: Request): Promise<any> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
