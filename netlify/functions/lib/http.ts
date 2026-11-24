@@ -13,7 +13,22 @@ export function getSessionToken(req: Request): string {
   const auth = req.headers.get("authorization") || "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   if (bearer) return bearer;
-  return (req.headers.get("x-session") || "").trim();
+  const session = (req.headers.get("x-session") || "").trim();
+  if (session) return session;
+  // Browser fallback: the HttpOnly session cookie. This keeps a reload signed
+  // in even when localStorage is unavailable (private mode, cleared storage).
+  const cookie = req.headers.get("cookie") || "";
+  for (const part of cookie.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === "session") return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+/** Set-Cookie value for the session token; Secure on HTTPS deployments. */
+export function sessionCookie(token: string, req: Request, maxAgeSeconds = 7 * 24 * 3600): string {
+  const secure = new URL(req.url).protocol === "https:" ? "; Secure" : "";
+  return `session=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export async function readBody(req: Request): Promise<any> {

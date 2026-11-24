@@ -53,25 +53,25 @@ CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol, ts DESC);
 
 CREATE TABLE IF NOT EXISTS accounts (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  cash REAL NOT NULL DEFAULT 0,
-  starting_cash REAL NOT NULL DEFAULT 0
+  cash DOUBLE PRECISION NOT NULL DEFAULT 0,
+  starting_cash DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS positions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   symbol TEXT NOT NULL DEFAULT '',
-  qty REAL NOT NULL DEFAULT 0,
-  avg_price REAL NOT NULL DEFAULT 0,
-  realized_pnl REAL NOT NULL DEFAULT 0,
+  qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+  avg_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  realized_pnl DOUBLE PRECISION NOT NULL DEFAULT 0,
   updated_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
   PRIMARY KEY (user_id, symbol)
 );
 
 CREATE TABLE IF NOT EXISTS risk_limits (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  max_position_qty REAL NOT NULL DEFAULT 100,
-  max_notional REAL NOT NULL DEFAULT 100000,
-  max_daily_loss REAL NOT NULL DEFAULT 1000,
+  max_position_qty DOUBLE PRECISION NOT NULL DEFAULT 100,
+  max_notional DOUBLE PRECISION NOT NULL DEFAULT 100000,
+  max_daily_loss DOUBLE PRECISION NOT NULL DEFAULT 1000,
   max_trades_per_hour INTEGER NOT NULL DEFAULT 20,
   cooldown_after_losses INTEGER NOT NULL DEFAULT 2,
   allowlist_json TEXT NOT NULL DEFAULT '[]',
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS orders (
   symbol TEXT NOT NULL DEFAULT '',
   side TEXT NOT NULL DEFAULT 'buy',
   type TEXT NOT NULL DEFAULT 'market',
-  qty REAL NOT NULL DEFAULT 0,
+  qty DOUBLE PRECISION NOT NULL DEFAULT 0,
   price REAL,
   stop_price REAL,
   status TEXT NOT NULL DEFAULT 'open',
@@ -113,10 +113,10 @@ CREATE TABLE IF NOT EXISTS quotes_l1 (
   id SERIAL PRIMARY KEY,
   symbol TEXT NOT NULL,
   ts BIGINT NOT NULL,
-  bid REAL NOT NULL,
-  ask REAL NOT NULL,
-  bid_size REAL NOT NULL DEFAULT 0,
-  ask_size REAL NOT NULL DEFAULT 0,
+  bid DOUBLE PRECISION NOT NULL,
+  ask DOUBLE PRECISION NOT NULL,
+  bid_size DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ask_size DOUBLE PRECISION NOT NULL DEFAULT 0,
   last REAL,
   source TEXT NOT NULL DEFAULT 'synthetic'
 );
@@ -126,11 +126,11 @@ CREATE TABLE IF NOT EXISTS candles_1m (
   id SERIAL PRIMARY KEY,
   symbol TEXT NOT NULL,
   ts BIGINT NOT NULL,
-  open REAL NOT NULL,
-  high REAL NOT NULL,
-  low REAL NOT NULL,
-  close REAL NOT NULL,
-  volume REAL NOT NULL DEFAULT 0,
+  open DOUBLE PRECISION NOT NULL,
+  high DOUBLE PRECISION NOT NULL,
+  low DOUBLE PRECISION NOT NULL,
+  close DOUBLE PRECISION NOT NULL,
+  volume DOUBLE PRECISION NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'synthetic',
   UNIQUE (symbol, ts)
 );
@@ -179,6 +179,18 @@ INSERT INTO exchanges (code, name, type, asset_classes, region, currency, tz, no
   ('COINBASE', 'Coinbase Exchange', 'exchange', 'crypto', 'US', 'USD', 'America/New_York', 'US-regulated crypto spot')
 ON CONFLICT (code) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS symbols (
+  symbol TEXT PRIMARY KEY,
+  asset_type TEXT NOT NULL DEFAULT 'equity',
+  name TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  tick_size DOUBLE PRECISION NOT NULL DEFAULT 0.01,
+  lot_size DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  exchange TEXT NOT NULL DEFAULT '',
+  currency TEXT NOT NULL DEFAULT 'USD',
+  sector TEXT NOT NULL DEFAULT ''
+);
+
 INSERT INTO symbols (symbol, asset_type, name, enabled, tick_size, lot_size) VALUES
   ('BTCUSD', 'crypto', 'Bitcoin / US Dollar', 1, 0.01, 0.0001),
   ('AAPL', 'equity', 'Apple Inc.', 1, 0.01, 1.0),
@@ -209,15 +221,43 @@ CREATE TABLE IF NOT EXISTS backtests (
 );
 CREATE INDEX IF NOT EXISTS idx_backtests_user ON backtests(user_id);
 
-CREATE TABLE IF NOT EXISTS symbols (
-  symbol TEXT PRIMARY KEY,
-  asset_type TEXT NOT NULL DEFAULT 'equity',
-  name TEXT NOT NULL DEFAULT '',
-  enabled INTEGER NOT NULL DEFAULT 1,
-  tick_size REAL NOT NULL DEFAULT 0.01,
-  lot_size REAL NOT NULL DEFAULT 1.0,
-  exchange TEXT NOT NULL DEFAULT '',
-  currency TEXT NOT NULL DEFAULT 'USD',
-  sector TEXT NOT NULL DEFAULT ''
+CREATE TABLE IF NOT EXISTS candles_1d (
+  id SERIAL PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  ts BIGINT NOT NULL,
+  open DOUBLE PRECISION NOT NULL,
+  high DOUBLE PRECISION NOT NULL,
+  low DOUBLE PRECISION NOT NULL,
+  close DOUBLE PRECISION NOT NULL,
+  volume DOUBLE PRECISION NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'yahoo-chart',
+  UNIQUE (symbol, ts)
 );
+CREATE INDEX IF NOT EXISTS idx_candles_1d_sym_ts ON candles_1d(symbol, ts);
+
+CREATE TABLE IF NOT EXISTS fills (
+  id SERIAL PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  symbol TEXT NOT NULL DEFAULT '',
+  side TEXT NOT NULL DEFAULT '',
+  qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+  price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  fee DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cash_after REAL,
+  ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_fills_order ON fills(order_id);
+CREATE INDEX IF NOT EXISTS idx_fills_user ON fills(user_id);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id SERIAL PRIMARY KEY,
+  ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+  actor_user_id INTEGER,
+  action TEXT NOT NULL DEFAULT '',
+  tier TEXT NOT NULL DEFAULT '',
+  paper_live TEXT NOT NULL DEFAULT 'paper',
+  details_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
 `;

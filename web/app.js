@@ -268,9 +268,14 @@
       html += "<p class='kpi-l'>risk: maxQty " + esc(lim.max_position_qty) + " · maxNotional " +
         esc(lim.max_notional) + " · maxDailyLoss " + esc(lim.max_daily_loss) +
         (lim.kill_switch ? " · <span class='neg'>KILL-SWITCH ON</span>" : "") + "</p>";
-      document.getElementById("dash").innerHTML = html;
+      var dashEl = document.getElementById("dash");
+      if (!dashEl) return; // navigated away while the request was in flight
+      dashEl.innerHTML = html;
       mountAssets("dash-assets");
-    }).catch(function (e) { document.getElementById("dash").innerHTML = showErr(e); });
+    }).catch(function (e) {
+      var dashEl = document.getElementById("dash");
+      if (dashEl) dashEl.innerHTML = showErr(e);
+    });
     startSSE(function () {
       renderTape();
     });
@@ -2964,6 +2969,36 @@
     }).catch(function (e) { view().innerHTML = "<h2>Policies</h2><p class='error'>" + esc(e.message) + "</p>"; });
   }
 
+  function pageAdmin() {
+    hideLogin();
+    view().innerHTML = "<h2>Admin</h2><p class='kpi-l'>Loading…</p>";
+    Promise.all([
+      api("GET", "/api/admin/overview").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/admin/readiness").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/admin/audit").catch(function (e) { return { error: e.message }; })
+    ]).then(function (res) {
+      var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
+      if (ov.error) {
+        view().innerHTML = "<h2>Admin</h2><p class='error'>" + esc(ov.error) + "</p>";
+        return;
+      }
+      var keys = Object.keys(ov.overview || ov).filter(function (k) { return k !== "error"; });
+      var rows = keys.map(function (k) {
+        var v = (ov.overview || ov)[k];
+        return "<tr><td>" + esc(k) + "</td><td>" + esc(typeof v === "object" ? JSON.stringify(v) : v) + "</td></tr>";
+      }).join("") || "<tr><td colspan='2' class='dim'>No data</td></tr>";
+      var auditRows = (audit.audit || []).slice(0, 10).map(function (a) {
+        return "<tr><td>" + esc(a.ts) + "</td><td>" + esc(a.action) + "</td><td>" + esc(a.actor_user_id) + "</td></tr>";
+      }).join("") || "<tr><td colspan='3' class='dim'>No audit entries</td></tr>";
+      view().innerHTML = "<h2>Admin</h2>" +
+        "<div class='card'><h3>Readiness</h3><p>" + esc(JSON.stringify(ready)) + "</p></div>" +
+        "<div class='card'><h3>Overview</h3><table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>" + rows + "</tbody></table></div>" +
+        "<div class='card'><h3>Recent audit</h3><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th></tr></thead><tbody>" + auditRows + "</tbody></table></div>";
+    }).catch(function (e) {
+      view().innerHTML = "<h2>Admin</h2><p class='error'>" + esc(e.message) + "</p>";
+    });
+  }
+
   function pageChain() {
     view().innerHTML = "<h2>Mafutani Chain (MFT / CommCoin)</h2><p class='kpi-l'>Loading…</p>";
     Promise.all([
@@ -3160,6 +3195,12 @@
     var form = document.getElementById("login-form");
     var codeRow = document.getElementById("login-2fa-row");
     var codeInput = document.getElementById("login-code");
+    // Remember the last address so returning operators type only a password.
+    try {
+      var savedEmail = localStorage.getItem("mafutani_email");
+      var emailInput = document.getElementById("login-email");
+      if (savedEmail && emailInput && !emailInput.value) emailInput.value = savedEmail;
+    } catch (e) { /* storage may be disabled */ }
     function show2fa(on) {
       if (!codeRow) return;
       codeRow.hidden = !on;
@@ -3190,6 +3231,7 @@
         .then(function (r) {
           if (r.csrf_token || r.csrf) csrfToken = r.csrf_token || r.csrf;
           if (r.session_token) { try { localStorage.setItem("mafutani_session", r.session_token); } catch (e) {} }
+          try { localStorage.setItem("mafutani_email", email); } catch (e) {}
           show2fa(false);
           if (codeInput) codeInput.value = "";
           return refreshMe();

@@ -7,9 +7,6 @@ export default defineConfig({
   },
   auth: true,
   aiGateway: true,
-  functions: {
-    hello: { name: "Hello World", source: "./hello.ts" },
-  },
   buckets: {
     // "private" is the default; use "public_read" for anonymous reads
     assets: { access: "private" },

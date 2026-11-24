@@ -1,0 +1,11 @@
+# Netlify DNS A records for mafutani.org
+# Copy into Netlify UI (DNS -> Add record)
+
+A  @        75.2.60.5
+A  www      75.2.60.5
+A  api      75.2.60.5
+A  app      75.2.60.5
+A  admin    75.2.60.5
+A  auth     75.2.60.5
+A  docs     75.2.60.5
+A  status   75.2.60.5
