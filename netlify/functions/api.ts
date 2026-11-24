@@ -15,6 +15,7 @@ import { currentUser, accountFor } from "./lib/session";
 import { executeOrder, paperEnabled } from "./lib/trading";
 import { runBacktest } from "./lib/backtest";
 import { liveConfigured, liveDisabledReason } from "./lib/mt5";
+import { policies } from "./lib/policies";
 
 const router = new Router();
 
@@ -70,14 +71,9 @@ router.on("POST", "/api/admin/init", async ({ req }) => {
 
 router.on("POST", "/api/admin/seed", async ({ req }) => {
   if (!setupAuthorized(req)) return error(404, "not found");
-  const accounts = [
-    { email: "admin@local", password: "donttrytoplaythefoolwithmeniggesh", tier: "Admin" },
-    { email: "demo@local", password: "demo1234", tier: "Pro" },
-    { email: "prouser@local", password: "propass123!", tier: "Pro" },
-    { email: "institutional@local", password: "institutepass123!", tier: "Institutional" },
-    { email: "testuser1@local", password: "testpass123!", tier: "Free" },
-    { email: "testuser2@local", password: "testpass123!", tier: "Free" },
-  ];
+  // Only operator-supplied bootstrap accounts. No shared demo passwords:
+  // a known credential in source is a production account takeover.
+  const accounts: { email: string; password: string; tier: string }[] = [];
   const globalAdminPassword = process.env.GLOBAL_ADMIN_PASSWORD || "";
   if (globalAdminPassword) {
     for (const email of globalAdminEmails()) {
@@ -225,6 +221,46 @@ router.on("POST", "/api/ai/analysis", async ({ req }) => {
     const out: any = await chat([{ role: "user", content: prompt }], String(body.model || "claude-haiku-4-5"));
     const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
     return json({ symbol, model: body.model || "claude-haiku-4-5", text, analysis: a });
+  } catch (e) {
+    return error(502, "AI gateway: " + (e as Error).message);
+  }
+});
+
+router.on("POST", "/api/ai/brief", async ({ req }) => {
+  const user = await currentUser(req);
+  if (!user) return error(401, "unauthorized");
+  try {
+    const acct = await accountFor(user.id);
+    const pos: any = await db()`
+      SELECT p.symbol, p.qty, p.avg_price, COALESCE(q.last, q.bid, q.ask) AS last
+      FROM positions p
+      LEFT JOIN LATERAL (
+        SELECT bid, ask, last FROM quotes_l1 WHERE symbol = p.symbol ORDER BY ts DESC LIMIT 1
+      ) q ON TRUE
+      WHERE p.user_id = ${user.id} AND p.qty <> 0
+    `;
+    const series = await dailySeries(db(), 10);
+    const quotes = await quoteMap(db());
+    const movers = [];
+    for (const [symbol, candles] of series) {
+      if (candles.length < 2) continue;
+      const prev = candles[candles.length - 2].close;
+      const last = candles[candles.length - 1].close;
+      const q = quotes.get(symbol);
+      movers.push({ symbol, pct: prev ? ((last - prev) / prev) * 100 : 0, last: q?.last ?? last });
+    }
+    movers.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+    const stocks = movers.slice(0, 8);
+    const prompt = [
+      "You are the trading desk's risk briefer. Use only the supplied data.",
+      "Return 3 short sections: Book, Market, Actions. No disclaimers.",
+      `Account: ${user.email} (${user.tier}); cash ${acct.cash.toFixed(2)}; positions ${JSON.stringify(pos)}.`,
+      `Top movers (session %): ${JSON.stringify(stocks)}.`,
+      "Flag concentration, missing data, and anything a risk officer should act on before the next session.",
+    ].join("\n");
+    const out: any = await chat([{ role: "user", content: prompt }], "claude-haiku-4-5");
+    const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    return json({ email: user.email, model: "claude-haiku-4-5", text, movers: stocks });
   } catch (e) {
     return error(502, "AI gateway: " + (e as Error).message);
   }
@@ -432,10 +468,49 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
       SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${user.id}
     `;
     const liveAvailable = liveConfigured() && !!(tierLive[0] && Number(tierLive[0].live_enabled));
+
+    // CommCoin value comes from the chain service, not from a hardcoded rate.
+    // The chain exposes a reference value (metadata), so it is reported as a
+    // reference valuation, never as a market price.
+    let mft: any = { available: false, reason: "CommCoin chain service is not configured", balance_mft: null, reference_value_usd: null, value_usd: null };
+    const chainBase = (process.env.CHAIN_API_URL || "").replace(/\/+$/, "");
+    if (chainBase) {
+      try {
+        const headers: Record<string, string> = {};
+        const token = getSessionToken(req);
+        if (token) headers["X-Session"] = token;
+        if (process.env.CHAIN_API_TOKEN) headers["X-Mafutani-Token"] = process.env.CHAIN_API_TOKEN;
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 4000);
+        const [infoRes, walletRes] = await Promise.all([
+          fetch(chainBase + "/api/chain/info", { headers, signal: ctrl.signal }),
+          fetch(chainBase + "/api/chain/wallet", { headers, signal: ctrl.signal }),
+        ]);
+        clearTimeout(timer);
+        const info: any = infoRes.ok ? await infoRes.json() : {};
+        const wallet: any = walletRes.ok ? await walletRes.json() : {};
+        const balance = wallet && wallet.exists ? Number(wallet.balance_mft) : 0;
+        const ref = info && info.reference_value_usd != null ? Number(info.reference_value_usd) : null;
+        mft = {
+          available: true,
+          balance_mft: isFinite(balance) ? balance : 0,
+          reference_value_usd: isFinite(ref as number) ? ref : null,
+          value_usd: isFinite(ref as number) && isFinite(balance) ? Number((balance * (ref as number)).toFixed(2)) : null,
+          note: info.reference_value_note || "reference value only, not a market price",
+          coin_symbol: info.coin_symbol || "MFT",
+        };
+      } catch (e) {
+        mft.reason = "CommCoin service unreachable: " + (e as Error).message;
+      }
+    }
+    const commcoinValue = mft.value_usd == null ? 0 : Number(mft.value_usd);
     return json({
       cash: acct.cash,
       starting_cash: acct.starting_cash,
-      equity: acct.cash + marketValue,
+      equity: acct.cash + marketValue + commcoinValue,
+      commcoin: mft,
+      market_value_securities: Number(marketValue.toFixed(2)),
+      market_value: Number((marketValue + commcoinValue).toFixed(2)),
       tier: user.tier,
       email: user.email,
       live_trading_enabled: liveAvailable,
@@ -448,7 +523,9 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
         realized_pnl: Number(realized.toFixed(2)),
         unrealized_pnl: Number(unrealized.toFixed(2)),
         total_pnl: Number((realized + unrealized).toFixed(2)),
-        market_value: Number(marketValue.toFixed(2)),
+        market_value: Number((marketValue + commcoinValue).toFixed(2)),
+        market_value_securities: Number(marketValue.toFixed(2)),
+        commcoin_value: commcoinValue,
       },
     });
   } catch (e) { return error(500, (e as Error).message); }
@@ -840,7 +917,7 @@ router.on("GET", "/api/me/entitlements", async ({ req }) => {
   const u: any = await db()`SELECT tier FROM users WHERE id = ${sess[0].user_id}`;
   return json({ tier: u[0]?.tier || "Free", entitlements: {} });
 });
-router.on("GET", "/api/policies", async () => json({ policies: [] }));
+router.on("GET", "/api/policies", async () => json(policies()));
 router.on("GET", "/api/kyc/me", async ({ req }) => {
   const token = getSessionToken(req);
   const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
@@ -1204,6 +1281,44 @@ router.on("POST", "/api/admin/symbols/:symbol/status", async ({ req, params }) =
 });
 
 router.on("GET", "/api/admin/external_refs", async () => error(501, "external reference checking is not configured"));
+
+router.on("POST", "/api/admin/live/test", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const raw = (process.env.MT5_BRIDGE_URL || "").replace(/\/+$/, "");
+  if (!raw) return error(503, "MT5_BRIDGE_URL is not configured");
+  let base: URL;
+  try { base = new URL(raw); } catch { return error(503, "MT5_BRIDGE_URL is invalid"); }
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(base.hostname);
+  if (base.protocol !== "https:" && !loopback) return error(503, "MT5 bridge must use HTTPS");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(base.origin + base.pathname.replace(/\/+$/, "") + "/health", {
+      headers: { "X-Mafutani-Token": process.env.MT5_BRIDGE_TOKEN || "" },
+      signal: controller.signal,
+    });
+    const body = await res.text();
+    await audit(gate.user!.id, "admin.live_test", gate.user!.tier, { status: res.status });
+    return json({ ok: res.ok, status: res.status, response: body.slice(0, 500) });
+  } catch (e) {
+    return error(502, "bridge unreachable: " + (e as Error).message);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+router.on("POST", "/api/admin/users/:id/revoke", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid user id");
+    const rows: any = await db()`DELETE FROM sessions WHERE user_id = ${id} RETURNING token`;
+    await audit(gate.user!.id, "admin.sessions_revoke", gate.user!.tier, { target: id, count: rows.length });
+    return json({ revoked: rows.length });
+  } catch (e) { return error(500, (e as Error).message); }
+});
 router.on("POST", "/api/admin/external_refs/check", async () => error(501, "external reference checking is not configured"));
 router.on("GET", "/api/admin/kyc", async ({ req }) => {
   const gate = await adminUser(req);

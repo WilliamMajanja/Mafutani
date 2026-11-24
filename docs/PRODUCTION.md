@@ -91,3 +91,19 @@ curl -s https://<site>/api/live/config -H "X-Session: <token>"
 Expected: `status.ok = true`; portfolio returns cash/positions/summary;
 screener returns stored instruments; live config reports `available` only when
 the MT5 bridge is configured.
+
+## 6. Trading-mode policy
+
+- Local development (`app.py`, Raspberry Pi node) is **paper**. `.env.local` sets
+  `TRADING_MODE=paper`.
+- Hosted Netlify is **live-only**. Paper order entry returns HTTP 403. Set
+  `TRADING_MODE=live` in Netlify (default when unset).
+- Live orders additionally require `MT5_BRIDGE_URL` + `MT5_BRIDGE_TOKEN`, a tier
+  with `live_enabled`, and `confirm:true`.
+
+## 7. Operator textbook
+
+`docs/Mafutani_Textbook.pdf` (also served at `/Mafutani_Textbook.pdf`) covers
+architecture, page-by-page operations, risk, chain operations, security,
+investor reporting, the CBK DhowCSD/bond blueprint, and the zero-dependency
+broker adapter blueprint.

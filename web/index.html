@@ -16,21 +16,30 @@
     <a href="#/dashboard">Dashboard</a>
     <a href="#/screener">Screener</a>
     <a href="#/chart/BTCUSD">Chart</a>
-    <a href="#/scalp-lab">Scalp Lab</a>
     <a href="#/scalp-live">Scalp Live</a>
     <a href="#/analysis">Analysis</a>
     <a href="#/anomalies">Anomalies</a>
-    <a href="#/backtests">Backtests</a>
-    <a href="#/portfolio">Portfolio</a>
-    <a href="#/journal">Journal</a>
-    <a href="#/news">News</a>
-    <a href="#/heatmap">Heatmap</a>
     <a href="#/markets">Markets</a>
-    <a href="#/chain">CommCoin</a>
-    <a href="#/security">Security</a>
-    <a href="#/policies">Policies</a>
-    <a href="#/admin">Admin</a>
+    <a href="#/portfolio">Portfolio</a>
+    <details id="nav-more">
+      <summary>More</summary>
+      <div class="nav-menu">
+        <a href="#/scalp-lab">Scalp Lab</a>
+        <a href="#/investor">Investor</a>
+        <a href="#/backtests">Backtests</a>
+        <a href="#/journal">Journal</a>
+        <a href="#/news">News</a>
+        <a href="#/heatmap">Heatmap</a>
+        <a href="#/chain">CommCoin</a>
+        <a href="#/security">Security</a>
+        <a href="#/policies">Policies</a>
+        <a href="#/admin">Admin</a>
+      </div>
+    </details>
   </nav>
+  <div id="top-actions">
+    <button id="palette-btn" type="button" title="Open command palette (Ctrl+K)">⌘K</button>
+  </div>
 </header>
 <div id="tape" aria-hidden="true"><div id="tape-track">connecting tape…</div></div>
 <main id="view"></main>
@@ -49,7 +58,7 @@
        SyntaxError once silently killed login) the browser still posts
        credentials to the API, which redirects back to #/dashboard, instead
        of silently re-rendering the SPA with a 200 and no session. -->
-  <form id="login-form" method="POST" action="/api/auth/login" onsubmit="return false;">
+  <form id="login-form" method="POST" action="/api/auth/login">
     <label>Email <input id="login-email" type="email" name="email" required autocomplete="username" placeholder="you@example.com"></label>
     <label>Password <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="••••••••"></label>
     <label id="login-2fa-row" hidden>Authenticator code
@@ -60,7 +69,7 @@
       <button type="button" id="signup-btn">Signup</button>
     </div>
     <p id="login-error" class="login-error" aria-live="polite"></p>
-    <p class="login-hint">Demo: <code>demo@local</code> / <code>demo1234</code></p>
+    <p class="login-hint">Accounts are provisioned by the operator. Contact an administrator for access.</p>
   </form>
 </section>
 <script src="i18n.js"></script>

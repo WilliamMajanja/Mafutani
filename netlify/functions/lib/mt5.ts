@@ -35,13 +35,20 @@ export function liveDisabledReason(): string {
 }
 
 async function bridge(payload: Record<string, unknown>, timeoutMs = 25_000): Promise<any> {
-  const base = (process.env.MT5_BRIDGE_URL || "").replace(/\/+$/, "");
-  if (!base) throw liveError(503, "MT5 bridge is not configured");
+  const raw = (process.env.MT5_BRIDGE_URL || "").replace(/\/+$/, "");
+  if (!raw) throw liveError(503, "MT5 bridge is not configured");
+  let base: URL;
+  try { base = new URL(raw); } catch { throw liveError(503, "MT5_BRIDGE_URL is not a valid URL"); }
+  const loopback = base.hostname === "127.0.0.1" || base.hostname === "localhost" || base.hostname === "::1";
+  if (base.protocol !== "https:" && !loopback) {
+    throw liveError(503, "MT5 bridge must use HTTPS; refusing to send the bridge token over plaintext");
+  }
+  const endpoint = base.origin + base.pathname.replace(/\/+$/, "") + "/exec";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
-    res = await fetch(`${base}/exec`, {
+    res = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

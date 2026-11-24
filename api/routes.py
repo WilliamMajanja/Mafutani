@@ -16,6 +16,8 @@ import time
 import threading
 import urllib.parse
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # removed: Minima integration
 # removed: Minima integration
 # removed: Minima integration
