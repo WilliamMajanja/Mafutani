@@ -1051,14 +1051,31 @@ router.on("GET", "/api/strategies", async () => {
   } catch (e) { return error(500, (e as Error).message); }
 });
 
-router.on("GET", "/api/journal", async ({ req }) => {
+router.on("GET", "/api/journal", async ({ req, query }) => {
   try {
-    const token = getSessionToken(req);
-    const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
-    if (sess.length === 0) return error(401, "unauthorized");
-    const uid = sess[0].user_id;
-    const rows: any = await db()`SELECT * FROM journal WHERE user_id = ${uid} ORDER BY ts DESC LIMIT 50`;
-    return json({ journal: rows });
+    const user = await currentUser(req);
+    if (!user) return error(401, "unauthorized");
+    const kind = (query.get("kind") || "").trim();
+    const symbol = (query.get("symbol") || "").trim().toUpperCase();
+    const q = (query.get("q") || "").trim();
+    const limit = Math.min(500, Math.max(1, parseInt(query.get("limit") || "200", 10) || 200));
+    const rows: any = await db()`
+      SELECT * FROM journal
+      WHERE user_id = ${user.id}
+        AND (${kind} = '' OR kind = ${kind})
+        AND (${symbol} = '' OR symbol = ${symbol})
+        AND (${q} = '' OR note ILIKE ${"%" + q + "%"} OR strategy ILIKE ${"%" + q + "%"})
+      ORDER BY ts DESC, id DESC
+      LIMIT ${limit}
+    `;
+    const counts: any = await db()`
+      SELECT kind, COUNT(*)::int AS n FROM journal WHERE user_id = ${user.id} GROUP BY kind ORDER BY n DESC
+    `;
+    return json({
+      entries: rows.map((r: any) => ({ ...r, details: JSON.parse(r.details_json || "{}") })),
+      journal: rows,
+      counts,
+    });
   } catch (e) { return error(500, (e as Error).message); }
 });
 
@@ -1070,8 +1087,9 @@ router.on("POST", "/api/journal", async ({ req }) => {
     const uid = sess[0].user_id;
     const body = await readBody(req);
     const rows: any = await db()`
-      INSERT INTO journal (user_id, symbol, strategy, note, pnl_ref)
-      VALUES (${uid}, ${body.symbol || ''}, ${body.strategy || ''}, ${body.note || ''}, ${body.pnl_ref ?? null})
+      INSERT INTO journal (user_id, symbol, strategy, note, pnl_ref, kind, details_json)
+      VALUES (${uid}, ${body.symbol || ''}, ${body.strategy || ''}, ${body.note || ''},
+              ${body.pnl_ref ?? null}, 'note', '{}')
       RETURNING *
     `;
     return json({ entry: rows[0] }, 201);
@@ -1931,8 +1949,14 @@ router.on("GET", "/api/admin/journal", async ({ req, query }) => {
     const limit = Math.min(500, Math.max(1, parseInt(query.get("limit") || "200", 10) || 200));
     const rows: any = await db()`
       SELECT j.id, j.user_id, u.email, u.display_name, j.ts, j.symbol, j.strategy,
-             j.note, j.pnl_ref, j.kind, j.ref_id, j.details_json
-      FROM journal j JOIN users u ON u.id = j.user_id
+             j.note, j.pnl_ref, j.kind, j.ref_id, j.details_json,
+             o.status AS order_status, o.required_approvals, o.approvals_count,
+             o.price AS order_price, o.side AS order_side, o.qty AS order_qty,
+             c.status AS cash_status, c.amount AS cash_amount, c.external_reference AS cash_reference
+      FROM journal j
+      JOIN users u ON u.id = j.user_id
+      LEFT JOIN orders o ON j.ref_id = 'order:' || o.id
+      LEFT JOIN cash_movements c ON j.ref_id = 'cash:' || c.id
       WHERE (${userId} = 0 OR j.user_id = ${userId})
         AND (${kind} = '' OR j.kind = ${kind})
         AND (${symbol} = '' OR j.symbol = ${symbol})

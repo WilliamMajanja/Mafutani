@@ -3258,35 +3258,75 @@
 
   function pageJournal() {
     hideLogin();
-    // populate symbol options from known universe
-    var knownSymbols = ["AAPL","MSFT","NVDA","BTCUSD","ETHUSD","EURUSD","XAUUSD","XAGUSD","WTI","BRENT","NGAS","COPPER","WHEAT","CORN","COFFEE","COCOA",
-        "ALUM","NICKEL","ZINC","TIN","LEAD","GASOLINE","HEATOIL","SOYBEANS","SOYMEAL","SOYOIL","OATS","RRICE","SUGAR","COTTON","OJ","LCATTLE","LHOGS","FCATTLE"];
-    var knownStrategies = ["ema_trend","ema_trend_cot","vwap_pullback","vwap_bands","manual","orb_breakout","rsi_fade","dual_ema","mean_reversion"];
-
-    var symOpts = knownSymbols.map(function(s) { return "<option value='"+esc(s)+"'>"+esc(s)+"</option>"; }).join("");
-    var stratOpts = knownStrategies.map(function(s) { return "<option value='"+esc(s)+"'>"+esc(s)+"</option>"; }).join("");
-
-    view().innerHTML = "<h2>Journal</h2><div class='card'><h3>New entry</h3>" +
-      "<select id='j-sym'>" + symOpts + "</select>" +
-      "<select id='j-strat'>" + stratOpts + "</select>" +
-      "<label>Note <textarea id='j-note'></textarea></label>" +
-      "<button id='j-save' type='button'>Save</button><div id='j-out'></div></div>" +
+    var knownSymbols = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","JPM","BTCUSD","ETHUSD","SOLUSD","XRPUSD","EURUSD","GBPUSD","USDJPY","XAUUSD","XAGUSD","WTI","BRENT","NATGAS","COPPER","CORN","WHEAT","COCOA","COFFEE","SUGAR","COTTON"];
+    var knownStrategies = ["ema_trend","ema_trend_cot","vwap_pullback","vwap_bands","manual","orb_breakout","rsi_fade","dual_ema","mean_reversion","book_imbalance","news_momentum"];
+    view().innerHTML = "<h2>Journal</h2>" +
+      "<div class='row spb'><div class='row'>" +
+      "<label>Kind <select id='j-kind'><option value=''>all</option></select></label>" +
+      "<label>Symbol <input id='j-filter-sym' placeholder='AAPL' size='8'></label>" +
+      "<label>Search <input id='j-q' placeholder='note or strategy'></label>" +
+      "<button type='button' id='j-refresh'>Refresh</button>" +
+      "<button type='button' id='j-export'>Export CSV</button>" +
+      "</div><a class='btn' href='#/admin'>Admin ledger</a></div>" +
+      "<div class='cards' id='j-kpis'></div>" +
+      "<div class='card'><h3>New note</h3><div class='row'>" +
+      "<select id='j-sym'>" + knownSymbols.map(function (x) { return "<option>" + x + "</option>"; }).join("") + "</select>" +
+      "<select id='j-strat'>" + knownStrategies.map(function (x) { return "<option>" + x + "</option>"; }).join("") + "</select>" +
+      "<input id='j-note' placeholder='note' size='40'>" +
+      "<button type='button' id='j-save'>Save note</button></div><div id='j-out' class='kpi-l'></div></div>" +
       "<h3>Entries</h3><div id='j-list'>loading…</div>";
+    var lastEntries = [];
     function load() {
-      api("GET", "/api/journal").then(function (r) {
-        var list = r.entries || r.journal || r || [];
-        document.getElementById("j-list").innerHTML = "<table><tr><th>TS</th><th>Symbol</th><th>Strategy</th><th>Note</th></tr>" +
-          list.map(function (e) {
-            return "<tr><td>" + esc(e.ts) + "</td><td>" + esc(e.symbol) + "</td><td>" +
-              esc(e.strategy) + "</td><td>" + esc(e.note) + "</td></tr>";
-          }).join("") + "</table>";
-      }).catch(function (e) {
-        // The old handler replaced every failure with a literal
-        // "Failed to fetch", discarding the server's reason. A rate
-        // limit, a 401 and a 500 all looked identical to the operator.
-        document.getElementById("j-list").innerHTML = showErr(e);
-      });
+      var kind = document.getElementById("j-kind").value;
+      var sym = document.getElementById("j-filter-sym").value.trim().toUpperCase();
+      var q = document.getElementById("j-q").value.trim();
+      var qs = "/api/journal?limit=300" +
+        (kind ? "&kind=" + encodeURIComponent(kind) : "") +
+        (sym ? "&symbol=" + encodeURIComponent(sym) : "") +
+        (q ? "&q=" + encodeURIComponent(q) : "");
+      api("GET", qs).then(function (r) {
+        lastEntries = r.entries || [];
+        var counts = r.counts || [];
+        var sel = document.getElementById("j-kind");
+        if (sel.options.length === 1) {
+          counts.forEach(function (c) {
+            var o = document.createElement("option"); o.value = c.kind; o.textContent = c.kind; sel.appendChild(o);
+          });
+        }
+        document.getElementById("j-kpis").innerHTML = counts.map(function (c) {
+          return "<div class='card kpi'><h3>" + esc(c.kind) + "</h3><div class='kpi-v'>" + esc(c.n) + "</div></div>";
+        }).join("") || "<div class='card kpi'><h3>entries</h3><div class='kpi-v'>0</div></div>";
+        document.getElementById("j-list").innerHTML = lastEntries.length ? "<table><thead><tr><th>Time</th><th>Kind</th><th>Symbol</th><th>Strategy</th><th>Status</th><th>Note</th><th>Ref</th></tr></thead><tbody>" +
+          lastEntries.map(function (e, i) {
+            var cls = e.kind === "trade" ? "pos" : (e.kind === "cash" ? "warn" : (e.kind === "ux" ? "dim" : ""));
+            return "<tr class='" + cls + "'><td>" + esc(fmtTs(e.ts)) + "</td><td>" + esc(e.kind) + "</td><td>" + esc(e.symbol || "—") +
+              "</td><td>" + esc(e.strategy || "—") + "</td><td>" + esc(e.status || "—") + "</td><td>" +
+              esc((e.note || "").slice(0, 220)) + (Object.keys(e.details || {}).length ? " <button type='button' class='mini' data-jd='" + i + "'>details</button>" : "") +
+              "</td><td>" + esc(e.ref_id || "—") + "</td></tr>" +
+              (Object.keys(e.details || {}).length ? "<tr id='jd-" + i + "' style='display:none'><td colspan='7'><pre style='white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto'>" + esc(JSON.stringify(e.details, null, 2)) + "</pre></td></tr>" : "");
+          }).join("") + "</tbody></table>" : "<p class='kpi-l'>no journal entries for this filter</p>";
+        view().querySelectorAll("[data-jd]").forEach(function (b) {
+          b.onclick = function () {
+            var row = document.getElementById("jd-" + b.getAttribute("data-jd"));
+            if (row) row.style.display = row.style.display === "none" ? "" : "none";
+          };
+        });
+      }).catch(function (e) { document.getElementById("j-list").innerHTML = showErr(e); });
     }
+    document.getElementById("j-refresh").onclick = load;
+    document.getElementById("j-kind").onchange = load;
+    document.getElementById("j-filter-sym").onchange = load;
+    document.getElementById("j-q").onchange = load;
+    document.getElementById("j-export").onclick = function () {
+      var header = "ts,kind,symbol,strategy,status,note,ref_id\n";
+      var body = lastEntries.map(function (e) {
+        function q(v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; }
+        return [e.ts, e.kind, e.symbol, e.strategy, e.status, e.note, e.ref_id].map(q).join(",");
+      }).join("\n");
+      var blob = new Blob([header + body], { type: "text/csv" });
+      var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "mafutani-journal.csv"; a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    };
     document.getElementById("j-save").onclick = function () {
       api("POST", "/api/journal", {
         symbol: document.getElementById("j-sym").value,
@@ -3297,8 +3337,6 @@
     };
     load();
   }
-
-
 
   function pageDesktop() {
     view().innerHTML = "<h2>CommCoin Node Compositor</h2><p class='kpi-l'>Loading Wayland-like desktop…</p>";
@@ -3548,12 +3586,28 @@
         "<div class='card'><h3>Trade ledger (all users)</h3>" +
         "<p class='kpi-l'>orders " + esc(((ledgerRes.reconciliation||{}).orders)||0) +
         " · missing journal " + esc(((ledgerRes.reconciliation||{}).missing_journal)||0) + "</p>" +
-        "<table><thead><tr><th>Time</th><th>User</th><th>Kind</th><th>Symbol</th><th>Strategy</th><th>Note</th><th>Ref</th></tr></thead><tbody>" +
+        "<table><thead><tr><th>Time</th><th>User</th><th>Kind</th><th>Symbol</th><th>Strategy</th><th>Note</th><th>Ref</th><th>Order status</th><th>Action</th></tr></thead><tbody>" +
         ((ledgerRes.entries || []).map(function (e) {
+          var action = "—";
+          if (e.kind === "trade_request" && e.order_status) {
+            var oid = String(e.ref_id || "").replace("order:", "");
+            if (e.order_status === "pending_approval") {
+              action = "<button type='button' data-appr-ok='" + esc(oid) + "'>Approve</button> " +
+                "<button type='button' data-appr-no='" + esc(oid) + "'>Reject</button>";
+            } else if (e.order_status === "execution_failed") {
+              action = "<button type='button' data-appr-retry='" + esc(oid) + "'>Retry</button>";
+            }
+          } else if (e.kind === "cash" && e.cash_status === "pending") {
+            var cid = String(e.ref_id || "").replace("cash:", "");
+            action = "<button type='button' data-cash-ok='" + esc(cid) + "'>Confirm</button> " +
+              "<button type='button' data-cash-no='" + esc(cid) + "'>Reject</button>";
+          }
           return "<tr><td>" + esc(e.ts) + "</td><td>" + esc(e.email) + "</td><td>" + esc(e.kind) +
             "</td><td>" + esc(e.symbol) + "</td><td>" + esc(e.strategy) + "</td><td>" + esc((e.note || "").slice(0, 120)) +
-            "</td><td>" + esc(e.ref_id || "") + "</td></tr>";
-        }).join("") || "<tr><td colspan='7' class='dim'>no journal entries</td></tr>") +
+            "</td><td>" + esc(e.ref_id || "") + "</td><td>" + esc(e.order_status || e.cash_status || "—") +
+            (e.required_approvals ? " (" + esc(e.approvals_count) + "/" + esc(e.required_approvals) + ")" : "") +
+            "</td><td>" + action + "</td></tr>";
+        }).join("") || "<tr><td colspan='9' class='dim'>no journal entries</td></tr>") +
         "</tbody></table></div>" +
         "<div class='card'><h3>Trade approvals</h3>" +
         "<p class='kpi-l'>pending " + esc((apprRes.orders || []).length) + " · large moves require all active admins</p>" +
