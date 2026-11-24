@@ -10,10 +10,11 @@ import { chat, listModels, AI_BASE } from "./lib/ai";
 import { authConfig, AUTH_BASE } from "./lib/auth";
 import { listSymbols, getQuotes, getCandles, listExchanges, listMarkets, latestPrice, dailySeries, quoteMap } from "./lib/market";
 import { listNews } from "./lib/news";
-import { analyse, detectAnomalies, scoreSeries, annualisedVolPct, type Candle } from "./lib/analytics";
+import { analyse, detectAnomalies, scoreSeries, annualisedVolPct, signalFor, type Candle } from "./lib/analytics";
 import { currentUser, accountFor } from "./lib/session";
 import { executeOrder } from "./lib/trading";
 import { runBacktest } from "./lib/backtest";
+import { liveConfigured, liveDisabledReason } from "./lib/mt5";
 
 const router = new Router();
 
@@ -193,7 +194,90 @@ router.on("POST", "/api/ai/chat", async ({ req }) => {
   }
 });
 
+router.on("POST", "/api/ai/analysis", async ({ req }) => {
+  const user = await currentUser(req);
+  if (!user) return error(401, "unauthorized");
+  try {
+    const body = await readBody(req);
+    const symbol = String(body.symbol || "").trim().toUpperCase();
+    if (!symbol) return error(400, "symbol required");
+    const sym: any = await db()`SELECT * FROM symbols WHERE symbol = ${symbol}`;
+    if (!sym.length) return error(404, "unknown symbol");
+    const candles = (await getCandles(db(), symbol, 250, "1d")) as Candle[];
+    if (!candles.length) return error(409, "no stored candles for this symbol");
+    const a = analyse(candles);
+    const q = await latestPrice(db(), symbol);
+    const pos: any = await db()`
+      SELECT qty, avg_price, realized_pnl FROM positions WHERE user_id = ${user.id} AND symbol = ${symbol}
+    `;
+    const prompt = [
+      "You are a risk-focused market analyst inside a paper-trading terminal.",
+      "Use only the supplied data. Do not invent prices, news, or fundamentals.",
+      "Return 4 short sections: Bias, Key evidence, Risks, Invalidation level.",
+      `Symbol: ${symbol} (${sym[0].name}, ${sym[0].asset_type}, ${sym[0].exchange})`,
+      `Last: ${q?.last ?? a.last}; bid: ${q?.bid}; ask: ${q?.ask}`,
+      `Indicators: ${JSON.stringify(a)}`,
+      `Recent closes: ${candles.slice(-20).map((c) => c.close).join(", ")}`,
+      `Open position: ${pos.length ? JSON.stringify(pos[0]) : "flat"}`,
+      `Account tier: ${user.tier}. Paper account cash: ${(await accountFor(user.id)).cash}.`,
+      "Be concise. No disclaimers. If the data is insufficient, say so explicitly.",
+    ].join("\n");
+    const out: any = await chat([{ role: "user", content: prompt }], String(body.model || "claude-haiku-4-5"));
+    const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    return json({ symbol, model: body.model || "claude-haiku-4-5", text, analysis: a });
+  } catch (e) {
+    return error(502, "AI gateway: " + (e as Error).message);
+  }
+});
+
+router.on("POST", "/api/ai/strategy", async ({ req }) => {
+  const user = await currentUser(req);
+  if (!user) return error(401, "unauthorized");
+  try {
+    const body = await readBody(req);
+    const symbol = String(body.symbol || "").trim().toUpperCase();
+    const strategy = String(body.strategy || "ema_trend").trim();
+    if (!symbol) return error(400, "symbol required");
+    const candles = (await getCandles(db(), symbol, 500, "1d")) as Candle[];
+    if (!candles.length) return error(409, "no stored candles for this symbol");
+    const sig = signalFor(strategy, candles, body.params || {});
+    const bt = runBacktest(symbol, strategy, candles, body.params || {});
+    const prompt = [
+      "You are a quantitative reviewer. Critique this single-symbol strategy run.",
+      "Use only the supplied figures. Do not invent results.",
+      "Return 3 short sections: Verdict, Weaknesses, One concrete test to run next.",
+      `Strategy: ${strategy} on ${symbol}`,
+      `Signal now: ${JSON.stringify(sig)}`,
+      `Backtest metrics: ${JSON.stringify(bt.metrics)}`,
+      "State plainly whether the sample is too small or the edge is unproven.",
+    ].join("\n");
+    const out: any = await chat([{ role: "user", content: prompt }], String(body.model || "claude-haiku-4-5"));
+    const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    return json({ symbol, strategy, model: body.model || "claude-haiku-4-5", text, signal: sig, backtest: bt.metrics });
+  } catch (e) {
+    return error(502, "AI gateway: " + (e as Error).message);
+  }
+});
+
 router.on("GET", "/api/auth/config", async () => json(authConfig()));
+
+router.on("GET", "/api/live/config", async ({ req }) => {
+  const user = await currentUser(req);
+  let tierEnabled = false;
+  if (user) {
+    const rows: any = await db()`
+      SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${user.id}
+    `;
+    tierEnabled = !!(rows[0] && Number(rows[0].live_enabled));
+  }
+  return json({
+    venue: "MT5",
+    configured: liveConfigured(),
+    available: liveConfigured() && tierEnabled,
+    tier_enabled: tierEnabled,
+    reason: liveConfigured() ? (tierEnabled ? "" : "live trading is not enabled for this tier") : liveDisabledReason(),
+  });
+});
 
 router.on("GET", "/api/realtime/config", async () =>
   json({ url: process.env.NEON_REALTIME_URL || "", hasSecret: !!process.env.NEON_REALTIME_SECRET }),
@@ -273,9 +357,13 @@ router.on("GET", "/api/candles", async ({ query }) => {
 
 router.on("GET", "/api/quote", async ({ query }) => {
   try {
-    const symbol = query.get("symbol") || "";
+    const symbol = (query.get("symbol") || "").trim().toUpperCase();
+    if (!symbol) return error(400, "symbol required");
     const rows: any = await db()`SELECT * FROM quotes_l1 WHERE symbol = ${symbol} ORDER BY ts DESC LIMIT 1`;
-    return json({ quote: rows[0] || null });
+    const quote = rows[0] || null;
+    if (!quote) return json({ quote: null });
+    const spread_bps = quote.last ? Number((((quote.ask - quote.bid) / quote.last) * 10_000).toFixed(2)) : null;
+    return json({ ...quote, quote, spread_bps });
   } catch (e) { return error(500, (e as Error).message); }
 });
 
@@ -324,12 +412,18 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
         updated_at: p.updated_at,
       };
     });
+    const tierLive: any = await db()`
+      SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${user.id}
+    `;
+    const liveAvailable = liveConfigured() && !!(tierLive[0] && Number(tierLive[0].live_enabled));
     return json({
       cash: acct.cash,
       starting_cash: acct.starting_cash,
       equity: acct.cash + marketValue,
       tier: user.tier,
-      live_trading_enabled: false,
+      live_trading_enabled: liveAvailable,
+      live_venue: liveAvailable ? "MT5" : null,
+      live_reason: liveAvailable ? "" : (liveDisabledReason() || "live trading is not enabled for this tier"),
       positions,
       fills,
       summary: {
@@ -544,7 +638,14 @@ router.on("POST", "/api/backtests", async ({ req }) => {
               ${JSON.stringify(result.metrics)}, ${JSON.stringify(result.equity)}, 'done')
       RETURNING *
     `;
-    return json({ id: rows[0].id, backtest: rows[0], ...result.metrics }, 201);
+    return json({
+      id: rows[0].id,
+      backtest: rows[0],
+      metrics: result.metrics,
+      equity: result.equity,
+      params: result.params,
+      ...result.metrics,
+    }, 201);
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(err.status || 400, err.message);
@@ -613,10 +714,11 @@ router.on("GET", "/api/anomalies", async ({ query }) => {
       });
     }
     results.sort((x, y) => y.anomaly_score - x.anomaly_score);
+    const flagged = results.filter((r) => r.anomaly_score > 0).length;
     return json({
       scanned: syms.length,
-      flagged: results.filter((r) => r.anomaly_score > 0).length,
-      clean: results.filter((r) => r.anomaly_score <= 0).length,
+      flagged,
+      clean: Math.max(0, syms.length - flagged),
       by_severity: bySeverity,
       kinds,
       results,
@@ -727,6 +829,98 @@ router.on("GET", "/api/kyc/me", async ({ req }) => {
   if (sess.length === 0) return error(401, "unauthorized");
   return json({ kyc: { status: "none" } });
 });
+router.on("POST", "/api/terminal/command", async ({ req }) => {
+  try {
+    const body = await readBody(req);
+    const raw = String(body.cmd || "").trim();
+    if (!raw) return json({ ok: false, output: "empty command" });
+    const parts = raw.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+    const user = await currentUser(req);
+
+    if (cmd === "help") {
+      return json({
+        ok: true,
+        output: [
+          "commands: help | status | screener | quote SYMBOL | positions | orders | cash",
+          "buy SYMBOL QTY [limit PRICE] | sell SYMBOL QTY [limit PRICE]",
+          "backtest STRATEGY SYMBOL | clear",
+        ].join("\n"),
+      });
+    }
+    if (cmd === "clear") return json({ ok: true, output: "", data: { clear: true } });
+    if (cmd === "status") {
+      const checks: any = await db()`SELECT 1 AS ok`;
+      return json({ ok: true, output: `db=${checks.length ? "up" : "down"} tier=${user?.tier || "anonymous"} live=${liveConfigured() ? "configured" : "unavailable"}`, data: {} });
+    }
+    if (cmd === "screener") {
+      const syms: any = await listSymbols(db());
+      const series = await dailySeries(db(), 120);
+      const leaders = syms.map((s: any) => {
+        const c = series.get(s.symbol) || [];
+        return { symbol: s.symbol, vol: c.reduce((a, x) => a + x.volume, 0) };
+      }).sort((a: any, b: any) => b.vol - a.vol).slice(0, 12);
+      return json({ ok: true, output: leaders.map((l: any) => `${l.symbol} vol ${Math.round(l.vol).toLocaleString()}`).join("\n"), data: { leaders } });
+    }
+    if (cmd === "quote") {
+      const symbol = (args[0] || "").toUpperCase();
+      if (!symbol) return json({ ok: false, output: "usage: quote SYMBOL" });
+      const q = await latestPrice(db(), symbol);
+      if (!q) return json({ ok: false, output: `no quote for ${symbol}` });
+      return json({ ok: true, output: `${symbol} bid ${q.bid} ask ${q.ask} last ${q.last}`, data: q });
+    }
+    if (cmd === "cash" || cmd === "positions" || cmd === "orders") {
+      if (!user) return json({ ok: false, output: "login required" });
+      if (cmd === "cash") {
+        const acct = await accountFor(user.id);
+        return json({ ok: true, output: `cash ${acct.cash.toFixed(2)} (starting ${acct.starting_cash.toFixed(2)})`, data: acct });
+      }
+      if (cmd === "positions") {
+        const rows: any = await db()`SELECT symbol, qty, avg_price, realized_pnl FROM positions WHERE user_id = ${user.id} AND qty <> 0`;
+        return json({ ok: true, output: rows.length ? rows.map((p: any) => `${p.symbol} ${p.qty} @ ${p.avg_price}`).join("\n") : "flat", data: { positions: rows } });
+      }
+      const rows: any = await db()`SELECT id, symbol, side, qty, status, mode FROM orders WHERE user_id = ${user.id} ORDER BY id DESC LIMIT 15`;
+      return json({ ok: true, output: rows.length ? rows.map((o: any) => `#${o.id} ${o.mode} ${o.side} ${o.qty} ${o.symbol} ${o.status}`).join("\n") : "no orders", data: { orders: rows } });
+    }
+    if (cmd === "buy" || cmd === "sell") {
+      if (!user) return json({ ok: false, output: "login required" });
+      const symbol = (args[0] || "").toUpperCase();
+      const qty = parseFloat(args[1] || "0");
+      if (!symbol || !isFinite(qty) || qty <= 0) return json({ ok: false, output: "usage: buy|sell SYMBOL QTY [limit PRICE]" });
+      const isLimit = (args[2] || "").toLowerCase() === "limit";
+      const price = isLimit ? parseFloat(args[3] || "0") : null;
+      try {
+        const result: any = await executeOrder(user.id, {
+          symbol, side: cmd, qty, type: isLimit ? "limit" : "market",
+          price, mode: "paper",
+        });
+        return json({ ok: true, output: `order #${result.order.id} ${result.order.status} ${cmd} ${qty} ${symbol}${result.resting ? " (resting)" : ""}`, data: result });
+      } catch (e) {
+        return json({ ok: false, output: (e as Error).message });
+      }
+    }
+    if (cmd === "backtest") {
+      if (!user) return json({ ok: false, output: "login required" });
+      const strategy = args[0] || "ema_trend";
+      const symbol = (args[1] || "").toUpperCase();
+      if (!symbol) return json({ ok: false, output: "usage: backtest STRATEGY SYMBOL" });
+      const candles = (await getCandles(db(), symbol, 3650, "1d")) as Candle[];
+      if (!candles.length) return json({ ok: false, output: `no daily candles for ${symbol}` });
+      const r = runBacktest(symbol, strategy, candles, {});
+      const m: any = r.metrics;
+      return json({
+        ok: true,
+        output: `${strategy} ${symbol}: return ${m.total_return_pct}% dd ${m.max_drawdown_pct}% sharpe ${m.sharpe} trades ${m.trades} (${m.significance.verdict})`,
+        data: r,
+      });
+    }
+    return json({ ok: false, output: `unknown command: ${cmd}. type 'help'` });
+  } catch (e) {
+    return json({ ok: false, output: (e as Error).message });
+  }
+});
+
 router.on("GET", "/api/allocation", async ({ req }) => {
   try {
     const user = await currentUser(req);
@@ -786,10 +980,67 @@ router.on("POST", "/api/signals/preview", async ({ req }) => {
   try {
     const body = await readBody(req);
     const symbol = String(body.symbol || "").trim().toUpperCase();
+    const strategy = String(body.strategy || "ema_trend").trim();
     if (!symbol) return error(400, "symbol required");
-    const candles = (await getCandles(db(), symbol, 250, "1d")) as Candle[];
+    let candles = (await getCandles(db(), symbol, 500, "1d")) as Candle[];
+    if (!candles.length) candles = (await getCandles(db(), symbol, 500, "1m")) as Candle[];
     if (!candles.length) return error(409, "no candles for this symbol");
-    return json({ preview: analyse(candles) });
+    const q = await latestPrice(db(), symbol);
+    if (strategy === "book_imbalance") {
+      const rows: any = await db()`
+        SELECT bid, ask, bid_size, ask_size, last FROM quotes_l1
+        WHERE symbol = ${symbol} ORDER BY ts DESC LIMIT 1
+      `;
+      const book = rows[0];
+      if (!book) return error(409, "no quote for this symbol");
+      const b = Number(book.bid_size) || 0;
+      const a = Number(book.ask_size) || 0;
+      const total = b + a;
+      const ratio = total > 0 ? (b - a) / total : 0;
+      const threshold = Number(body.params?.threshold ?? 0.15);
+      const signal = ratio > threshold ? "buy" : ratio < -threshold ? "sell" : "flat";
+      return json({
+        signal,
+        reason: `top-of-book imbalance ${(ratio * 100).toFixed(1)}% (bid ${b} / ask ${a}); threshold ±${(threshold * 100).toFixed(0)}%`,
+        last: book.last == null ? null : Number(book.last),
+        bid: Number(book.bid), ask: Number(book.ask),
+        spread_bps: q && q.last ? Number((((q.ask - q.bid) / q.last) * 10_000).toFixed(2)) : null,
+        bars: candles.length, source: "engine", symbol, strategy,
+      });
+    }
+    if (strategy === "news_momentum") {
+      const news: any = symbol
+        ? await db()`SELECT title, source, ts FROM news WHERE symbol = ${symbol} ORDER BY ts DESC LIMIT 20`
+        : await db()`SELECT title, source, ts FROM news ORDER BY ts DESC LIMIT 20`;
+      if (!news.length) {
+        return json({
+          signal: "flat",
+          reason: "no stored headlines for this instrument; news ingestion is not running",
+          last: q?.last ?? null, bars: candles.length, source: "engine", symbol, strategy,
+        });
+      }
+      const positive = /\b(beat|beats|surge|record|upgrade|growth|profit|wins|rally|bullish)\b/i;
+      const negative = /\b(miss|misses|plunge|downgrade|loss|lawsuit|probe|bearish|fraud|cut)\b/i;
+      let score = 0;
+      for (const n of news) {
+        if (positive.test(n.title)) score += 1;
+        if (negative.test(n.title)) score -= 1;
+      }
+      return json({
+        signal: score > 0 ? "buy" : score < 0 ? "sell" : "flat",
+        reason: `${news.length} headlines, sentiment score ${score}`,
+        last: q?.last ?? null, bars: candles.length, source: "engine", symbol, strategy,
+      });
+    }
+    const sig = signalFor(strategy, candles, body.params || {});
+    return json({
+      ...sig,
+      symbol,
+      strategy,
+      bid: q?.bid ?? null,
+      ask: q?.ask ?? null,
+      spread_bps: q && q.last ? Number((((q.ask - q.bid) / q.last) * 10_000).toFixed(2)) : null,
+    });
   } catch (e) { return error(500, (e as Error).message); }
 });
 
@@ -884,6 +1135,56 @@ router.on("GET", "/api/admin/symbols", async ({ req }) => {
   return json({ symbols: await listSymbols(db()) });
 });
 
+router.on("POST", "/api/admin/users/:id/status", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid user id");
+    const body = await readBody(req);
+    const disabled = body.disabled ? 1 : 0;
+    if (id === gate.user!.id && disabled) return error(400, "you cannot disable your own account");
+    const rows: any = await db()`UPDATE users SET disabled = ${disabled} WHERE id = ${id} RETURNING id, email, disabled`;
+    if (!rows.length) return error(404, "user not found");
+    await audit(gate.user!.id, disabled ? "admin.user_disable" : "admin.user_enable", gate.user!.tier, { target: id });
+    return json({ user: rows[0] });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/users/:id/tier", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid user id");
+    const body = await readBody(req);
+    const tier = String(body.tier || "");
+    const allowed: any = await db()`SELECT name FROM tiers`;
+    if (!allowed.some((r: any) => r.name === tier)) return error(400, "unknown tier");
+    if (id === gate.user!.id && tier !== "Admin") return error(400, "you cannot demote your own admin account");
+    const rows: any = await db()`UPDATE users SET tier = ${tier} WHERE id = ${id} RETURNING id, email, tier`;
+    if (!rows.length) return error(404, "user not found");
+    await audit(gate.user!.id, "admin.user_tier", gate.user!.tier, { target: id, tier });
+    return json({ user: rows[0] });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/symbols/:symbol/status", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const symbol = String(params.symbol || "").toUpperCase();
+    const body = await readBody(req);
+    const enabled = body.enabled ? 1 : 0;
+    const rows: any = await db()`
+      UPDATE symbols SET enabled = ${enabled} WHERE symbol = ${symbol} RETURNING symbol, enabled
+    `;
+    if (!rows.length) return error(404, "symbol not found");
+    await audit(gate.user!.id, enabled ? "admin.symbol_enable" : "admin.symbol_disable", gate.user!.tier, { symbol });
+    return json({ symbol: rows[0] });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
 router.on("GET", "/api/admin/external_refs", async () => error(501, "external reference checking is not configured"));
 router.on("POST", "/api/admin/external_refs/check", async () => error(501, "external reference checking is not configured"));
 router.on("GET", "/api/admin/kyc", async ({ req }) => {
@@ -915,6 +1216,39 @@ router.on("GET", "/stream/quotes", async () => {
 
 export default async (req: Request): Promise<Response> => {
   const { pathname } = new URL(req.url);
+
+  // CommCoin/MFT lives in the Python service (chain/ + api/routes.py). The
+  // Netlify port proxies it rather than inventing a second ledger.
+  if (pathname.startsWith("/api/chain/") || pathname === "/api/offramp/mpesa" || pathname.startsWith("/api/offramp/mpesa/")) {
+    const base = (process.env.CHAIN_API_URL || "").replace(/\/+$/, "");
+    if (!base) {
+      return error(503, "CommCoin chain service is not configured (CHAIN_API_URL). Deploy the Python service and point CHAIN_API_URL at it.");
+    }
+    const url = new URL(req.url);
+    const target = base + pathname + (url.search || "");
+    const headers: Record<string, string> = { "Content-Type": req.headers.get("content-type") || "application/json" };
+    if (process.env.CHAIN_API_TOKEN) headers["X-Mafutani-Token"] = process.env.CHAIN_API_TOKEN;
+    if (req.headers.get("x-session")) headers["X-Session"] = req.headers.get("x-session")!;
+    if (req.headers.get("cookie")) headers["Cookie"] = req.headers.get("cookie")!;
+    try {
+      const upstream = await fetch(target, {
+        method: req.method,
+        headers,
+        body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
+      });
+      const raw = await upstream.arrayBuffer();
+      return new Response(raw, {
+        status: upstream.status,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") || "application/json",
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (e) {
+      return error(502, `CommCoin service unreachable: ${(e as Error).message}`);
+    }
+  }
+
   const res = await router.handle(req, pathname);
   return res ?? error(404, "not found");
 };

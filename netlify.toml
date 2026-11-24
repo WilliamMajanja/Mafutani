@@ -12,3 +12,17 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# The SPA ships unhashed filenames; a stale app.js is a broken app.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"

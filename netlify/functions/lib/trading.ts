@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { latestPrice } from "./market";
+import { submitLiveOrder } from "./mt5";
 
 export type OrderInput = {
   symbol?: string;
@@ -8,6 +9,8 @@ export type OrderInput = {
   qty?: number | string;
   price?: number | string | null;
   mode?: string;
+  confirm?: boolean;
+  client_order_id?: string;
 };
 
 const num = (v: unknown): number => {
@@ -37,9 +40,7 @@ export async function executeOrder(userId: number, input: OrderInput) {
   if (type === "limit" && (!isFinite(limitPrice as number) || (limitPrice as number) <= 0)) {
     throw httpError(400, "limit orders need a positive price");
   }
-  if (String(input.mode || "paper").toLowerCase() === "live") {
-    throw httpError(403, "live trading is not configured");
-  }
+  const isLive = String(input.mode || "paper").toLowerCase() === "live";
 
   const sym: any = await db()`SELECT symbol, enabled FROM symbols WHERE symbol = ${symbol}`;
   if (!sym.length || !sym[0].enabled) throw httpError(404, "unknown or disabled symbol");
@@ -52,6 +53,44 @@ export async function executeOrder(userId: number, input: OrderInput) {
   `;
   const risk = riskRows[0] || { max_position_qty: 100, max_notional: 100000, kill_switch: 0 };
   if (Number(risk.kill_switch)) throw httpError(403, "kill switch is on");
+
+  if (isLive) {
+    const ref = limitPrice ?? (side === "buy" ? quote.ask : quote.bid);
+    const liveNotional = qty * ref;
+    if (liveNotional > Number(risk.max_notional)) {
+      throw httpError(403, `order notional ${liveNotional.toFixed(2)} exceeds max_notional ${risk.max_notional}`);
+    }
+    const tierRows: any = await db()`
+      SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${userId}
+    `;
+    const live = await submitLiveOrder(input, !!(tierRows[0] && Number(tierRows[0].live_enabled)));
+    const orderRows: any = await db()`
+      INSERT INTO orders (user_id, symbol, side, type, qty, price, mode, status, venue_order_id, client_order_id)
+      VALUES (${userId}, ${symbol}, ${side}, ${type}, ${qty}, ${live.price || ref}, 'live',
+              ${live.status}, ${live.venue_order_id}, ${input.client_order_id || ""})
+      RETURNING *
+    `;
+    let fill = null;
+    if (Number(live.filled_qty) > 0) {
+      const fillRows: any = await db()`
+        INSERT INTO fills (order_id, user_id, symbol, side, qty, price, fee, cash_after)
+        VALUES (${orderRows[0].id}, ${userId}, ${symbol}, ${side}, ${live.filled_qty}, ${live.price}, 0, NULL)
+        RETURNING *
+      `;
+      fill = fillRows[0];
+    }
+    // Live fills live at the venue. The paper account is deliberately not
+    // debited or credited, so the two books cannot silently diverge.
+    return {
+      order: orderRows[0],
+      fill,
+      live,
+      venue: live.venue,
+      retcode: live.retcode,
+      status: live.status,
+      cash_after: null,
+    };
+  }
 
   // A limit order that is not marketable rests as an open order; it does not
   // pretend to have filled.

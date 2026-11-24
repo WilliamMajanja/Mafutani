@@ -1,7 +1,7 @@
 export const AI_BASE = process.env.NEON_AI_GATEWAY_BASE_URL || "";
 export const AI_TOKEN = process.env.NEON_AI_GATEWAY_TOKEN || "";
 
-export async function chat(messages: { role: string; content: string }[], model = "gpt-4o-mini") {
+export async function chat(messages: { role: string; content: string }[], model = "claude-haiku-4-5") {
   const res = await fetch(`${AI_BASE}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${AI_TOKEN}` },

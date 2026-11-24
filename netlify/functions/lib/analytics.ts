@@ -202,3 +202,119 @@ export function scoreSeries(candles: Candle[]): { closes: number[]; last: number
     volume: candles.reduce((a, c) => a + (c.volume || 0), 0),
   };
 }
+
+export type Signal = {
+  signal: "buy" | "sell" | "flat";
+  reason: string;
+  last: number | null;
+  bars: number;
+  source: string;
+  stub?: boolean;
+};
+
+/** Strategy preview on stored candles. Unimplemented methods say so. */
+export function signalFor(strategy: string, candles: Candle[], params: Record<string, unknown> = {}): Signal {
+  const closes = candles.map((c) => c.close);
+  const last = closes.length ? closes[closes.length - 1] : null;
+  const base = { last, bars: candles.length, source: "engine" };
+  if (!closes.length) return { ...base, signal: "flat", reason: "no stored candles" };
+
+  if (strategy === "ema_trend" || strategy === "dual_ema" || strategy === "ema_trend_cot") {
+    const fastPeriod = Number(params.fast ?? (strategy === "dual_ema" ? 12 : 9));
+    const slowPeriod = Number(params.slow ?? (strategy === "dual_ema" ? 26 : 21));
+    if (closes.length < slowPeriod + 1) return { ...base, signal: "flat", reason: `need ${slowPeriod + 1} bars` };
+    const f = ema(closes, fastPeriod);
+    const s = ema(closes, slowPeriod);
+    const fv = f[f.length - 1]!;
+    const sv = s[s.length - 1]!;
+    return {
+      ...base,
+      signal: fv > sv ? "buy" : fv < sv ? "sell" : "flat",
+      reason: `EMA${fastPeriod} ${fv.toFixed(2)} ${fv >= sv ? "above" : "below"} EMA${slowPeriod} ${sv.toFixed(2)}` + (strategy === "ema_trend_cot" ? "; COT gate unavailable in this deployment" : ""),
+    };
+  }
+  if (strategy === "rsi_fade") {
+    const period = Number(params.period ?? 14);
+    const overbought = Number(params.overbought ?? 70);
+    const oversold = Number(params.oversold ?? 30);
+    const r = rsi(closes, period);
+    if (r == null) return { ...base, signal: "flat", reason: `need more than ${period} bars` };
+    return {
+      ...base,
+      signal: r <= oversold ? "buy" : r >= overbought ? "sell" : "flat",
+      reason: `RSI(${period}) ${r.toFixed(1)}; bands ${oversold}/${overbought}`,
+    };
+  }
+  if (strategy === "mean_reversion") {
+    const period = Number(params.period ?? 20);
+    const entryZ = Number(params.entry_z ?? 2);
+    if (closes.length < period) return { ...base, signal: "flat", reason: `need ${period} bars` };
+    const w = closes.slice(-period);
+    const mean = w.reduce((a, b) => a + b, 0) / w.length;
+    const sd = stdev(w) || 1;
+    const z = (last! - mean) / sd;
+    return {
+      ...base,
+      signal: z <= -entryZ ? "buy" : z >= entryZ ? "sell" : "flat",
+      reason: `z-score ${z.toFixed(2)} vs ${period}-bar mean ${mean.toFixed(2)}`,
+    };
+  }
+  if (strategy === "vwap_pullback") {
+    const lookback = Number(params.lookback ?? 20);
+    const devBps = Number(params.dev_bps ?? 10);
+    if (candles.length < lookback) return { ...base, signal: "flat", reason: `need ${lookback} bars` };
+    const w = candles.slice(-lookback);
+    let pv = 0, vv = 0;
+    for (const c of w) {
+      const typical = (c.high + c.low + c.close) / 3;
+      pv += typical * (c.volume || 0);
+      vv += c.volume || 0;
+    }
+    const vwap = vv > 0 ? pv / vv : closes[closes.length - 1];
+    const dev = vwap * (devBps / 10_000);
+    const px = closes[closes.length - 1];
+    return {
+      ...base,
+      signal: px <= vwap - dev ? "buy" : px >= vwap + dev ? "sell" : "flat",
+      reason: `last ${px.toFixed(2)} vs VWAP ${vwap.toFixed(2)} (±${devBps}bp band)`,
+    };
+  }
+  if (strategy === "vwap_bands") {
+    const lookback = Number(params.lookback ?? 20);
+    const entrySigma = Number(params.entry_sigma ?? 2);
+    if (candles.length < lookback) return { ...base, signal: "flat", reason: `need ${lookback} bars` };
+    const w = candles.slice(-lookback);
+    let pv = 0, vv = 0;
+    for (const c of w) {
+      const typical = (c.high + c.low + c.close) / 3;
+      pv += typical * (c.volume || 0);
+      vv += c.volume || 0;
+    }
+    const vwap = vv > 0 ? pv / vv : closes[closes.length - 1];
+    const sd = stdev(w.map((c) => c.close)) || 1;
+    const z = (closes[closes.length - 1] - vwap) / sd;
+    return {
+      ...base,
+      signal: z <= -entrySigma ? "buy" : z >= entrySigma ? "sell" : "flat",
+      reason: `VWAP band z ${z.toFixed(2)} (entry ±${entrySigma}σ)`,
+    };
+  }
+  if (strategy === "orb_breakout") {
+    const rangeMin = Number(params.range_min ?? 15);
+    const look = Math.max(2, Math.min(20, Math.round(rangeMin / 5)));
+    if (candles.length < look + 1) return { ...base, signal: "flat", reason: `need ${look + 1} bars` };
+    const prior = candles.slice(-look - 1, -1);
+    const hi = Math.max(...prior.map((c) => c.high));
+    const lo = Math.min(...prior.map((c) => c.low));
+    const px = closes[closes.length - 1];
+    return {
+      ...base,
+      signal: px > hi ? "buy" : px < lo ? "sell" : "flat",
+      reason: `last ${px.toFixed(2)} vs ${look}-bar range ${lo.toFixed(2)}–${hi.toFixed(2)}`,
+    };
+  }
+  if (strategy === "manual") {
+    return { ...base, signal: "flat", reason: "manual strategy: no automatic signal; place orders directly" };
+  }
+  return { ...base, signal: "flat", reason: "no live logic for this method yet", stub: true };
+}

@@ -4,6 +4,15 @@
   var csrfToken = null;
   var state = { me: null, quotes: {}, sse: null };
 
+  function applyTheme(name) {
+    if (!name || name === "terminal") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", name);
+    }
+  }
+  try { applyTheme(localStorage.getItem("mafutani_theme") || "terminal"); } catch (e) {}
+
   // ---- Toast notifications ----
   function toast(msg, type) {
     type = type || "info";
@@ -132,59 +141,53 @@
   }
   function startSSE(onTick) {
     stopSSE();
-    try {
-      var es = new EventSource("/stream/quotes");
-      state.sse = es;
-      es.onmessage = function (ev) {
+    // Netlify cannot hold an SSE connection open indefinitely, so the quote
+    // feed is polled. The function name is kept because every page calls it.
+    function poll() {
+      api("GET", "/api/quotes").then(function (msg) {
+        var batch = (msg && msg.quotes) || [];
+        for (var i = 0; i < batch.length; i++) {
+          var q = batch[i];
+          if (!q || !q.symbol) continue;
+          var prev = state.quotes[q.symbol] || null;
+          state.quotes[q.symbol] = q;
+          onTick && onTick(q, tickBadge(q), prev);
+        }
+        sseDot(true);
         try {
-          var msg = JSON.parse(ev.data);
-          if (!msg) return;
-          // The server emits a BATCH: {"quotes": [ ...one row per symbol ],
-          // "ts": n}. This handler used to guard on `msg.symbol`, which is
-          // never present on a batch, so onTick never fired, state.quotes
-          // stayed empty, and every live page rendered "no quote" while the
-          // stream was in fact delivering ~49 quotes every 5 seconds. The
-          // top tape looked fine because it is fed by the terminal's
-          // `screener` command, not by this stream -- which is exactly why
-          // the failure was invisible.
-          //
-          // Both shapes are accepted so a single-quote producer and a batch
-          // producer cannot break each other.
-          var batch = Array.isArray(msg.quotes) ? msg.quotes
-                   : (msg.symbol ? [msg] : []);
-          if (!batch.length) return;
-          for (var i = 0; i < batch.length; i++) {
-            var q = batch[i];
-            if (!q || !q.symbol) continue;
-            var prev = state.quotes[q.symbol] || null;
-            state.quotes[q.symbol] = q;
-            onTick && onTick(q, tickBadge(q), prev);
-          }
-          sseDot(true);
-          renderTape();
-        } catch (e) { /* ignore malformed tick */ }
-      };
-      es.onerror = function () {
+          var t = document.getElementById("ticker");
+          var stale = t && t.querySelector(".stale");
+          if (stale) stale.remove();
+        } catch (e) { /* ticker optional */ }
+        renderTape();
+      }).catch(function () {
         sseDot(false);
-        // Toggle a single marker rather than appending one. Appending on
-        // every error grew the ticker without bound while the stream was
-        // down: a reconnect fires error again, and a page left open
-        // overnight ended up with hundreds of "stale" spans.
         var el = document.getElementById("ticker");
-        if (!el) return;
-        var mark = el.querySelector(".stale");
-        if (mark) mark.remove();
-        else {
+        if (el && !el.querySelector(".stale")) {
           var s = document.createElement("span");
           s.className = "stale";
-          s.textContent = "stale";
+          s.textContent = "feed reconnecting…";
           el.appendChild(s);
         }
-      };
-    } catch (e) { /* EventSource unsupported */ }
+      });
+    }
+    poll();
+    var timer = setInterval(poll, 10000);
+    state.sse = { close: function () { clearInterval(timer); } };
   }
   function stopSSE() {
     if (state.sse) { try { state.sse.close(); } catch (e) {} state.sse = null; }
+  }
+
+  // Page-scoped intervals. router() clears them so leaving a page cannot
+  // leave a background fetch loop running forever.
+  function pageEvery(fn, ms) {
+    state.pageTimers = state.pageTimers || [];
+    state.pageTimers.push(setInterval(fn, ms));
+  }
+  function stopPageTimers() {
+    (state.pageTimers || []).forEach(function (t) { clearInterval(t); });
+    state.pageTimers = [];
   }
 
   // ---- tape -------------------------------------------------------------
@@ -229,56 +232,71 @@
 
   function pageDashboard() {
     hideLogin();
-    view().innerHTML = "<h2>Dashboard</h2><div id='ticker'></div><div id='dash'></div>";
-    Promise.all([
-      api("GET", "/api/portfolio"),
-      api("GET", "/api/orders?limit=5").catch(function () { return { orders: [] }; }),
-      api("GET", "/api/risk").catch(function () { return {}; })
-    ]).then(function (res) {
-      var p = res[0] || {}, poss = p.positions || [], sum = p.summary || {};
-      var tot = sum.total_pnl, totCls = tot > 0 ? "up" : (tot < 0 ? "down" : "");
-      var cash = p.cash != null ? +p.cash : 0;
-      var html = "<div class='cards'>" +
-        "<div class='card kpi'><h3>Cash Balance</h3><div class='kpi-v'>" + num(cash) +
-        "</div><div class='kpi-l'>" + esc(p.tier || "paper") + " account</div></div>" +
-        "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
-        (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>real " + num(sum.realized_pnl) +
-        " / unreal " + num(sum.unrealized_pnl) + "</div></div>" +
-        "<div class='card kpi'><h3>Realized</h3><div class='kpi-v'>" + num(sum.realized_pnl) +
-        "</div><div class='kpi-l'>closed trade P&amp;L</div></div>" +
-        "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + poss.length +
-        "</div><div class='kpi-l'>across " + poss.filter(function (x) { return +x.qty !== 0; }).length +
-        " live</div></div></div>";
-      html += "<h3>Positions</h3>" + positionRows(poss, {
-        showRealized: true,
-        mode: p.live_trading_enabled ? "LIVE" : "paper",
-        empty: "no open positions — the book is flat"
+    view().innerHTML = "<h2>Dashboard</h2><div id='ticker'></div>" +
+      "<p class='kpi-l' id='dash-updated'>loading…</p>" +
+      "<div class='cards' id='dash-kpis'></div>" +
+      "<h3>Positions</h3><div id='dash-pos'></div>" +
+      "<h3>All assets</h3><div id='dash-assets'></div>" +
+      "<h3>Recent orders</h3><div id='dash-ord'></div>" +
+      "<p class='kpi-l' id='dash-risk'></p>";
+
+    var assetsMounted = false;
+
+    function load() {
+      return Promise.all([
+        api("GET", "/api/portfolio"),
+        api("GET", "/api/orders?limit=5").catch(function () { return { orders: [] }; }),
+        api("GET", "/api/risk").catch(function () { return {}; })
+      ]).then(function (res) {
+        var p = res[0] || {}, poss = p.positions || [], sum = p.summary || {};
+        var tot = sum.total_pnl, totCls = tot > 0 ? "up" : (tot < 0 ? "down" : "");
+        var cash = p.cash != null ? +p.cash : 0;
+        var k = document.getElementById("dash-kpis");
+        if (!k) return;
+        k.innerHTML =
+          "<div class='card kpi'><h3>Cash Balance</h3><div class='kpi-v'>" + num(cash) +
+          "</div><div class='kpi-l'>" + esc(p.tier || "paper") + " account</div></div>" +
+          "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
+          (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>real " + num(sum.realized_pnl) +
+          " / unreal " + num(sum.unrealized_pnl) + "</div></div>" +
+          "<div class='card kpi'><h3>Equity</h3><div class='kpi-v'>" + num(p.equity != null ? p.equity : cash) +
+          "</div><div class='kpi-l'>market value " + num(sum.market_value) + "</div></div>" +
+          "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + poss.length +
+          "</div><div class='kpi-l'>across " + poss.filter(function (x) { return +x.qty !== 0; }).length +
+          " live</div></div>";
+        var posEl = document.getElementById("dash-pos");
+        if (posEl) posEl.innerHTML = positionRows(poss, {
+          showRealized: true,
+          mode: p.live_trading_enabled ? "LIVE" : "paper",
+          empty: "no open positions — the book is flat"
+        });
+        var ords = res[1].orders || res[1].rows || [];
+        var ordEl = document.getElementById("dash-ord");
+        if (ordEl) ordEl.innerHTML = ords.length ? "<table><tr><th>ID</th><th>Side</th><th>Qty</th><th>Symbol</th><th>Status</th><th>Mode</th></tr>" +
+          ords.map(function (o) {
+            return "<tr><td>" + esc(o.id) + "</td><td>" + esc(o.side) + "</td><td>" + num(o.qty) +
+              "</td><td>" + esc(o.symbol) + "</td><td>" + esc(o.status) + "</td><td>" + esc(o.mode) + "</td></tr>";
+          }).join("") + "</table>" : "<p class='kpi-l'>no orders yet</p>";
+        var lim = res[2] || {};
+        var riskEl = document.getElementById("dash-risk");
+        if (riskEl) riskEl.innerHTML = "risk: maxQty " + esc(lim.max_position_qty) + " · maxNotional " +
+          esc(lim.max_notional) + " · maxDailyLoss " + esc(lim.max_daily_loss) +
+          (lim.kill_switch ? " · <span class='neg'>KILL-SWITCH ON</span>" : "");
+        var upd = document.getElementById("dash-updated");
+        if (upd) upd.textContent = "updated " + new Date().toISOString().slice(11, 19) + "Z · refreshes every 15s";
+        if (!assetsMounted) {
+          assetsMounted = true;
+          mountAssets("dash-assets");
+        }
+      }).catch(function (e) {
+        var k = document.getElementById("dash-kpis");
+        if (k) k.innerHTML = showErr(e);
       });
-      // Every enabled instrument, not just the ones held. With a flat
-      // book the positions table is empty and there was no way to reach
-      // the other 38 symbols from here at all.
-      html += "<h3>All assets</h3><div id='dash-assets'></div>";
-      var ords = res[1].orders || res[1].rows || [];
-      html += "<h3>Recent orders</h3><table><tr><th>ID</th><th>Side</th><th>Qty</th><th>Symbol</th><th>Status</th><th>Mode</th></tr>" +
-        ords.map(function (o) {
-          return "<tr><td>" + esc(o.id) + "</td><td>" + esc(o.side) + "</td><td>" + num(o.qty) +
-            "</td><td>" + esc(o.symbol) + "</td><td>" + esc(o.status) + "</td><td>" + esc(o.mode) + "</td></tr>";
-        }).join("") + "</table>";
-      var lim = res[2] || {};
-      html += "<p class='kpi-l'>risk: maxQty " + esc(lim.max_position_qty) + " · maxNotional " +
-        esc(lim.max_notional) + " · maxDailyLoss " + esc(lim.max_daily_loss) +
-        (lim.kill_switch ? " · <span class='neg'>KILL-SWITCH ON</span>" : "") + "</p>";
-      var dashEl = document.getElementById("dash");
-      if (!dashEl) return; // navigated away while the request was in flight
-      dashEl.innerHTML = html;
-      mountAssets("dash-assets");
-    }).catch(function (e) {
-      var dashEl = document.getElementById("dash");
-      if (dashEl) dashEl.innerHTML = showErr(e);
-    });
-    startSSE(function () {
-      renderTape();
-    });
+    }
+
+    load();
+    pageEvery(load, 15000);
+    startSSE(function () { renderTape(); });
   }
 
   // ---- shared render helpers -------------------------------------------
@@ -1258,7 +1276,24 @@
         "</div>" : "") +
       "</div>" +
       "<p class='kpi-l'><a href='#/chart/" + esc(s.symbol) + "'>chart</a> · " +
-        "<a href='#/screener'>screener</a> · trade live in <a href='#/scalp-live'>scalp live</a></p>";
+        "<a href='#/screener'>screener</a> · trade live in <a href='#/scalp-live'>scalp live</a></p>" +
+      "<div class='card'><h4>AI analyst</h4>" +
+      "<p class='kpi-l'>Runs on the Neon AI Gateway using only the figures above.</p>" +
+      "<button type='button' id='an-ai-btn'>Generate brief</button>" +
+      "<div id='an-ai-out' style='margin-top:8px'></div></div>";
+    var aiBtn = document.getElementById("an-ai-btn");
+    if (aiBtn) aiBtn.onclick = function () {
+      var out = document.getElementById("an-ai-out");
+      aiBtn.disabled = true;
+      out.innerHTML = "<p class='kpi-l'>analysing…</p>";
+      api("POST", "/api/ai/analysis", { symbol: s.symbol })
+        .then(function (r) {
+          out.innerHTML = "<div class='why'>" + esc(r.text || "(no text returned)").replace(/\n/g, "<br>") +
+            "</div><p class='kpi-l'>model " + esc(r.model) + "</p>";
+        })
+        .catch(function (e) { out.innerHTML = showErr(e); })
+        .then(function () { aiBtn.disabled = false; });
+    };
   }
 
   function pageAnomalies() {
@@ -1272,7 +1307,12 @@
       var showAll = document.getElementById("anm-all") && document.getElementById("anm-all").checked;
       document.getElementById("anm-out").innerHTML = "<p class='kpi-l'>scanning…</p>";
       api("GET", "/api/anomalies" + (showAll ? "?all=1" : "")).then(function (d) {
-        var list = d.results || [];
+        var all = d.results || [];
+        // The server already filters unless all=1; this second gate keeps an
+        // older cached API from showing the clean tape under an unchecked box.
+        var list = all.filter(function (r) {
+          return showAll || (Number(r.anomaly_score) || 0) > 0;
+        });
         var bySev = d.by_severity || {};
         var kinds = d.kinds || {};
         document.getElementById("anm-sub").innerHTML =
@@ -1586,9 +1626,9 @@
       "<span id='lab-quote' class='lab-quote' aria-live='polite'>—</span>" +
       "<button type='button' id='lab-refresh'>Refresh quote</button>" +
       "</div>" +
-      "<p class='muted'>Every card previews the same symbol against stored " +
-      "1-minute candles and the latest quote, using the same engine the " +
-      "backtester and live board use — so a preview cannot disagree with a fill.</p>" +
+      "<p class='muted'>Every card previews the same symbol against the stored " +
+      "daily candles and the latest quote, using the same engine the " +
+      "backtester uses — so a preview cannot disagree with the research.</p>" +
       "<div id='lab-cards'><p class='muted'>loading methods…</p></div>";
 
     var symInput = document.getElementById("lab-sym");
@@ -1749,6 +1789,24 @@
             .then(function () { b.disabled = false; });
         };
       });
+      view().querySelectorAll("button[data-ai='" + name + "']").forEach(function (b) {
+        b.onclick = function () {
+          var sym = symbol();
+          if (!sym) { setOut(name, "<p class='error'>enter a symbol</p>"); return; }
+          var params = paramsFor(name);
+          if (params === null) return;
+          b.disabled = true;
+          setOut(name, "<p class='muted'>asking the AI reviewer…</p>");
+          api("POST", "/api/ai/strategy", { strategy: name, symbol: sym, params: params })
+            .then(function (r) {
+              setOut(name, "<div class='why'>" + esc(r.text || "(no text returned)").replace(/\n/g, "<br>") +
+                "</div><p class='kpi-l'>model " + esc(r.model) + " · verdict " +
+                esc((r.backtest && r.backtest.significance && r.backtest.significance.verdict) || "unproven") + "</p>");
+            })
+            .catch(function (e) { setOut(name, showErr(e)); })
+            .then(function () { b.disabled = false; });
+        };
+      });
     }
 
     api("GET", "/api/strategies")
@@ -1778,7 +1836,9 @@
             "<button type='button' class='primary' data-preview='" + esc(name) + "'" +
             (ok ? "" : " disabled") + ">Preview signal</button>" +
             "<button type='button' data-run='" + esc(name) + "'" +
-            (ok ? "" : " disabled") + ">Run backtest</button></div>" +
+            (ok ? "" : " disabled") + ">Run backtest</button>" +
+            "<button type='button' data-ai='" + esc(name) + "'" +
+            (ok ? "" : " disabled") + ">AI review</button></div>" +
             "<div data-out='" + esc(name) + "' aria-live='polite'></div></div>";
         }).join("") + "</div>";
         items.forEach(function (m) { wireCard(String(m.name || "")); });
@@ -1900,7 +1960,8 @@
     var liveOut = document.getElementById("t-live");
     var posOut = document.getElementById("t-pos");
     var estOut = document.getElementById("t-est");
-    var out = document.getElementById("t-out");
+    var outHost = document.getElementById("t-out");
+    function out(html) { if (outHost) outHost.innerHTML = html; }
     var posHost = document.getElementById("t-positions");
     var fillHost = document.getElementById("t-fills");
     var holdOut = document.getElementById("t-hold");
@@ -2742,15 +2803,12 @@
     if (!host) return;
     host.innerHTML = "<div id='as-out'><p class='muted'>loading universe…</p></div>";
     assetState.limit = 25;
-    api("GET", "/api/quotes").then(function (d) {
-      var rows = d.quotes || d.rows || d.results || [];
+    api("GET", "/api/screener?limit=200").then(function (d) {
+      var rows = d.results || d.rows || [];
       assetState.rows = rows.map(function (r) {
         return {
           symbol: r.symbol, name: r.name, asset_type: r.asset_type,
           exchange: r.exchange, last: r.last,
-          // The screener exposes momentum_pct / session_pct, not
-          // change_pct, and momentum_pct is the populated one. Reading
-          // change_pct rendered an empty Chg% column on every row.
           change_pct: r.change_pct,
           prev_close: r.prev_close,
           spread_bps: r.spread_bps, volume: r.volume,
@@ -2971,31 +3029,119 @@
 
   function pageAdmin() {
     hideLogin();
-    view().innerHTML = "<h2>Admin</h2><p class='kpi-l'>Loading…</p>";
+    view().innerHTML = "<h2>Admin Console</h2><p class='kpi-l'>Loading operational data…</p>";
     Promise.all([
       api("GET", "/api/admin/overview").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/admin/readiness").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/admin/audit").catch(function (e) { return { error: e.message }; })
+      api("GET", "/api/admin/audit").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/admin/users").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/symbols").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {};
       if (ov.error) {
-        view().innerHTML = "<h2>Admin</h2><p class='error'>" + esc(ov.error) + "</p>";
+        view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
       }
-      var keys = Object.keys(ov.overview || ov).filter(function (k) { return k !== "error"; });
-      var rows = keys.map(function (k) {
-        var v = (ov.overview || ov)[k];
-        return "<tr><td>" + esc(k) + "</td><td>" + esc(typeof v === "object" ? JSON.stringify(v) : v) + "</td></tr>";
-      }).join("") || "<tr><td colspan='2' class='dim'>No data</td></tr>";
-      var auditRows = (audit.audit || []).slice(0, 10).map(function (a) {
-        return "<tr><td>" + esc(a.ts) + "</td><td>" + esc(a.action) + "</td><td>" + esc(a.actor_user_id) + "</td></tr>";
-      }).join("") || "<tr><td colspan='3' class='dim'>No audit entries</td></tr>";
-      view().innerHTML = "<h2>Admin</h2>" +
-        "<div class='card'><h3>Readiness</h3><p>" + esc(JSON.stringify(ready)) + "</p></div>" +
-        "<div class='card'><h3>Overview</h3><table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>" + rows + "</tbody></table></div>" +
-        "<div class='card'><h3>Recent audit</h3><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th></tr></thead><tbody>" + auditRows + "</tbody></table></div>";
+      var o = ov.overview || {};
+      var kpis = ["users", "accounts", "cash", "symbols", "candles_daily", "orders", "active_sessions"].map(function (k) {
+        var v = o[k];
+        if (v == null) return "";
+        if (k === "cash") v = num(v, 2);
+        return "<div class='card kpi'><h3>" + esc(k.replace(/_/g, " ")) + "</h3><div class='kpi-v'>" + esc(v) + "</div></div>";
+      }).join("");
+
+      var users = usersRes.users || [];
+      var userRows = users.map(function (u) {
+        var tiers = ["Free", "Pro", "Institutional", "Admin"].map(function (t) {
+          return "<option value='" + t + "'" + (u.tier === t ? " selected" : "") + ">" + t + "</option>";
+        }).join("");
+        return "<tr><td>" + esc(u.id) + "</td><td>" + esc(u.email) + "</td>" +
+          "<td><select data-tier='" + esc(u.id) + "'>" + tiers + "</select></td>" +
+          "<td>" + num(u.cash, 2) + "</td>" +
+          "<td>" + (u.disabled ? "<span class='neg'>disabled</span>" : "<span class='pos'>active</span>") + "</td>" +
+          "<td>" + esc(u.last_login_ts || "—") + "</td>" +
+          "<td><button type='button' data-toggle-user='" + esc(u.id) + "' data-disabled='" + (u.disabled ? "0" : "1") + "'>" +
+          (u.disabled ? "Enable" : "Disable") + "</button></td></tr>";
+      }).join("") || "<tr><td colspan='7' class='dim'>no users</td></tr>";
+
+      var syms = symsRes.symbols || [];
+      var symRows = syms.map(function (s) {
+        return "<tr><td>" + esc(s.symbol) + "</td><td>" + esc(s.name) + "</td><td>" + esc(s.asset_type) +
+          "</td><td>" + esc(s.exchange) + "</td><td>" + (Number(s.enabled) ? "<span class='pos'>on</span>" : "<span class='dim'>off</span>") +
+          "</td><td><button type='button' data-toggle-symbol='" + esc(s.symbol) + "' data-enabled='" + (Number(s.enabled) ? "0" : "1") + "'>" +
+          (Number(s.enabled) ? "Disable" : "Enable") + "</button></td></tr>";
+      }).join("") || "<tr><td colspan='6' class='dim'>no symbols</td></tr>";
+
+      var auditRows = (audit.audit || []).slice(0, 40).map(function (a) {
+        return "<tr><td>" + esc(a.ts) + "</td><td>" + esc(a.action) + "</td><td>" + esc(a.actor_user_id == null ? "—" : a.actor_user_id) +
+          "</td><td>" + esc(a.tier || "") + "</td></tr>";
+      }).join("") || "<tr><td colspan='4' class='dim'>no audit entries</td></tr>";
+
+      var checks = ready.checks || {};
+      var checkRows = Object.keys(checks).map(function (k) {
+        var v = String(checks[k]);
+        var cls = /^(up|configured)$/i.test(v) ? "pos" : "neg";
+        return "<tr><td>" + esc(k) + "</td><td class='" + cls + "'>" + esc(v) + "</td></tr>";
+      }).join("") || "<tr><td colspan='2' class='dim'>no checks</td></tr>";
+
+      var themes = ["terminal", "midnight", "graphite", "contrast"];
+      var currentTheme = "terminal";
+      try { currentTheme = localStorage.getItem("mafutani_theme") || "terminal"; } catch (e) {}
+      var themeOpts = themes.map(function (t) {
+        return "<option value='" + t + "'" + (t === currentTheme ? " selected" : "") + ">" + t + "</option>";
+      }).join("");
+
+      view().innerHTML = "<h2>Admin Console</h2>" +
+        "<p class='kpi-l'>Operator controls, account management, venue configuration and audit trail.</p>" +
+        "<div class='cards'>" + kpis + "</div>" +
+        "<div class='card'><h3>Users</h3><table><thead><tr><th>ID</th><th>Email</th><th>Tier</th><th>Cash</th><th>State</th><th>Last login</th><th>Action</th></tr></thead><tbody>" + userRows + "</tbody></table></div>" +
+        "<div class='card'><h3>Instruments</h3><table><thead><tr><th>Symbol</th><th>Name</th><th>Class</th><th>Venue</th><th>State</th><th>Action</th></tr></thead><tbody>" + symRows + "</tbody></table></div>" +
+        "<div class='grid2'>" +
+        "<div class='card'><h3>System readiness</h3><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>" + checkRows + "</tbody></table>" +
+        "<p class='kpi-l'>Live venue: <b>" + esc(live.venue || "MT5") + "</b> · " +
+        (live.available ? "<span class='pos'>available</span>" : "<span class='neg'>unavailable</span>") +
+        " · " + esc(live.reason || "") + "</p></div>" +
+        "<div class='card'><h3>Appearance</h3><label>Theme <select id='admin-theme'>" + themeOpts + "</select></label>" +
+        "<p class='kpi-l'>Saved per browser. Applies immediately.</p>" +
+        "<h3>Build</h3><p class='kpi-l'>Paper execution live · daily Yahoo history · MT5 bridge required for live orders.</p></div>" +
+        "</div>" +
+        "<div class='card'><h3>Audit trail</h3><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Tier</th></tr></thead><tbody>" + auditRows + "</tbody></table></div>";
+
+      view().querySelectorAll("[data-toggle-user]").forEach(function (b) {
+        b.onclick = function () {
+          b.disabled = true;
+          api("POST", "/api/admin/users/" + encodeURIComponent(b.getAttribute("data-toggle-user")) + "/status",
+              { disabled: b.getAttribute("data-disabled") === "1" })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-tier]").forEach(function (sel) {
+        sel.onchange = function () {
+          api("POST", "/api/admin/users/" + encodeURIComponent(sel.getAttribute("data-tier")) + "/tier",
+              { tier: sel.value })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); });
+        };
+      });
+      view().querySelectorAll("[data-toggle-symbol]").forEach(function (b) {
+        b.onclick = function () {
+          b.disabled = true;
+          api("POST", "/api/admin/symbols/" + encodeURIComponent(b.getAttribute("data-toggle-symbol")) + "/status",
+              { enabled: b.getAttribute("data-enabled") === "1" })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      var themeSel = document.getElementById("admin-theme");
+      if (themeSel) themeSel.onchange = function () {
+        try { localStorage.setItem("mafutani_theme", themeSel.value); } catch (e) {}
+        applyTheme(themeSel.value);
+      };
     }).catch(function (e) {
-      view().innerHTML = "<h2>Admin</h2><p class='error'>" + esc(e.message) + "</p>";
+      view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(e.message) + "</p>";
     });
   }
 
@@ -3096,7 +3242,23 @@
           .then(function(r){ out.textContent = "Request #"+r.id+" created: "+r.status+" (KES "+r.amount_kes+"). "+(r.instructions||"Operator will verify/process per configured controls."); pageChain(); })
           .catch(function(e){ out.textContent = e.message; mp.disabled=false; });
       };
-    }).catch(function (e) { view().innerHTML = "<h2>Mafutani Chain</h2><p class='error'>" + esc(e.message) + "</p><p class='kpi-l'>Ensure you are logged in for wallet/mining/off-ramp actions.</p>"; });
+    }).catch(function (e) {
+      if (/not configured|unreachable|503/i.test(e.message)) {
+        view().innerHTML = "<h2>CommCoin / MFT</h2>" +
+          "<div class='card'><h3>Chain service not connected</h3>" +
+          "<p>The Mafutani chain (PQC signatures, SHAKE256 PoW, 182-day epochs, M-Pesa off-ramp) runs in the Python service in this repository. This Netlify deployment proxies it; it does not keep a second ledger.</p>" +
+          "<p class='kpi-l'>Set <code>CHAIN_API_URL</code> to the public HTTPS origin of the Python service and redeploy. Add <code>CHAIN_API_TOKEN</code> when the service requires a shared token.</p>" +
+          "<ol class='kpi-l' style='line-height:1.7'>" +
+          "<li>Deploy <code>app.py</code> with the repository Dockerfile to a long-lived host (Render, Railway, Fly.io, or a VPS).</li>" +
+          "<li>Persist <code>chain/mft.db</code> and wallet state on a volume; never commit them.</li>" +
+          "<li>Set <code>CHAIN_API_URL</code> in Netlify and redeploy.</li>" +
+          "</ol>" +
+          "<p class='error'>" + esc(e.message) + "</p>" +
+          "<button type='button' onclick='location.reload()'>Retry</button></div>";
+        return;
+      }
+      view().innerHTML = "<h2>Mafutani Chain</h2><p class='error'>" + esc(e.message) + "</p><p class='kpi-l'>Ensure you are logged in for wallet/mining/off-ramp actions.</p>";
+    });
   }
 
   function pageWallet() {
@@ -3161,6 +3323,7 @@
   };
   function router() {
     stopSSE();
+    stopPageTimers();
     document.querySelectorAll("#nav a").forEach(function (a) {
       a.classList.toggle("active", a.getAttribute("href") === location.hash);
     });
@@ -3320,6 +3483,22 @@
       if (tierLabel) tierLabel.textContent = p.tier ? p.tier.toUpperCase() : "—";
     }).catch(function () { /* stays PAPER if unauthorized */ });
   }
+
+  // Disclaimer is a permanent legal notice by default; operators who have
+  // acknowledged it can dismiss it for this browser.
+  try {
+    var disc = document.getElementById("disclaimer");
+    var discBtn = document.getElementById("disc-close");
+    if (disc && localStorage.getItem("mafutani_disclaimer") === "dismissed") {
+      disc.classList.add("dismissed");
+    }
+    if (discBtn && disc) {
+      discBtn.onclick = function () {
+        disc.classList.add("dismissed");
+        try { localStorage.setItem("mafutani_disclaimer", "dismissed"); } catch (e) {}
+      };
+    }
+  } catch (e) { /* storage optional */ }
 
   window.addEventListener("hashchange", router);
   try { bindAuth(); } catch (e) { console.error("bindAuth failed:", e); }

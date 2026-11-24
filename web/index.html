@@ -9,13 +9,15 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="disclaimer" role="banner">NOT FINANCIAL ADVICE. Paper trading only — live execution and MFT/chain features are disabled on this deployment. Market data is delayed daily history from Yahoo Finance. Past performance does not predict future results. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></div>
+<div id="disclaimer" role="banner"><span id="disc-text">NOT FINANCIAL ADVICE. Paper trading by default; live MT5 orders require a configured bridge and are gated. CommCoin/MFT and M-Pesa off-ramp require the configured chain service; MFT is experimental and you can lose all value. Market data is delayed daily history from Yahoo Finance. Past performance does not predict future results. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></span><button id="disc-close" type="button" aria-label="Dismiss disclaimer" title="Dismiss">×</button></div>
 <header id="topbar">
   <span id="logo" title="Mafutani Consolidation Trading Application">MAFUTANI</span>
   <nav id="nav" aria-label="Primary">
     <a href="#/dashboard">Dashboard</a>
     <a href="#/screener">Screener</a>
     <a href="#/chart/BTCUSD">Chart</a>
+    <a href="#/scalp-lab">Scalp Lab</a>
+    <a href="#/scalp-live">Scalp Live</a>
     <a href="#/analysis">Analysis</a>
     <a href="#/anomalies">Anomalies</a>
     <a href="#/backtests">Backtests</a>
@@ -24,6 +26,7 @@
     <a href="#/news">News</a>
     <a href="#/heatmap">Heatmap</a>
     <a href="#/markets">Markets</a>
+    <a href="#/chain">CommCoin</a>
     <a href="#/security">Security</a>
     <a href="#/policies">Policies</a>
     <a href="#/admin">Admin</a>
@@ -63,13 +66,6 @@
 <script src="i18n.js"></script>
 <script src="charts.js"></script>
 <script src="widgets.js"></script>
-<script src="terminal.js"></script>
-<script src="palette.js"></script>
-<!-- wallet.js before app.js: app.js routes on load, and #/wallet needs
-     window.MafutaniWallet to already exist or it renders a false
-     "module failed to load" error on first paint. -->
-<script src="wallet.js"></script>
-<script src="app.js"></script>
 <div id="palette" aria-label="Command palette">
   <div id="pal-box">
     <input id="pal-input" type="text" autocomplete="off" spellcheck="false" placeholder="pages · symbols · $cmd for terminal">
@@ -82,5 +78,12 @@
   <div id="term-out" role="log" aria-live="polite"></div>
   <form id="term-form"><span class="term-prompt">$</span><input id="term-input" type="text" autocomplete="off" spellcheck="false" placeholder="help | quote AAPL | buy AAPL 1 | backtest ema_trend AAPL"></form>
 </aside>
+<script src="terminal.js"></script>
+<script src="palette.js"></script>
+<!-- wallet.js before app.js: app.js routes on load, and #/wallet needs
+     window.MafutaniWallet to already exist or it renders a false
+     "module failed to load" error on first paint. -->
+<script src="wallet.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

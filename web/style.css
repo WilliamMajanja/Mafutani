@@ -822,3 +822,94 @@ button.armed {
 .funding-ok  { color: #35c07a; }
 .funding-bad { color: #d05050; }
 .funding-msg { margin: 12px 0; min-height: 1.2em; }
+
+/* ---- operator themes ---- */
+html[data-theme="midnight"] {
+  --bg: #02040b; --bg2: #040814; --panel: #070d1a; --panel2: #0a1222;
+  --panel3: #0f1930; --line: #17243d; --line-hi: #24365a;
+  --txt: #dbe6ff; --dim: #8095bd; --faint: #4a5f80;
+  --up: #35ffb2; --down: #ff5c7a; --accent: #6d8cff;
+}
+html[data-theme="contrast"] {
+  --bg: #000000; --bg2: #050505; --panel: #0a0a0a; --panel2: #101010;
+  --panel3: #171717; --line: #333333; --line-hi: #555555;
+  --txt: #ffffff; --dim: #b8b8b8; --faint: #808080;
+  --up: #00ff88; --down: #ff3355; --accent: #00d4ff;
+}
+html[data-theme="graphite"] {
+  --bg: #0c0c0e; --bg2: #111114; --panel: #17171b; --panel2: #1c1c21;
+  --panel3: #232329; --line: #2e2e36; --line-hi: #45454f;
+  --txt: #e8e8ee; --dim: #9a9aa8; --faint: #62626f;
+  --up: #39d98a; --down: #ff5c7a; --accent: #8ab4ff;
+}
+
+/* ---- disclaimer dismiss ---- */
+#disclaimer { display: flex; align-items: center; justify-content: center; gap: 10px; }
+#disclaimer #disc-close {
+  background: transparent; color: inherit; border: 1px solid rgba(255, 233, 168, 0.35);
+  border-radius: 3px; cursor: pointer; line-height: 1; padding: 1px 7px; font-size: 14px;
+}
+#disclaimer #disc-close:hover { background: rgba(255, 233, 168, 0.12); }
+#disclaimer.dismissed { display: none; }
+
+/* ---- nav polish ---- */
+#nav {
+  padding: 2px; border: 1px solid var(--line); border-radius: var(--r);
+  background: rgba(4, 7, 10, 0.55);
+}
+#nav a { border-radius: 3px; }
+#nav a:focus-visible { outline-offset: 0; }
+#topbar { box-shadow: 0 1px 0 rgba(65, 199, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35); }
+#userbox { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+#tier-badge {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px;
+  color: var(--accent); border: 1px solid var(--line-hi); border-radius: 3px;
+  padding: 1px 6px; text-transform: uppercase;
+}
+
+/* ---- page furniture ---- */
+main h2 {
+  font-family: var(--mono); font-size: 18px; letter-spacing: 1px;
+  text-transform: uppercase; margin: 10px 0 6px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--line);
+}
+main h3 {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--dim); margin: 14px 0 6px;
+}
+main table { border-collapse: collapse; width: 100%; margin: 6px 0 12px; }
+main th {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.8px;
+  text-transform: uppercase; color: var(--dim); text-align: left;
+  border-bottom: 1px solid var(--line-hi); padding: 6px 8px;
+  background: var(--panel2); position: sticky; top: 0;
+}
+main td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+main tbody tr:hover { background: var(--panel2); }
+table th.sortable { cursor: pointer; user-select: none; }
+table th.sortable:hover { color: var(--txt); }
+button, .btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--txt); background: var(--panel3);
+  border: 1px solid var(--line-hi); border-radius: 3px; padding: 5px 10px;
+  cursor: pointer; transition: background 120ms ease, border-color 120ms ease;
+}
+button:hover, .btn:hover { background: var(--panel2); border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { color: var(--bg); background: var(--up); border-color: var(--up); font-weight: 700; }
+button.primary:hover { filter: brightness(1.08); background: var(--up); }
+label { color: var(--dim); font-size: 12px; }
+input, select, textarea {
+  background: var(--panel); color: var(--txt); border: 1px solid var(--line-hi);
+  border-radius: 3px; padding: 4px 6px; font-family: var(--mono); font-size: 12px;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+.cards { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.card {
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 10px 12px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+.kpi-v { font-family: var(--mono); font-size: 18px; color: var(--txt); }
+.kpi-l { color: var(--dim); font-size: 11px; }
+.page-purpose { color: var(--dim); margin: 4px 0 10px; }

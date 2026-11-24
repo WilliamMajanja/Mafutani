@@ -1,4 +1,4 @@
-import type { Candle } from "./analytics";
+import { signalFor, type Candle } from "./analytics";
 
 const COST_BPS = 5;
 
@@ -32,8 +32,10 @@ export function runBacktest(
     throw Object.assign(new Error(`need at least ${slow + 2} bars for this strategy`), { status: 400 });
   }
   const closes = candles.map((c) => c.close);
-  const f = emaSeries(closes, fast);
-  const s = emaSeries(closes, slow);
+  const unsupported = new Set(["book_imbalance", "news_momentum"]);
+  if (unsupported.has(strategy)) {
+    throw Object.assign(new Error(`${strategy} cannot be backtested from candles alone`), { status: 400 });
+  }
 
   let equity = 100;
   let peak = 100;
@@ -46,7 +48,8 @@ export function runBacktest(
   const tradeReturns: number[] = [];
 
   for (let i = 1; i < candles.length; i++) {
-    const signal = f[i] > s[i] ? 1 : 0;
+    const sig = signalFor(strategy, candles.slice(0, i + 1), params).signal;
+    const signal = sig === "buy" ? 1 : 0;
     const px = closes[i];
     if (signal !== position) {
       if (position === 1) {
@@ -88,16 +91,26 @@ export function runBacktest(
   const cagr = (1 + totalReturn) ** (1 / years) - 1;
   const sharpe = sd > 0 ? (mean / sd) * Math.sqrt(rets.length / years) : 0;
 
+  const grossWin = rets.filter((r) => r > 0).reduce((a, b) => a + b, 0);
+  const grossLoss = Math.abs(rets.filter((r) => r < 0).reduce((a, b) => a + b, 0));
   const metrics: Record<string, unknown> = {
     strategy,
     symbol,
     candles: candles.length,
+    // Canonical figures plus the legacy key names the UI renders.
     total_return_pct: Number((totalReturn * 100).toFixed(2)),
+    total_return: Number(totalReturn.toFixed(4)),
     cagr_pct: Number((cagr * 100).toFixed(2)),
+    cagr: Number(cagr.toFixed(4)),
     max_drawdown_pct: Number((maxDd * 100).toFixed(2)),
+    maxDD: Number(maxDd.toFixed(4)),
     sharpe: Number(sharpe.toFixed(2)),
     trades,
+    wins,
+    win_rate: trades ? Number((wins / trades).toFixed(4)) : null,
     win_rate_pct: trades ? Number(((wins / trades) * 100).toFixed(2)) : null,
+    pf: grossLoss > 0 ? Number((grossWin / grossLoss).toFixed(2)) : null,
+    avg_hold: trades ? Math.round(candles.length / trades) : null,
     avg_trade_pct: trades ? Number((mean * 100).toFixed(2)) : null,
     cost_bps_per_trade: COST_BPS,
     significance: {

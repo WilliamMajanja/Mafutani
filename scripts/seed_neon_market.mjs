@@ -35,6 +35,15 @@ const INSTRUMENTS = [
   { symbol: "XAUUSD", yahoo: "GC=F", name: "Gold Futures", asset: "commodity", exchange: "COMEX", currency: "USD", sector: "Metals" },
   { symbol: "XAGUSD", yahoo: "SI=F", name: "Silver Futures", asset: "commodity", exchange: "COMEX", currency: "USD", sector: "Metals" },
   { symbol: "WTI", yahoo: "CL=F", name: "WTI Crude Oil Futures", asset: "commodity", exchange: "NYMEX", currency: "USD", sector: "Energy" },
+  { symbol: "NATGAS", yahoo: "NG=F", name: "Natural Gas Futures", asset: "commodity", exchange: "NYMEX", currency: "USD", sector: "Energy" },
+  { symbol: "COPPER", yahoo: "HG=F", name: "Copper Futures", asset: "commodity", exchange: "COMEX", currency: "USD", sector: "Metals" },
+  { symbol: "CORN", yahoo: "ZC=F", name: "Corn Futures", asset: "commodity", exchange: "CBOT", currency: "USD", sector: "Grains" },
+  { symbol: "US10Y", yahoo: "ZN=F", name: "10-Year T-Note Futures", asset: "future", exchange: "CBOT", currency: "USD", sector: "Rates" },
+  { symbol: "SPX", yahoo: "^GSPC", name: "S&P 500 Index", asset: "index", exchange: "NYSE", currency: "USD", sector: "Index" },
+  { symbol: "NDX", yahoo: "^NDX", name: "Nasdaq 100 Index", asset: "index", exchange: "NASDAQ", currency: "USD", sector: "Index" },
+  { symbol: "VIX", yahoo: "^VIX", name: "CBOE Volatility Index", asset: "index", exchange: "CBOE", currency: "USD", sector: "Volatility" },
+  { symbol: "SOLUSD", yahoo: "SOL-USD", name: "Solana / US Dollar", asset: "crypto", exchange: "COINBASE", currency: "USD", sector: "" },
+  { symbol: "XRPUSD", yahoo: "XRP-USD", name: "XRP / US Dollar", asset: "crypto", exchange: "COINBASE", currency: "USD", sector: "" },
 ];
 
 async function yahooDaily(yahoo, range = "1y") {
