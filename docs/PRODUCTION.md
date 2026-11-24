@@ -167,3 +167,32 @@ or deploy the Python service with TLS on Render/Railway/Fly and update
 
 Verified through the hosted site: chain info 200, wallet creation, and a mined
 block at height 5 credited 500 MFT to the hosted user's chain wallet.
+
+## 12. Order approvals and 3/3 consensus
+
+Hosted live orders are requests, not executions.
+
+- `POST /api/orders` creates `status='pending_approval'` and a
+  `kind='trade_request'` journal row.
+- Normal order: one admin approval.
+- Large move: `ORDER_CONSENSUS_THRESHOLD` (default 100000 notional) requires
+  every active admin. With three admins that is 3/3.
+- Approval rows live in `order_approvals`, unique per `(order_id, admin_user_id)`.
+- Threshold met -> venue adapter executes. Venue failure -> `execution_failed`
+  with Retry. Rejection closes the request. No paper fallback.
+
+Endpoints: `GET /api/admin/orders/pending`,
+`POST /api/admin/orders/:id/{approve|reject|retry}`.
+
+## 13. Cash and M-Pesa C2C
+
+- Default destination: `+254713270444` (`MPESA_C2C_NUMBER`).
+- Deposits create `cash_movements` with `status='pending'`.
+- Admin confirms receipt against the M-Pesa statement; confirmation credits
+  `accounts.cash` once in a single statement (status + credit), so replays
+  cannot double-credit.
+- Rejection closes the movement with a note.
+- `GET /api/admin/cash/reconcile` reports confirmed deposits, withdrawals,
+  pending count/amount and account cash.
+- M-Pesa is the funding rail, not the execution venue. KYC/AML, sanctions,
+  tax and licensing remain operator responsibilities.

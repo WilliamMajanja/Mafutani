@@ -19,6 +19,8 @@ import { policies } from "./lib/policies";
 import { wikiArticles } from "./lib/wiki";
 import { logJournal } from "./lib/journal";
 import { alpacaConfigured } from "./lib/alpaca";
+import { venueRegistry, routeLive } from "./lib/venues";
+import { createCashMovement, listCashMovements, listAdminCashMovements, confirmCashMovement, rejectCashMovement, cashReconciliation, MPESA_C2C_NUMBER, MPESA_C2C_NAME } from "./lib/cash";
 
 const router = new Router();
 
@@ -315,6 +317,20 @@ router.on("POST", "/api/ai/strategy", async ({ req }) => {
 
 router.on("GET", "/api/auth/config", async () => json(authConfig()));
 
+router.on("GET", "/api/venues", async ({ req, query }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const symbol = (query.get("symbol") || "").trim().toUpperCase();
+  return json({
+    venues: venueRegistry().map((v) => ({ ...v, supports: undefined })),
+    route: symbol ? (() => {
+      const r = routeLive(symbol);
+      return r ? { id: r.id, label: r.label } : null;
+    })() : null,
+    note: "Zero-dependency adapters. Adding a venue does not change the ticket, risk engine or journal.",
+  });
+});
+
 router.on("GET", "/api/live/config", async ({ req }) => {
   const user = await currentUser(req);
   let tierEnabled = false;
@@ -481,6 +497,106 @@ router.on("GET", "/api/news", async ({ query }) => {
   } catch (e) { return error(500, (e as Error).message); }
 });
 
+router.on("GET", "/api/cash/config", async () => json({
+  rail: "mpesa_c2c",
+  number: MPESA_C2C_NUMBER,
+  name: MPESA_C2C_NAME,
+  currency: "KES",
+  note: "Send M-Pesa C2C to this number, then submit the transaction reference. An admin confirms receipt before cash is credited.",
+}));
+
+router.on("POST", "/api/cash/deposit", async ({ req }) => {
+  const user = await currentUser(req);
+  if (!user) return error(401, "unauthorized");
+  try {
+    const body = await readBody(req);
+    const amount = Number(body.amount);
+    if (!isFinite(amount) || amount <= 0) return error(400, "amount must be greater than 0");
+    const ref = String(body.external_reference || body.reference || "").trim();
+    if (!ref) return error(400, "M-Pesa transaction reference required");
+    const m = await createCashMovement(user.id, {
+      movement_type: "deposit",
+      rail: "mpesa",
+      amount,
+      currency: "KES",
+      external_reference: ref,
+      idempotency_key: "deposit:" + user.id + ":" + ref,
+      details: { number: MPESA_C2C_NUMBER, submitted_by: user.email },
+    });
+    await logJournal(user.id, {
+      kind: "cash", symbol: "", strategy: "deposit_request",
+      note: `M-Pesa deposit ${amount} KES ref ${ref}`,
+      ref_id: `cash:${m.id}`,
+      details: { movement_id: m.id, amount, currency: "KES", reference: ref, status: m.status },
+    });
+    return json({
+      movement: m,
+      instructions: `Send KES ${amount.toFixed(2)} via M-Pesa C2C to ${MPESA_C2C_NUMBER} (${MPESA_C2C_NAME}) and keep the transaction code ${ref}. An admin must confirm receipt before cash is credited.`,
+    }, 201);
+  } catch (e) { return error(400, (e as Error).message); }
+});
+
+router.on("GET", "/api/cash/movements", async ({ req, query }) => {
+  const user = await currentUser(req);
+  if (!user) return error(401, "unauthorized");
+  const limit = parseInt(query.get("limit") || "50", 10) || 50;
+  return json({ movements: await listCashMovements(user.id, limit), config: { number: MPESA_C2C_NUMBER, name: MPESA_C2C_NAME, currency: "KES" } });
+});
+
+router.on("GET", "/api/admin/cash", async ({ req, query }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const status = (query.get("status") || "").trim();
+  const limit = parseInt(query.get("limit") || "200", 10) || 200;
+  return json({ movements: await listAdminCashMovements(status || undefined, limit) });
+});
+
+router.on("POST", "/api/admin/cash/:id/confirm", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid movement id");
+    const m = await confirmCashMovement(id, gate.user!.id);
+    if (!m) return error(409, "movement is not pending");
+    await audit(gate.user!.id, "cash.confirm", gate.user!.tier, { movement_id: id, amount: m.amount, currency: m.currency });
+    await logJournal(m.user_id, {
+      kind: "cash", strategy: "deposit_confirmed",
+      note: `M-Pesa deposit confirmed: ${m.amount} ${m.currency}`,
+      ref_id: `cash:${id}`,
+      details: { movement_id: id, amount: m.amount, currency: m.currency, confirmed_by: gate.user!.id, cash_after: m.cash },
+    });
+    return json({ movement: m });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/cash/:id/reject", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid movement id");
+    const body = await readBody(req);
+    const note = String(body.note || "").slice(0, 500);
+    const m = await rejectCashMovement(id, gate.user!.id, note);
+    if (!m) return error(409, "movement is not pending");
+    await audit(gate.user!.id, "cash.reject", gate.user!.tier, { movement_id: id, note });
+    await logJournal(m.user_id, {
+      kind: "cash", strategy: "deposit_rejected",
+      note: `M-Pesa deposit rejected${note ? ": " + note : ""}`,
+      ref_id: `cash:${id}`,
+      details: { movement_id: id, note, rejected_by: gate.user!.id },
+    });
+    return json({ movement: m });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("GET", "/api/admin/cash/reconcile", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  return json(await cashReconciliation());
+});
+
 router.on("GET", "/api/portfolio", async ({ req }) => {
   try {
     const user = await currentUser(req);
@@ -614,29 +730,226 @@ router.on("POST", "/api/orders", async ({ req }) => {
   if (!user) return error(401, "unauthorized");
   try {
     const body = await readBody(req);
-    const result = await executeOrder(user.id, body);
-    await audit(user.id, "order.place", user.tier, {
-      symbol: body.symbol, side: body.side, qty: body.qty, mode: body.mode || "paper",
+    const mode = String(body.mode || (paperEnabled() ? "paper" : "live")).toLowerCase();
+    // Local paper bypasses the approval queue. Hosted live orders, and any
+    // explicitly live order, require admin approval.
+    if (mode !== "live" && paperEnabled()) {
+      const result = await executeOrder(user.id, body);
+      await audit(user.id, "order.place", user.tier, {
+        symbol: body.symbol, side: body.side, qty: body.qty, mode: "paper",
+      });
+      const o: any = result.order || {};
+      await logJournal(user.id, {
+        kind: "trade",
+        symbol: o.symbol || String(body.symbol || "").toUpperCase(),
+        strategy: String(body.strategy || "manual"),
+        note: `${o.side || body.side} ${o.qty || body.qty} ${o.symbol || body.symbol} ${o.status || ""}`.trim(),
+        ref_id: o.id ? `order:${o.id}` : "",
+        details: { order_id: o.id, side: o.side, qty: o.qty, price: (result as any).fill?.price ?? o.price, status: o.status, mode: "paper" },
+      });
+      return json(result, 201);
+    }
+
+    const symbol = String(body.symbol || "").trim().toUpperCase();
+    const side = String(body.side || "").trim().toLowerCase();
+    const type = String(body.type || "market").trim().toLowerCase();
+    const qty = Number(body.qty);
+    if (!symbol) return error(400, "symbol required");
+    if (side !== "buy" && side !== "sell") return error(400, "side must be buy or sell");
+    if (!isFinite(qty) || qty <= 0) return error(400, "qty must be greater than 0");
+    if (type === "limit" && !(Number(body.price) > 0)) return error(400, "limit orders need a positive price");
+
+    const quote = await latestPrice(db(), symbol);
+    const refPrice = type === "limit" ? Number(body.price) : (quote ? (side === "buy" ? quote.ask : quote.bid) : Number(body.price || 0));
+    const notional = qty * refPrice;
+    const adminRows: any = await db()`SELECT COUNT(*)::int AS n FROM users WHERE tier = 'Admin' AND disabled = 0`;
+    const adminCount = Number(adminRows[0].n) || 0;
+    if (adminCount === 0) return error(503, "no active admin available to approve orders");
+    const threshold = Number(process.env.ORDER_CONSENSUS_THRESHOLD || 100000);
+    const large = notional >= threshold;
+    const required = large ? adminCount : 1;
+
+    const requestKey = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const rows: any = await db()`
+      INSERT INTO orders (user_id, symbol, side, type, qty, price, mode, status,
+                          client_order_id, required_approvals, approvals_count)
+      VALUES (${user.id}, ${symbol}, ${side}, ${type}, ${qty}, ${refPrice || null}, 'live',
+              'pending_approval', ${requestKey}, ${required}, 0)
+      RETURNING *
+    `;
+    const request = rows[0];
+    await audit(user.id, "order.request", user.tier, {
+      order_id: request.id, symbol, side, qty, notional, required, large,
     });
-    const o: any = result.order || {};
     await logJournal(user.id, {
-      kind: "trade",
-      symbol: o.symbol || String(body.symbol || "").toUpperCase(),
-      strategy: String(body.strategy || "manual"),
-      note: `${o.side || body.side} ${o.qty || body.qty} ${o.symbol || body.symbol} ${o.status || ""}`.trim(),
-      pnl_ref: null,
-      ref_id: o.id ? `order:${o.id}` : "",
-      details: {
-        order_id: o.id, side: o.side, qty: o.qty, price: (result as any).fill?.price ?? o.price,
-        status: o.status, mode: o.mode, venue_order_id: o.venue_order_id || "",
-        live: !!(result as any).live,
-      },
+      kind: "trade_request", symbol, strategy: String(body.strategy || "manual"),
+      note: `live ${side} ${qty} ${symbol} requested · ${required}/${adminCount} approval(s)`,
+      ref_id: `order:${request.id}`,
+      details: { order_id: request.id, side, qty, price: refPrice, notional, required, admin_count: adminCount, large, status: "pending_approval" },
     });
-    return json(result, 201);
+    return json({
+      order: request,
+      pending: true,
+      required_approvals: required,
+      admin_count: adminCount,
+      large,
+      message: large
+        ? `Large move: ${required} of ${adminCount} admins must approve before execution.`
+        : "Queued for admin approval.",
+    }, 202);
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(err.status || 400, err.message);
   }
+});
+
+router.on("GET", "/api/admin/orders/pending", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const rows: any = await db()`
+    SELECT o.*, u.email, u.display_name,
+           COALESCE((
+             SELECT json_agg(json_build_object(
+               'admin_id', a.admin_user_id, 'email', au.email,
+               'decision', a.decision, 'note', a.note, 'ts', a.created_at
+             ) ORDER BY a.created_at)
+             FROM order_approvals a JOIN users au ON au.id = a.admin_user_id
+             WHERE a.order_id = o.id
+           ), '[]'::json) AS approvals
+    FROM orders o JOIN users u ON u.id = o.user_id
+    WHERE o.status IN ('pending_approval', 'execution_failed')
+    ORDER BY o.id DESC
+    LIMIT 200
+  `;
+  return json({ orders: rows });
+});
+
+async function tryExecuteApproved(order: any, adminId: number, note: string) {
+  try {
+    const result: any = await executeOrder(order.user_id, {
+      symbol: order.symbol, side: order.side, type: order.type, qty: Number(order.qty),
+      price: order.price == null ? null : Number(order.price),
+      mode: "live", confirm: true, client_order_id: `approval:${order.id}`,
+    });
+    const executed: any = result.order || {};
+    await db()`
+      UPDATE orders SET status = 'approved', approval_note = ${note || ""},
+        venue_order_id = ${executed.venue_order_id || ("exec:" + executed.id)}
+      WHERE id = ${order.id}
+    `;
+    await logJournal(order.user_id, {
+      kind: "trade", symbol: order.symbol, strategy: "admin_approved",
+      note: `approved ${order.side} ${order.qty} ${order.symbol} → order #${executed.id} ${executed.status}`,
+      ref_id: `order:${executed.id}`,
+      details: { request_id: order.id, executed_order_id: executed.id, venue_order_id: executed.venue_order_id, status: executed.status, approved_by: adminId },
+    });
+    return { ok: true, executed };
+  } catch (e) {
+    const msg = (e as Error).message;
+    await db()`UPDATE orders SET status = 'execution_failed', approval_note = ${msg} WHERE id = ${order.id}`;
+    await logJournal(order.user_id, {
+      kind: "trade_approval", symbol: order.symbol, strategy: "execution_failed",
+      note: `approved request #${order.id} failed at venue: ${msg}`,
+      ref_id: `order:${order.id}`,
+      details: { request_id: order.id, error: msg, approved_by: adminId },
+    });
+    return { ok: false, error: msg };
+  }
+}
+
+router.on("POST", "/api/admin/orders/:id/approve", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid order id");
+    const body = await readBody(req);
+    const note = String(body.note || "").slice(0, 500);
+    const rows: any = await db()`SELECT * FROM orders WHERE id = ${id}`;
+    if (!rows.length) return error(404, "order not found");
+    const order = rows[0];
+    if (!["pending_approval", "execution_failed"].includes(String(order.status))) {
+      return error(409, "order is not awaiting approval");
+    }
+    const inserted: any = await db()`
+      INSERT INTO order_approvals (order_id, admin_user_id, decision, note)
+      VALUES (${id}, ${gate.user!.id}, 'approve', ${note})
+      ON CONFLICT (order_id, admin_user_id) DO UPDATE SET decision = 'approve', note = EXCLUDED.note
+      RETURNING *
+    `;
+    const countRows: any = await db()`
+      SELECT COUNT(*)::int AS n FROM order_approvals WHERE order_id = ${id} AND decision = 'approve'
+    `;
+    const approved = Number(countRows[0].n);
+    const required = Number(order.required_approvals) || 1;
+    await db()`UPDATE orders SET approvals_count = ${approved} WHERE id = ${id}`;
+    await logJournal(order.user_id, {
+      kind: "trade_approval", symbol: order.symbol, strategy: "admin_approve",
+      note: `admin approved ${approved}/${required} for ${order.side} ${order.qty} ${order.symbol}${note ? ": " + note : ""}`,
+      ref_id: `order:${id}`,
+      details: { request_id: id, approved, required, admin_id: gate.user!.id, note },
+    });
+    await audit(gate.user!.id, "order.approve", gate.user!.tier, { order_id: id, approved, required });
+    if (approved < required) {
+      return json({ order_id: id, approved, required, pending: true });
+    }
+    const result = await tryExecuteApproved(order, gate.user!.id, note);
+    if (!result.ok) return error(502, result.error || "venue execution failed");
+    return json({ order_id: id, approved, required, executed: result.executed });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/orders/:id/reject", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid order id");
+    const body = await readBody(req);
+    const note = String(body.note || "").slice(0, 500);
+    const rows: any = await db()`SELECT * FROM orders WHERE id = ${id}`;
+    if (!rows.length) return error(404, "order not found");
+    const order = rows[0];
+    if (!["pending_approval", "execution_failed"].includes(String(order.status))) {
+      return error(409, "order is not awaiting approval");
+    }
+    await db()`
+      INSERT INTO order_approvals (order_id, admin_user_id, decision, note)
+      VALUES (${id}, ${gate.user!.id}, 'reject', ${note})
+      ON CONFLICT (order_id, admin_user_id) DO UPDATE SET decision = 'reject', note = EXCLUDED.note
+    `;
+    await db()`UPDATE orders SET status = 'rejected', approval_note = ${note} WHERE id = ${id}`;
+    await logJournal(order.user_id, {
+      kind: "trade_approval", symbol: order.symbol, strategy: "admin_reject",
+      note: `admin rejected ${order.side} ${order.qty} ${order.symbol}${note ? ": " + note : ""}`,
+      ref_id: `order:${id}`,
+      details: { request_id: id, admin_id: gate.user!.id, note },
+    });
+    await audit(gate.user!.id, "order.reject", gate.user!.tier, { order_id: id, note });
+    return json({ order_id: id, status: "rejected" });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/orders/:id/retry", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid order id");
+    const rows: any = await db()`SELECT * FROM orders WHERE id = ${id}`;
+    if (!rows.length) return error(404, "order not found");
+    const order = rows[0];
+    if (String(order.status) !== "execution_failed") return error(409, "order is not in execution_failed state");
+    const countRows: any = await db()`
+      SELECT COUNT(*)::int AS n FROM order_approvals WHERE order_id = ${id} AND decision = 'approve'
+    `;
+    if (Number(countRows[0].n) < Number(order.required_approvals || 1)) {
+      return error(409, "approval threshold not met");
+    }
+    const result = await tryExecuteApproved(order, gate.user!.id, "retry");
+    if (!result.ok) return error(502, result.error || "venue execution failed");
+    return json({ order_id: id, executed: result.executed });
+  } catch (e) { return error(500, (e as Error).message); }
 });
 
 router.on("POST", "/api/positions/flatten", async ({ req }) => {

@@ -3113,9 +3113,12 @@
       Promise.all([
         api("GET", "/api/portfolio"),
         api("GET", "/api/orders?limit=25").catch(function () { return { orders: [] }; }),
-        api("GET", "/api/risk").catch(function () { return {}; })
+        api("GET", "/api/risk").catch(function () { return {}; }),
+        api("GET", "/api/cash/movements?limit=25").catch(function () { return { movements: [] }; }),
+        api("GET", "/api/cash/config").catch(function () { return {}; })
       ]).then(function (res) {
         var p = res[0] || {}, sum = p.summary || {}, risk = res[2] || {};
+        var cashRes = res[3] || {}, cashCfg = res[4] || {};
         var tot = sum.total_pnl, totCls = tot > 0 ? "up" : (tot < 0 ? "down" : "");
         var cash = p.cash != null ? +p.cash : 0;
         var equity = p.equity != null ? +p.equity : cash;
@@ -3180,6 +3183,19 @@
           "</div>" +
           "<div class='grid2'>" + allocHtml + riskHtml + "</div>" +
           commHtml +
+          "<h3>Cash &amp; M-Pesa</h3><div class='grid2'>" +
+          "<div class='card'><h3>Deposit via M-Pesa C2C</h3>" +
+          "<p class='kpi-l'>Send to <b>" + esc(cashCfg.number || "+254713270444") + "</b> (" + esc(cashCfg.name || "Mafutani") + "), then submit the transaction code. An admin confirms receipt before cash is credited.</p>" +
+          "<div class='row'><label>Amount (KES) <input id='cash-amt' type='number' min='1' step='any'></label>" +
+          "<label>M-Pesa code <input id='cash-ref' placeholder='e.g. SFE4X8K2LM'></label>" +
+          "<button type='button' class='primary' id='cash-submit'>Submit deposit</button></div>" +
+          "<div id='cash-out' class='kpi-l'></div></div>" +
+          "<div class='card'><h3>Cash movements</h3><table><thead><tr><th>ID</th><th>Type</th><th>Amount</th><th>Ref</th><th>Status</th><th>Time</th></tr></thead><tbody>" +
+          (((cashRes.movements || []).map(function (m) {
+            return "<tr><td>" + esc(m.id) + "</td><td>" + esc(m.movement_type) + "</td><td>" + num(m.amount) + " " + esc(m.currency) +
+              "</td><td>" + esc(m.external_reference) + "</td><td class='" + (m.status === "confirmed" ? "pos" : (m.status === "rejected" ? "neg" : "dim")) +
+              "'>" + esc(m.status) + "</td><td>" + esc(fmtTs(m.created_at)) + "</td></tr>";
+          }).join("") || "<tr><td colspan='6' class='dim'>no cash movements</td></tr>")) + "</tbody></table></div></div>" +
           "<h3>Positions</h3>" + positionRows(positions, {
             showRealized: true,
             mode: p.live_trading_enabled ? "LIVE" : (p.paper_enabled === false ? "LIVE-ONLY" : "paper"),
@@ -3210,6 +3226,18 @@
           a.download = "mafutani-portfolio.json";
           a.click();
           setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        };
+        var cs = document.getElementById("cash-submit");
+        if (cs) cs.onclick = function () {
+          var amt = parseFloat(document.getElementById("cash-amt").value);
+          var ref = document.getElementById("cash-ref").value.trim();
+          var out = document.getElementById("cash-out");
+          if (!isFinite(amt) || amt <= 0 || !ref) { out.innerHTML = "<span class='error'>amount and M-Pesa code required</span>"; return; }
+          cs.disabled = true;
+          ux("cash_deposit_submit", { amount: amt, reference: ref }, "M-Pesa deposit submitted");
+          api("POST", "/api/cash/deposit", { amount: amt, external_reference: ref })
+            .then(function (r) { out.innerHTML = "<span class='pos'>pending #" + esc(r.movement.id) + "</span> " + esc(r.instructions || ""); load(); })
+            .catch(function (e) { out.innerHTML = showErr(e); cs.disabled = false; });
         };
         var fl = document.getElementById("pf-flatten");
         if (fl) fl.onclick = function () {
@@ -3438,10 +3466,14 @@
       api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/admin/gaps").catch(function (e) { return { gaps: [], error: e.message }; }),
       api("GET", "/api/admin/journal?limit=100").catch(function (e) { return { entries: [], error: e.message }; }),
-      api("GET", "/api/admin/hardening").catch(function (e) { return { controls: [], error: e.message }; })
+      api("GET", "/api/admin/hardening").catch(function (e) { return { controls: [], error: e.message }; }),
+      api("GET", "/api/venues").catch(function (e) { return { venues: [], error: e.message }; }),
+      api("GET", "/api/admin/cash?status=pending").catch(function (e) { return { movements: [], error: e.message }; }),
+      api("GET", "/api/admin/cash/reconcile").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/admin/orders/pending").catch(function (e) { return { orders: [], error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
-      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {}, hardRes = res[8] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {}, hardRes = res[8] || {}, venuesRes = res[9] || {}, cashRes = res[10] || {}, reconRes = res[11] || {}, apprRes = res[12] || {};
       if (ov.error) {
         view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
@@ -3523,6 +3555,37 @@
             "</td><td>" + esc(e.ref_id || "") + "</td></tr>";
         }).join("") || "<tr><td colspan='7' class='dim'>no journal entries</td></tr>") +
         "</tbody></table></div>" +
+        "<div class='card'><h3>Trade approvals</h3>" +
+        "<p class='kpi-l'>pending " + esc((apprRes.orders || []).length) + " · large moves require all active admins</p>" +
+        "<table><thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Approvals</th><th>Status</th><th>Action</th></tr></thead><tbody>" +
+        (((apprRes.orders || []).map(function (o) {
+          var approvals = (o.approvals || []).map(function (a) { return a.email + ":" + a.decision; }).join(", ");
+          return "<tr><td>" + esc(o.id) + "</td><td>" + esc(o.email) + "</td><td>" + esc(o.symbol) + "</td><td>" + esc(o.side) +
+            "</td><td>" + num(o.qty) + "</td><td>" + num(o.price) + "</td><td>" + esc(o.approvals_count) + "/" + esc(o.required_approvals) +
+            (approvals ? "<br><span class='kpi-l'>" + esc(approvals) + "</span>" : "") + "</td><td>" + esc(o.status) +
+            "</td><td><button type='button' data-appr-ok='" + esc(o.id) + "'>Approve</button> " +
+            "<button type='button' data-appr-no='" + esc(o.id) + "'>Reject</button>" +
+            (o.status === "execution_failed" ? " <button type='button' data-appr-retry='" + esc(o.id) + "'>Retry</button>" : "") +
+            "</td></tr>";
+        }).join("") || "<tr><td colspan='9' class='dim'>no pending trade approvals</td></tr>")) + "</tbody></table></div>" +
+        "<div class='card'><h3>Cash approvals (M-Pesa C2C)</h3>" +
+        "<p class='kpi-l'>pending " + esc(cashRes.movements ? cashRes.movements.length : 0) +
+        " · confirmed deposits " + num(reconRes.confirmed_deposits) +
+        " · account cash " + num(reconRes.account_cash) + "</p>" +
+        "<table><thead><tr><th>ID</th><th>User</th><th>Amount</th><th>Ref</th><th>Status</th><th>Action</th></tr></thead><tbody>" +
+        (((cashRes.movements || []).map(function (m) {
+          return "<tr><td>" + esc(m.id) + "</td><td>" + esc(m.email) + "</td><td>" + num(m.amount) + " " + esc(m.currency) +
+            "</td><td>" + esc(m.external_reference) + "</td><td>" + esc(m.status) +
+            "</td><td><button type='button' data-cash-ok='" + esc(m.id) + "'>Confirm</button> " +
+            "<button type='button' data-cash-no='" + esc(m.id) + "'>Reject</button></td></tr>";
+        }).join("") || "<tr><td colspan='6' class='dim'>no pending deposits</td></tr>")) + "</tbody></table></div>" +
+        "<div class='card'><h3>Venue adapters (zero dependency)</h3>" +
+        "<table><thead><tr><th>Adapter</th><th>Configured</th><th>Live</th><th>Dependency</th><th>Capabilities</th><th>Detail</th></tr></thead><tbody>" +
+        ((venuesRes.venues || []).map(function (v) {
+          return "<tr><td>" + esc(v.label) + "</td><td class='" + (v.configured ? "pos" : "neg") + "'>" + (v.configured ? "yes" : "no") +
+            "</td><td>" + (v.live ? "yes" : "no") + "</td><td>" + esc(v.dependency) + "</td><td>" +
+            esc((v.capabilities || []).join(", ")) + "</td><td>" + esc(v.detail) + "</td></tr>";
+        }).join("") || "<tr><td colspan='6' class='dim'>no adapters</td></tr>") + "</tbody></table></div>" +
         "<div class='card'><h3>Hardening baseline</h3>" +
         "<p class='kpi-l'>CPIP-informed defensive controls · report-only reference · score " +
         esc(hardRes.score_pct == null ? "—" : hardRes.score_pct + "%") + " (" +
@@ -3567,6 +3630,50 @@
           b.disabled = true;
           api("POST", "/api/admin/users/" + encodeURIComponent(b.getAttribute("data-revoke")) + "/revoke", {})
             .then(function (r) { alert("Revoked " + r.revoked + " session(s)."); pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-appr-ok]").forEach(function (b) {
+        b.onclick = function () {
+          var note = prompt("Approval note (optional)") || "";
+          b.disabled = true;
+          api("POST", "/api/admin/orders/" + encodeURIComponent(b.getAttribute("data-appr-ok")) + "/approve", { note: note })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-appr-no]").forEach(function (b) {
+        b.onclick = function () {
+          var note = prompt("Reason for rejection") || "";
+          b.disabled = true;
+          api("POST", "/api/admin/orders/" + encodeURIComponent(b.getAttribute("data-appr-no")) + "/reject", { note: note })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-appr-retry]").forEach(function (b) {
+        b.onclick = function () {
+          b.disabled = true;
+          api("POST", "/api/admin/orders/" + encodeURIComponent(b.getAttribute("data-appr-retry")) + "/retry", {})
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-cash-ok]").forEach(function (b) {
+        b.onclick = function () {
+          if (!confirm("Confirm M-Pesa receipt for movement #" + b.getAttribute("data-cash-ok") + "?")) return;
+          b.disabled = true;
+          api("POST", "/api/admin/cash/" + encodeURIComponent(b.getAttribute("data-cash-ok")) + "/confirm", {})
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-cash-no]").forEach(function (b) {
+        b.onclick = function () {
+          var note = prompt("Reason for rejecting this deposit?") || "";
+          b.disabled = true;
+          api("POST", "/api/admin/cash/" + encodeURIComponent(b.getAttribute("data-cash-no")) + "/reject", { note: note })
+            .then(function () { pageAdmin(); })
             .catch(function (e) { alert(e.message); b.disabled = false; });
         };
       });

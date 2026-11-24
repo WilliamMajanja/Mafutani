@@ -488,6 +488,37 @@ def build():
     s += [P("News ingestion", "H2x")]
     s += [P("curl -s 'https://mafutani.org/api/news?symbol=AAPL&limit=5'", "Codex")]
 
+    s += [PageBreak(), H1("17A. Trade approvals and 3/3 admin consensus")]
+    s += [P("Every hosted live order is a request. It is journaled as a trade_request "
+            "and does not reach a venue until an admin approves it. A normal order "
+            "needs one approval; a large move needs every active admin. The threshold "
+            "is ORDER_CONSENSUS_THRESHOLD (default 100000 notional). With three "
+            "admins, a large move is 3/3.")]
+    s += [table([
+        ["State", "Meaning"],
+        ["pending_approval", "Request waiting for approvals"],
+        ["approved", "Threshold met and venue accepted the order"],
+        ["rejected", "An admin rejected the request"],
+        ["execution_failed", "Threshold met but the venue refused or was unreachable"],
+    ], widths=[40 * mm, 112 * mm])]
+    s += [P("A rejection is final for that request. A venue failure is retryable only "
+            "while the approval threshold still holds. There is no paper fallback.", "Warnx")]
+
+    s += [PageBreak(), H1("17B. Cash, M-Pesa C2C and reconciliation")]
+    s += [P("Cash is a reconciled view. Deposits are M-Pesa C2C movements to the "
+            "configured number (default +254713270444). A user submits the transaction "
+            "code; an admin confirms against the statement. Confirmation credits the "
+            "account once, in a single statement that also changes the movement status, "
+            "so a replayed callback cannot double-credit.")]
+    s += [table([
+        ["Item", "Rule"],
+        ["Funding rail", "M-Pesa C2C to the operator number"],
+        ["Trading cash", "Credited only after admin confirmation"],
+        ["Live venue cash", "Separate; move funds to the venue and record it"],
+        ["Reconciliation", "M-Pesa statement is the source of truth"],
+        ["Compliance", "KYC, AML, sanctions, tax and licensing remain operator-owned"],
+    ], widths=[38 * mm, 114 * mm])]
+
     # Appendices
     s += [PageBreak(), H1("Appendix A. Page-by-page operator guide")]
     s += [table([

@@ -284,6 +284,57 @@ Incident:
 Not yet done: external penetration test, SSO/MFA, central SIEM, formal SOC 2
 or ISO 27001 certification. Do not claim them.`),
 
+    A("approvals", "Trade approvals and 3/3 admin consensus", "Trading",
+`Every hosted live order is a request, not an execution.
+
+1. POST /api/orders creates status='pending_approval'.
+2. The request is journaled as kind='trade_request'.
+3. Admin approves or rejects in Admin -> Trade approvals.
+4. One approval for a normal order.
+5. A large move requires every active admin. The threshold is
+   ORDER_CONSENSUS_THRESHOLD (default 100000 notional). With three admins that
+   is 3/3.
+6. When the threshold is met, the order is sent to the live venue.
+7. A venue failure sets status='execution_failed'; Retry re-attempts once the
+   threshold is still met.
+8. A rejection closes the request. No paper fallback.
+
+Endpoints:
+  GET  /api/admin/orders/pending
+  POST /api/admin/orders/:id/approve
+  POST /api/admin/orders/:id/reject
+  POST /api/admin/orders/:id/retry
+
+If no venue is configured, approval reaches the venue step and fails with the
+venue error. The request remains visible and auditable.`),
+
+    A("cash", "Cash, M-Pesa C2C and reconciliation", "Trading",
+`Cash is a reconciled view, not an editable number.
+
+Deposit:
+1. Portfolio -> Cash & M-Pesa -> submit amount and the M-Pesa transaction code.
+2. The app creates a cash_movements row with status='pending'.
+3. Send M-Pesa C2C to the configured number (default +254713270444).
+4. Admin -> Cash approvals -> Confirm after checking the statement.
+5. Confirmation credits accounts.cash exactly once. A replayed confirmation
+   returns 409 and cannot double-credit.
+6. Rejection closes the request with a note.
+
+Endpoints:
+  GET  /api/cash/config
+  POST /api/cash/deposit
+  GET  /api/cash/movements
+  GET  /api/admin/cash?status=pending
+  POST /api/admin/cash/:id/confirm
+  POST /api/admin/cash/:id/reject
+  GET  /api/admin/cash/reconcile
+
+Rules:
+- M-Pesa C2C is the funding rail, not a trading venue.
+- Live venue cash is separate; move funds to the venue and record it.
+- The M-Pesa bank statement remains the source of truth.
+- KYC/AML, sanctions, tax and licensing are operator responsibilities.`),
+
     A("hardening", "Hardening baseline (CPIP-informed)", "Security",
 `CPIP- is a report-only external reference. Mafutani does not vendor, depend on,
 or auto-apply it. Its defensive concepts are adopted manually.

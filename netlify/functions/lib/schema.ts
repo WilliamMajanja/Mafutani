@@ -94,9 +94,13 @@ CREATE TABLE IF NOT EXISTS orders (
   mode TEXT NOT NULL DEFAULT 'paper',
   venue_order_id TEXT NOT NULL DEFAULT '',
   client_order_id TEXT NOT NULL DEFAULT '',
+  required_approvals INTEGER NOT NULL DEFAULT 0,
+  approvals_count INTEGER NOT NULL DEFAULT 0,
+  approval_note TEXT NOT NULL DEFAULT '',
   created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 
 CREATE TABLE IF NOT EXISTS exchanges (
   code TEXT PRIMARY KEY,
@@ -265,6 +269,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
+
+CREATE TABLE IF NOT EXISTS cash_movements (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  movement_type TEXT NOT NULL DEFAULT 'deposit',
+  rail TEXT NOT NULL DEFAULT 'mpesa',
+  amount DOUBLE PRECISION NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'KES',
+  external_reference TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  idempotency_key TEXT NOT NULL UNIQUE,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+  confirmed_at BIGINT,
+  confirmed_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cash_user ON cash_movements(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_cash_status ON cash_movements(status, id DESC);
 
 CREATE TABLE IF NOT EXISTS consolidation_bases (
   code TEXT PRIMARY KEY,
