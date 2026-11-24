@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { latestPrice } from "./market";
-import { submitLiveOrder } from "./mt5";
+import { submitLiveOrder, liveConfigured as mt5Configured } from "./mt5";
+import { alpacaConfigured, alpacaCanTrade, alpacaSubmit } from "./alpaca";
 
 export type OrderInput = {
   symbol?: string;
@@ -72,7 +73,28 @@ export async function executeOrder(userId: number, input: OrderInput) {
     const tierRows: any = await db()`
       SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${userId}
     `;
-    const live = await submitLiveOrder(input, !!(tierRows[0] && Number(tierRows[0].live_enabled)));
+    const tierLive = !!(tierRows[0] && Number(tierRows[0].live_enabled));
+    if (!tierLive) throw httpError(403, "this tier does not have live trading enabled");
+    if (input.confirm !== true) throw httpError(428, "live orders require confirm:true");
+
+    let live: any;
+    if (alpacaConfigured() && alpacaCanTrade(symbol)) {
+      const a = await alpacaSubmit({
+        symbol, side, type, qty, price: limitPrice as number | null,
+        client_order_id: input.client_order_id,
+      });
+      live = {
+        venue: "ALPACA", venue_order_id: a.venue_order_id,
+        status: a.status === "filled" ? "filled" : (a.filled_qty > 0 ? "partially_filled" : "open"),
+        filled_qty: a.filled_qty, price: a.price || ref, retcode: null,
+      };
+    } else if (mt5Configured()) {
+      live = await submitLiveOrder(input, tierLive);
+    } else {
+      throw httpError(503,
+        `live venue unavailable for ${symbol}: configure ALPACA_API_KEY/SECRET for equities/crypto or MT5_BRIDGE_URL for other instruments`);
+    }
+
     const orderRows: any = await db()`
       INSERT INTO orders (user_id, symbol, side, type, qty, price, mode, status, venue_order_id, client_order_id)
       VALUES (${userId}, ${symbol}, ${side}, ${type}, ${qty}, ${live.price || ref}, 'live',

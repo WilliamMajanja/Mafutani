@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
   tier TEXT NOT NULL DEFAULT 'Free' REFERENCES tiers(name),
   created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
   disabled INTEGER NOT NULL DEFAULT 0,
@@ -143,9 +144,13 @@ CREATE TABLE IF NOT EXISTS journal (
   symbol TEXT NOT NULL DEFAULT '',
   strategy TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
-  pnl_ref REAL
+  pnl_ref DOUBLE PRECISION,
+  kind TEXT NOT NULL DEFAULT 'note',
+  details_json TEXT NOT NULL DEFAULT '{}',
+  ref_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_journal_user ON journal(user_id);
+CREATE INDEX IF NOT EXISTS idx_journal_user_kind ON journal(user_id, kind, ts DESC);
 
 CREATE TABLE IF NOT EXISTS strategies (
   id SERIAL PRIMARY KEY,

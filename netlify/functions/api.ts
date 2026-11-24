@@ -16,6 +16,8 @@ import { executeOrder, paperEnabled } from "./lib/trading";
 import { runBacktest } from "./lib/backtest";
 import { liveConfigured, liveDisabledReason } from "./lib/mt5";
 import { policies } from "./lib/policies";
+import { logJournal } from "./lib/journal";
+import { alpacaConfigured } from "./lib/alpaca";
 
 const router = new Router();
 
@@ -124,7 +126,7 @@ router.on("POST", "/api/auth/signup", async ({ req }) => {
     const expires = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
     await db()`INSERT INTO sessions (token, user_id, expires_at, csrf_token) VALUES (${token}, ${u.id}, ${expires}, ${csrf})`;
     return json(
-      { token, session_token: token, csrf, csrf_token: csrf, user: { id: u.id, email: u.email, tier: u.tier } },
+      { token, session_token: token, csrf, csrf_token: csrf, user: { id: u.id, email: u.email, display_name: u.display_name, tier: u.tier } },
       201,
       { "Set-Cookie": sessionCookie(token, req) },
     );
@@ -139,7 +141,7 @@ router.on("POST", "/api/auth/login", async ({ req }) => {
     const body = await readBody(req);
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
-    const rows: any = await db()`SELECT id, email, password_hash, tier, disabled FROM users WHERE email = ${email}`;
+    const rows: any = await db()`SELECT id, email, display_name, password_hash, tier, disabled FROM users WHERE email = ${email}`;
     if (rows.length === 0) return error(401, "invalid credentials");
     const u = rows[0];
     if (u.disabled) return error(403, "account disabled");
@@ -150,7 +152,7 @@ router.on("POST", "/api/auth/login", async ({ req }) => {
     await db()`INSERT INTO sessions (token, user_id, expires_at, csrf_token) VALUES (${token}, ${u.id}, ${expires}, ${csrf})`;
     await audit(u.id, "auth.login", u.tier, { email: u.email });
     return json(
-      { token, session_token: token, csrf, csrf_token: csrf, user: { id: u.id, email: u.email, tier: u.tier } },
+      { token, session_token: token, csrf, csrf_token: csrf, user: { id: u.id, email: u.email, display_name: u.display_name, tier: u.tier } },
       200,
       { "Set-Cookie": sessionCookie(token, req) },
     );
@@ -220,6 +222,11 @@ router.on("POST", "/api/ai/analysis", async ({ req }) => {
     ].join("\n");
     const out: any = await chat([{ role: "user", content: prompt }], String(body.model || "claude-haiku-4-5"));
     const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    await logJournal(user.id, {
+      kind: "ai_review", symbol, strategy: "analysis",
+      note: text.slice(0, 2000) || "AI analysis returned no text",
+      details: { model: body.model || "claude-haiku-4-5", analysis: a },
+    });
     return json({ symbol, model: body.model || "claude-haiku-4-5", text, analysis: a });
   } catch (e) {
     return error(502, "AI gateway: " + (e as Error).message);
@@ -260,6 +267,11 @@ router.on("POST", "/api/ai/brief", async ({ req }) => {
     ].join("\n");
     const out: any = await chat([{ role: "user", content: prompt }], "claude-haiku-4-5");
     const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    await logJournal(user.id, {
+      kind: "ai_review", strategy: "desk_brief",
+      note: text.slice(0, 2000) || "AI desk brief returned no text",
+      details: { model: "claude-haiku-4-5", movers: stocks, cash: acct.cash },
+    });
     return json({ email: user.email, model: "claude-haiku-4-5", text, movers: stocks });
   } catch (e) {
     return error(502, "AI gateway: " + (e as Error).message);
@@ -289,6 +301,11 @@ router.on("POST", "/api/ai/strategy", async ({ req }) => {
     ].join("\n");
     const out: any = await chat([{ role: "user", content: prompt }], String(body.model || "claude-haiku-4-5"));
     const text = out?.choices?.[0]?.message?.content || out?.output_text || "";
+    await logJournal(user.id, {
+      kind: "ai_review", symbol, strategy,
+      note: text.slice(0, 2000) || "AI strategy review returned no text",
+      details: { model: body.model || "claude-haiku-4-5", signal: sig, backtest: bt.metrics },
+    });
     return json({ symbol, strategy, model: body.model || "claude-haiku-4-5", text, signal: sig, backtest: bt.metrics });
   } catch (e) {
     return error(502, "AI gateway: " + (e as Error).message);
@@ -307,11 +324,14 @@ router.on("GET", "/api/live/config", async ({ req }) => {
     tierEnabled = !!(rows[0] && Number(rows[0].live_enabled));
   }
   return json({
-    venue: "MT5",
-    configured: liveConfigured(),
-    available: liveConfigured() && tierEnabled,
+    venue: alpacaConfigured() ? "ALPACA" : "MT5",
+    venues: { alpaca: alpacaConfigured(), mt5: liveConfigured() },
+    configured: alpacaConfigured() || liveConfigured(),
+    available: (alpacaConfigured() || liveConfigured()) && tierEnabled,
     tier_enabled: tierEnabled,
-    reason: liveConfigured() ? (tierEnabled ? "" : "live trading is not enabled for this tier") : liveDisabledReason(),
+    reason: (alpacaConfigured() || liveConfigured())
+      ? (tierEnabled ? "" : "live trading is not enabled for this tier")
+      : "ALPACA_API_KEY/SECRET or MT5_BRIDGE_URL is not configured",
   });
 });
 
@@ -393,7 +413,8 @@ router.on("GET", "/api/markets", async () => {
     }
     const SESSIONS: Record<string, { name: string; open: number; close: number }> = {
       AMER: { name: "Americas", open: 13.5, close: 20 },
-      EMEA: { name: "Europe / Middle East / Africa", open: 7, close: 16 },
+      EUROPE: { name: "Europe", open: 7, close: 16.5 },
+      MEA: { name: "Middle East & Africa", open: 5, close: 14 },
       APAC: { name: "Asia-Pacific", open: 0, close: 6.5 },
       GLOBAL: { name: "Global", open: 0, close: 24 },
     };
@@ -499,7 +520,8 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
     const tierLive: any = await db()`
       SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${user.id}
     `;
-    const liveAvailable = liveConfigured() && !!(tierLive[0] && Number(tierLive[0].live_enabled));
+    const anyLive = alpacaConfigured() || liveConfigured();
+    const liveAvailable = anyLive && !!(tierLive[0] && Number(tierLive[0].live_enabled));
 
     // CommCoin value comes from the chain service, not from a hardcoded rate.
     // The chain exposes a reference value (metadata), so it is reported as a
@@ -545,9 +567,10 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
       market_value: Number((marketValue + commcoinValue).toFixed(2)),
       tier: user.tier,
       email: user.email,
+      display_name: user.display_name || "",
       live_trading_enabled: liveAvailable,
-      live_venue: liveAvailable ? "MT5" : null,
-      live_reason: liveAvailable ? "" : (liveDisabledReason() || "live trading is not enabled for this tier"),
+      live_venue: liveAvailable ? (alpacaConfigured() ? "ALPACA" : "MT5") : null,
+      live_reason: liveAvailable ? "" : (anyLive ? "live trading is not enabled for this tier" : "ALPACA_API_KEY/SECRET or MT5_BRIDGE_URL is not configured"),
       paper_enabled: paperEnabled(),
       positions,
       fills,
@@ -584,6 +607,20 @@ router.on("POST", "/api/orders", async ({ req }) => {
     await audit(user.id, "order.place", user.tier, {
       symbol: body.symbol, side: body.side, qty: body.qty, mode: body.mode || "paper",
     });
+    const o: any = result.order || {};
+    await logJournal(user.id, {
+      kind: "trade",
+      symbol: o.symbol || String(body.symbol || "").toUpperCase(),
+      strategy: String(body.strategy || "manual"),
+      note: `${o.side || body.side} ${o.qty || body.qty} ${o.symbol || body.symbol} ${o.status || ""}`.trim(),
+      pnl_ref: null,
+      ref_id: o.id ? `order:${o.id}` : "",
+      details: {
+        order_id: o.id, side: o.side, qty: o.qty, price: (result as any).fill?.price ?? o.price,
+        status: o.status, mode: o.mode, venue_order_id: o.venue_order_id || "",
+        live: !!(result as any).live,
+      },
+    });
     return json(result, 201);
   } catch (e) {
     const err = e as Error & { status?: number };
@@ -609,6 +646,12 @@ router.on("POST", "/api/positions/flatten", async ({ req }) => {
           type: "market",
           qty: Math.abs(qty),
           mode: "paper",
+        });
+        await logJournal(user.id, {
+          kind: "trade", symbol: p.symbol, strategy: "flatten",
+          note: `flatten ${qty > 0 ? "sell" : "buy"} ${Math.abs(qty)} ${p.symbol} ${result.order?.status || ""}`.trim(),
+          ref_id: result.order?.id ? `order:${result.order.id}` : "",
+          details: { order_id: result.order?.id, reason: "flatten_all", mode: "paper" },
         });
         closed.push({ symbol: p.symbol, order_id: result.order?.id });
       } catch (e) {
@@ -765,6 +808,15 @@ router.on("POST", "/api/backtests", async ({ req }) => {
               ${JSON.stringify(result.metrics)}, ${JSON.stringify(result.equity)}, 'done')
       RETURNING *
     `;
+    const m: any = result.metrics;
+    await logJournal(user.id, {
+      kind: "backtest",
+      symbol,
+      strategy,
+      note: `backtest ${strategy} ${symbol}: return ${m.total_return_pct}% · Sharpe ${m.sharpe} · ${m.trades} trades · ${m.significance?.verdict || "unproven"}`,
+      ref_id: `backtest:${rows[0].id}`,
+      details: { metrics: result.metrics, params: result.params, coverage: m.coverage },
+    });
     return json({
       id: rows[0].id,
       backtest: rows[0],
@@ -798,6 +850,89 @@ router.on("GET", "/api/backtests/:id", async ({ req, params }) => {
   } catch (e) { return error(500, (e as Error).message); }
 });
 
+router.on("GET", "/api/universe", async () => {
+  try {
+    const syms: any = await listSymbols(db());
+    const series = await dailySeries(db(), 120);
+    const quotes = await quoteMap(db());
+    const rows: any[] = [];
+    for (const s of syms) {
+      const candles = series.get(s.symbol);
+      if (!candles || candles.length < 20) continue;
+      const a = analyse(candles as Candle[]);
+      const scored = scoreSeries(candles as Candle[]);
+      const q = quotes.get(s.symbol);
+      const last = q?.last == null ? scored.last : Number(q.last);
+      const prev = candles[candles.length - 2]?.close;
+      const chg = prev && last ? ((last - prev) / prev) * 100 : null;
+      const ema21 = (() => {
+        const closes = candles.map((c) => c.close);
+        const k = 2 / 22;
+        let e = closes[0];
+        for (let i = 1; i < closes.length; i++) e = closes[i] * k + e * (1 - k);
+        return e;
+      })();
+      rows.push({
+        symbol: s.symbol, name: s.name, asset_type: s.asset_type, region: s.exchange,
+        last, change_pct: chg, rsi14: a.rsi14, trend: a.trend, score: a.score,
+        vol_ann_pct: a.vol_ann_pct, anomaly_score: a.anomaly_score,
+        above_ema21: last != null && last > ema21,
+        volume: scored.volume,
+      });
+    }
+    const changes = rows.map((r) => r.change_pct).filter((x) => x != null) as number[];
+    const rsis = rows.map((r) => r.rsi14).filter((x) => x != null) as number[];
+    const vols = rows.map((r) => r.vol_ann_pct).filter((x) => x != null) as number[];
+    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    const median = (arr: number[]) => {
+      if (!arr.length) return null;
+      const s = arr.slice().sort((a, b) => a - b);
+      return s[Math.floor(s.length / 2)];
+    };
+    const sd = (arr: number[]) => {
+      if (arr.length < 2) return null;
+      const m = avg(arr)!;
+      return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
+    };
+    const byClass: Record<string, any> = {};
+    for (const r of rows) {
+      const k = r.asset_type || "other";
+      const b = byClass[k] = byClass[k] || { count: 0, up: 0, down: 0, changes: [] as number[], rsis: [] as number[] };
+      b.count += 1;
+      if (r.change_pct > 0) b.up += 1; else if (r.change_pct < 0) b.down += 1;
+      if (r.change_pct != null) b.changes.push(r.change_pct);
+      if (r.rsi14 != null) b.rsis.push(r.rsi14);
+    }
+    const classes = Object.keys(byClass).map((k) => ({
+      asset_type: k, count: byClass[k].count, up: byClass[k].up, down: byClass[k].down,
+      avg_change_pct: avg(byClass[k].changes), avg_rsi: avg(byClass[k].rsis),
+    }));
+    const sorted = rows.filter((r) => r.change_pct != null).sort((a, b) => b.change_pct - a.change_pct);
+    const up = rows.filter((r) => (r.change_pct || 0) > 0).length;
+    const down = rows.filter((r) => (r.change_pct || 0) < 0).length;
+    return json({
+      as_of: new Date().toISOString(),
+      scanned: rows.length,
+      breadth: {
+        up, down, flat: rows.length - up - down,
+        advance_decline: down ? Number((up / down).toFixed(2)) : null,
+        avg_change_pct: avg(changes) == null ? null : Number(avg(changes)!.toFixed(2)),
+        median_change_pct: median(changes) == null ? null : Number(median(changes)!.toFixed(2)),
+        dispersion_pct: sd(changes) == null ? null : Number(sd(changes)!.toFixed(2)),
+        avg_rsi: avg(rsis) == null ? null : Number(avg(rsis)!.toFixed(1)),
+        overbought: rows.filter((r) => (r.rsi14 || 0) >= 70).length,
+        oversold: rows.filter((r) => (r.rsi14 || 0) <= 30).length,
+        above_ema21: rows.filter((r) => r.above_ema21).length,
+        avg_vol_pct: avg(vols) == null ? null : Number(avg(vols)!.toFixed(1)),
+      },
+      classes,
+      gainers: sorted.slice(0, 8),
+      losers: sorted.slice(-8).reverse(),
+      regime: (avg(changes) || 0) > 0 && up > down ? "risk-on" : (avg(changes) || 0) < 0 && down > up ? "risk-off" : "mixed",
+    });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
 router.on("GET", "/api/analysis", async ({ query }) => {
   try {
     const symbol = (query.get("symbol") || "").trim().toUpperCase();
@@ -819,7 +954,7 @@ router.on("GET", "/api/analysis", async ({ query }) => {
 
 router.on("GET", "/api/anomalies", async ({ query }) => {
   try {
-    const showAll = query.get("all") === "1";
+    const showAll = query.get("all") !== "0";
     const syms: any = await listSymbols(db());
     const series = await dailySeries(db(), 120);
     const results: any[] = [];
@@ -946,8 +1081,8 @@ router.on("GET", "/api/me/entitlements", async ({ req }) => {
   const token = getSessionToken(req);
   const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
   if (sess.length === 0) return error(401, "unauthorized");
-  const u: any = await db()`SELECT tier FROM users WHERE id = ${sess[0].user_id}`;
-  return json({ tier: u[0]?.tier || "Free", entitlements: {} });
+  const u: any = await db()`SELECT tier, email, display_name FROM users WHERE id = ${sess[0].user_id}`;
+  return json({ tier: u[0]?.tier || "Free", email: u[0]?.email || "", display_name: u[0]?.display_name || "", entitlements: {} });
 });
 router.on("GET", "/api/policies", async () => json(policies()));
 router.on("GET", "/api/kyc/me", async ({ req }) => {
@@ -1021,6 +1156,12 @@ router.on("POST", "/api/terminal/command", async ({ req }) => {
         const result: any = await executeOrder(user.id, {
           symbol, side: cmd, qty, type: isLimit ? "limit" : "market",
           price, mode: "paper",
+        });
+        await logJournal(user.id, {
+          kind: "trade", symbol, strategy: "terminal",
+          note: `terminal ${cmd} ${qty} ${symbol} ${result.order.status}`,
+          ref_id: result.order.id ? `order:${result.order.id}` : "",
+          details: { order_id: result.order.id, source: "terminal", mode: "paper" },
         });
         return json({ ok: true, output: `order #${result.order.id} ${result.order.status} ${cmd} ${qty} ${symbol}${result.resting ? " (resting)" : ""}`, data: result });
       } catch (e) {
@@ -1204,19 +1345,33 @@ async function adminUser(req: Request) {
 router.on("GET", "/api/admin/overview", async ({ req }) => {
   const gate = await adminUser(req);
   if (gate.error) return gate.error;
-  const [users, accounts, symbols, candles, orders, sessions]: any[] = await Promise.all([
+  const [users, accounts, symbols, candles, orders, sessions, equity]: any[] = await Promise.all([
     db()`SELECT COUNT(*)::int AS n FROM users`,
     db()`SELECT COUNT(*)::int AS n, COALESCE(SUM(cash), 0) AS cash FROM accounts`,
     db()`SELECT COUNT(*)::int AS n FROM symbols WHERE enabled = 1`,
     db()`SELECT COUNT(*)::int AS n FROM candles_1d`,
     db()`SELECT COUNT(*)::int AS n FROM orders`,
     db()`SELECT COUNT(*)::int AS n FROM sessions WHERE expires_at > ${Math.floor(Date.now() / 1000)}`,
+    db()`
+      SELECT COALESCE(SUM(COALESCE(a.cash, 0) + COALESCE(mv.value, 0)), 0) AS equity
+      FROM accounts a
+      LEFT JOIN (
+        SELECT p.user_id, SUM(p.qty * COALESCE(q.last, q.bid, q.ask)) AS value
+        FROM positions p
+        LEFT JOIN LATERAL (
+          SELECT bid, ask, last FROM quotes_l1 WHERE symbol = p.symbol ORDER BY ts DESC LIMIT 1
+        ) q ON TRUE
+        WHERE p.qty <> 0
+        GROUP BY p.user_id
+      ) mv ON mv.user_id = a.user_id
+    `,
   ]);
   return json({
     overview: {
       users: users[0].n,
       accounts: accounts[0].n,
       cash: Number(accounts[0].cash),
+      equity: Number(equity[0].equity),
       symbols: symbols[0].n,
       candles_daily: candles[0].n,
       orders: orders[0].n,
@@ -1267,8 +1422,16 @@ router.on("GET", "/api/admin/users", async ({ req }) => {
   const gate = await adminUser(req);
   if (gate.error) return gate.error;
   const rows: any = await db()`
-    SELECT u.id, u.email, u.tier, u.disabled, u.created_at, u.last_login_ts,
-           COALESCE(a.cash, 0) AS cash
+    SELECT u.id, u.email, u.display_name, u.tier, u.disabled, u.created_at, u.last_login_ts,
+           COALESCE(a.cash, 0) AS cash,
+           COALESCE(a.cash, 0) + COALESCE((
+             SELECT SUM(p.qty * COALESCE(q.last, q.bid, q.ask))
+             FROM positions p
+             LEFT JOIN LATERAL (
+               SELECT bid, ask, last FROM quotes_l1 WHERE symbol = p.symbol ORDER BY ts DESC LIMIT 1
+             ) q ON TRUE
+             WHERE p.user_id = u.id AND p.qty <> 0
+           ), 0) AS equity
     FROM users u LEFT JOIN accounts a ON a.user_id = u.id
     ORDER BY u.id
   `;
@@ -1279,6 +1442,41 @@ router.on("GET", "/api/admin/symbols", async ({ req }) => {
   const gate = await adminUser(req);
   if (gate.error) return gate.error;
   return json({ symbols: await listSymbols(db()) });
+});
+
+router.on("GET", "/api/admin/journal", async ({ req, query }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const userId = parseInt(query.get("user_id") || "0", 10);
+    const kind = (query.get("kind") || "").trim();
+    const symbol = (query.get("symbol") || "").trim().toUpperCase();
+    const limit = Math.min(500, Math.max(1, parseInt(query.get("limit") || "200", 10) || 200));
+    const rows: any = await db()`
+      SELECT j.id, j.user_id, u.email, u.display_name, j.ts, j.symbol, j.strategy,
+             j.note, j.pnl_ref, j.kind, j.ref_id, j.details_json
+      FROM journal j JOIN users u ON u.id = j.user_id
+      WHERE (${userId} = 0 OR j.user_id = ${userId})
+        AND (${kind} = '' OR j.kind = ${kind})
+        AND (${symbol} = '' OR j.symbol = ${symbol})
+      ORDER BY j.ts DESC, j.id DESC
+      LIMIT ${limit}
+    `;
+    const counts: any = await db()`
+      SELECT kind, COUNT(*)::int AS n FROM journal GROUP BY kind ORDER BY n DESC
+    `;
+    const recon: any = await db()`
+      SELECT COUNT(*)::int AS orders,
+             COUNT(*) FILTER (WHERE j.id IS NULL)::int AS missing_journal
+      FROM orders o
+      LEFT JOIN journal j ON j.ref_id = 'order:' || o.id
+    `;
+    return json({
+      entries: rows.map((r: any) => ({ ...r, details: JSON.parse(r.details_json || "{}") })),
+      counts,
+      reconciliation: recon[0] || { orders: 0, missing_journal: 0 },
+    });
+  } catch (e) { return error(500, (e as Error).message); }
 });
 
 router.on("POST", "/api/admin/users/:id/status", async ({ req, params }) => {

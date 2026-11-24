@@ -1,14 +1,14 @@
 import { db } from "./db";
 import { getSessionToken } from "./http";
 
-export type SessionUser = { id: number; email: string; tier: string; csrf_token: string };
+export type SessionUser = { id: number; email: string; display_name: string; tier: string; csrf_token: string };
 
 /** Resolve the caller from a session token, or null when absent/expired. */
 export async function currentUser(req: Request): Promise<SessionUser | null> {
   const token = getSessionToken(req);
   if (!token) return null;
   const rows: any = await db()`
-    SELECT u.id, u.email, u.tier, s.csrf_token
+    SELECT u.id, u.email, u.display_name, u.tier, s.csrf_token
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token = ${token}

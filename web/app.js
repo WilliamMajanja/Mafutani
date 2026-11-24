@@ -75,6 +75,17 @@
     });
   }
 
+  // Human name: explicit display name when set, otherwise the email local
+  // part with separators turned into words (kawal.sun -> Kawal Sun).
+  function displayName(me) {
+    var u = (me && me.user) || me || {};
+    if (u.display_name) return u.display_name;
+    var local = String(u.email || "").split("@")[0] || "";
+    local = local.replace(/[._-]+/g, " ").trim();
+    if (!local) return "user";
+    return local.replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  }
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -110,6 +121,8 @@
       state.me = me;
       var badge = document.getElementById("tier-badge");
       if (badge) badge.textContent = me && me.tier ? me.tier : "";
+      var nameEl = document.getElementById("user-name");
+      if (nameEl) nameEl.textContent = me ? displayName(me) : "";
       var sbTier = document.getElementById("sb-tier");
       if (sbTier) sbTier.textContent = (me && me.tier ? me.tier : "—").toUpperCase();
       if (me && (me.csrf_token || me.csrf)) csrfToken = me.csrf_token || me.csrf;
@@ -975,10 +988,13 @@
     api("GET", "/api/screener").then(function (d) {
       var list = d.results || d.rows || [];
       var items = list.map(function (r) {
-        return { label: r.symbol, value: Math.abs(Number(r.change_pct) || 0) + 0.05, pct: r.change_pct };
+        var pct = Number(r.change_pct) || 0;
+        // Compress the range so a 0.1% mover is still a visible tile, while
+        // larger moves remain larger. Sign is carried by colour, not size.
+        return { label: r.symbol, value: Math.sqrt(Math.abs(pct)) + 0.35, pct: pct };
       });
       document.getElementById("hm-sub").textContent = items.length +
-        " symbols · tile size = absolute session move · color = direction · click tile for chart";
+        " symbols · size = absolute session move · green = up · red = down · click tile for chart";
       try {
         treemap(document.getElementById("hm"), items, function (it) {
           location.hash = "#/chart/" + encodeURIComponent(it.label);
@@ -996,8 +1012,9 @@
       "<label>Asset <select id='f-asset'><option value=''>all</option>" +
       "<option>crypto</option><option>equity</option><option>fx</option><option>commodity</option></select></label>" +
       "<label>Region <select id='f-region'><option value=''>all</option>" +
-      "<option value='AMER'>Americas</option><option value='EMEA'>Europe / Africa</option>" +
-      "<option value='APAC'>Asia-Pacific</option></select></label>" +
+      "<option value='AMER'>Americas</option><option value='EUROPE'>Europe</option>" +
+      "<option value='MEA'>Middle East &amp; Africa</option>" +
+      "<option value='APAC'>Asia-Pacific</option><option value='GLOBAL'>Global</option></select></label>" +
       "<button id='f-go' type='button'>Run</button></div>" +
       "<div class='kpi-l'>click a column to sort · sparklines = last 30 closes · ◉ = anomaly flagged</div><div id='out'></div>";
     var cache = [], sortKey = "score", sortDir = -1;
@@ -1245,7 +1262,50 @@
       "<button id='an-all' type='button'>Analyse all</button>" +
       "<input id='an-q' placeholder='filter' autocomplete='off' " +
       "spellcheck='false' size='10'>" +
-      "</div><div id='an-chart'></div><div id='an-out'></div>";
+      "</div><div id='an-universe' class='card'><p class='kpi-l'>loading universe analytics…</p></div>" +
+      "<div id='an-chart'></div><div id='an-out'></div>";
+    api("GET", "/api/universe").then(function (u) {
+      var host = document.getElementById("an-universe");
+      if (!host) return;
+      var b = u.breadth || {};
+      var cls = (u.classes || []).map(function (c) {
+        return "<tr><td>" + esc(c.asset_type) + "</td><td>" + esc(c.count) + "</td><td>" + esc(c.up) +
+          "</td><td>" + esc(c.down) + "</td><td class='" + ((c.avg_change_pct || 0) >= 0 ? "pos" : "neg") + "'>" +
+          (c.avg_change_pct == null ? "—" : (c.avg_change_pct >= 0 ? "+" : "") + num(c.avg_change_pct, 2) + "%") +
+          "</td><td>" + (c.avg_rsi == null ? "—" : num(c.avg_rsi, 1)) + "</td></tr>";
+      }).join("");
+      var movers = (u.gainers || []).slice(0, 5).concat((u.losers || []).slice(0, 5));
+      var moverRows = movers.map(function (r) {
+        return "<tr><td>" + esc(r.symbol) + "</td><td>" + num(r.last) + "</td><td class='" +
+          ((r.change_pct || 0) >= 0 ? "pos" : "neg") + "'>" +
+          (r.change_pct == null ? "—" : (r.change_pct >= 0 ? "+" : "") + num(r.change_pct, 2) + "%") +
+          "</td><td>" + esc(r.trend || "—") + "</td><td>" + (r.rsi14 == null ? "—" : num(r.rsi14, 1)) +
+          "</td><td>" + esc(r.asset_type) + "</td></tr>";
+      }).join("");
+      host.innerHTML = "<h3>Universe overview</h3>" +
+        "<p class='kpi-l'>" + esc(u.scanned) + " instruments · regime <b>" + esc(u.regime) +
+        "</b> · as of " + esc(u.as_of || "") + "</p>" +
+        "<div class='cards'>" +
+        "<div class='card kpi'><h3>Breadth</h3><div class='kpi-v'><span class='pos'>" + esc(b.up) +
+        "</span> / <span class='neg'>" + esc(b.down) + "</span></div><div class='kpi-l'>up / down · " +
+        esc(b.flat) + " flat</div></div>" +
+        "<div class='card kpi'><h3>Avg change</h3><div class='kpi-v " + ((b.avg_change_pct || 0) >= 0 ? "pos" : "neg") + "'>" +
+        (b.avg_change_pct == null ? "—" : (b.avg_change_pct >= 0 ? "+" : "") + num(b.avg_change_pct, 2) + "%") +
+        "</div><div class='kpi-l'>median " + (b.median_change_pct == null ? "—" : num(b.median_change_pct, 2) + "%") +
+        " · dispersion " + (b.dispersion_pct == null ? "—" : num(b.dispersion_pct, 2) + "%") + "</div></div>" +
+        "<div class='card kpi'><h3>RSI</h3><div class='kpi-v'>" + (b.avg_rsi == null ? "—" : num(b.avg_rsi, 1)) +
+        "</div><div class='kpi-l'>" + esc(b.overbought) + " overbought · " + esc(b.oversold) + " oversold</div></div>" +
+        "<div class='card kpi'><h3>Trend</h3><div class='kpi-v'>" + esc(b.above_ema21) + " / " + esc(u.scanned) +
+        "</div><div class='kpi-l'>above EMA21 · avg vol " + (b.avg_vol_pct == null ? "—" : num(b.avg_vol_pct, 1) + "%") + "</div></div>" +
+        "</div>" +
+        "<div class='grid2'>" +
+        "<div><h4>By asset class</h4><table><thead><tr><th>Class</th><th>N</th><th>Up</th><th>Down</th><th>Avg chg</th><th>Avg RSI</th></tr></thead><tbody>" + cls + "</tbody></table></div>" +
+        "<div><h4>Movers</h4><table><thead><tr><th>Symbol</th><th>Last</th><th>Day</th><th>Trend</th><th>RSI</th><th>Class</th></tr></thead><tbody>" + moverRows + "</tbody></table></div>" +
+        "</div>";
+    }).catch(function (e) {
+      var host = document.getElementById("an-universe");
+      if (host) host.innerHTML = showErr(e);
+    });
     // Sweep the universe: one request instead of one per symbol.
     document.getElementById("an-all").onclick = function () {
       var out = document.getElementById("an-out");
@@ -1373,17 +1433,15 @@
     view().innerHTML = "<h2>Anomaly Radar</h2>" +
       "<div class='kpi-l' id='anm-sub'>scanning…</div>" +
       "<div id='anm-kinds' class='kpi-l'></div>" +
-      "<label style='display:inline-block;margin:8px 0'><input type='checkbox' id='anm-all' checked style='width:auto'> show clean tape (all instruments)</label>" +
+      "<label style='display:inline-block;margin:8px 0'><input type='checkbox' id='anm-all' style='width:auto'> flagged only (hide clean tape)</label>" +
       "<div id='anm-out'></div>";
     function load() {
-      var showAll = document.getElementById("anm-all") && document.getElementById("anm-all").checked;
+      var flaggedOnly = document.getElementById("anm-all") && document.getElementById("anm-all").checked;
       document.getElementById("anm-out").innerHTML = "<p class='kpi-l'>scanning…</p>";
-      api("GET", "/api/anomalies" + (showAll ? "?all=1" : "")).then(function (d) {
+      api("GET", "/api/anomalies").then(function (d) {
         var all = d.results || [];
-        // The server already filters unless all=1; this second gate keeps an
-        // older cached API from showing the clean tape under an unchecked box.
         var list = all.filter(function (r) {
-          return showAll || (Number(r.anomaly_score) || 0) > 0;
+          return !flaggedOnly || (Number(r.anomaly_score) || 0) > 0;
         });
         var bySev = d.by_severity || {};
         var kinds = d.kinds || {};
@@ -3185,10 +3243,11 @@
       api("GET", "/api/admin/users").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/symbols").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/admin/gaps").catch(function (e) { return { gaps: [], error: e.message }; })
+      api("GET", "/api/admin/gaps").catch(function (e) { return { gaps: [], error: e.message }; }),
+      api("GET", "/api/admin/journal?limit=100").catch(function (e) { return { entries: [], error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
-      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {};
       if (ov.error) {
         view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
@@ -3207,14 +3266,15 @@
           return "<option value='" + t + "'" + (u.tier === t ? " selected" : "") + ">" + t + "</option>";
         }).join("");
         return "<tr><td>" + esc(u.id) + "</td><td>" + esc(u.email) + "</td>" +
+          "<td>" + esc(u.display_name || "—") + "</td>" +
           "<td><select data-tier='" + esc(u.id) + "'>" + tiers + "</select></td>" +
-          "<td>" + num(u.cash, 2) + "</td>" +
+          "<td>" + num(u.cash, 2) + "</td><td>" + num(u.equity, 2) + "</td>" +
           "<td>" + (u.disabled ? "<span class='neg'>disabled</span>" : "<span class='pos'>active</span>") + "</td>" +
           "<td>" + esc(u.last_login_ts || "—") + "</td>" +
           "<td><button type='button' data-toggle-user='" + esc(u.id) + "' data-disabled='" + (u.disabled ? "0" : "1") + "'>" +
           (u.disabled ? "Enable" : "Disable") + "</button> " +
           "<button type='button' data-revoke='" + esc(u.id) + "'>Revoke sessions</button></td></tr>";
-      }).join("") || "<tr><td colspan='7' class='dim'>no users</td></tr>";
+      }).join("") || "<tr><td colspan='9' class='dim'>no users</td></tr>";
 
       var syms = symsRes.symbols || [];
       var symRows = syms.map(function (s) {
@@ -3246,7 +3306,7 @@
       view().innerHTML = "<h2>Admin Console</h2>" +
         "<p class='kpi-l'>Operator controls, account management, venue configuration and audit trail.</p>" +
         "<div class='cards'>" + kpis + "</div>" +
-        "<div class='card'><h3>Users</h3><table><thead><tr><th>ID</th><th>Email</th><th>Tier</th><th>Cash</th><th>State</th><th>Last login</th><th>Action</th></tr></thead><tbody>" + userRows + "</tbody></table></div>" +
+        "<div class='card'><h3>Users</h3><table><thead><tr><th>ID</th><th>Email</th><th>Name</th><th>Tier</th><th>Cash</th><th>Equity</th><th>State</th><th>Last login</th><th>Action</th></tr></thead><tbody>" + userRows + "</tbody></table></div>" +
         "<div class='card'><h3>Instruments</h3><table><thead><tr><th>Symbol</th><th>Name</th><th>Class</th><th>Venue</th><th>State</th><th>Action</th></tr></thead><tbody>" + symRows + "</tbody></table></div>" +
         "<div class='grid2'>" +
         "<div class='card'><h3>System readiness</h3><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>" + checkRows + "</tbody></table>" +
@@ -3259,6 +3319,16 @@
         "<p class='kpi-l'>Saved per browser. Applies immediately.</p>" +
         "<h3>Build</h3><p class='kpi-l'>Paper execution live · daily Yahoo history · MT5 bridge required for live orders.</p></div>" +
         "</div>" +
+        "<div class='card'><h3>Trade ledger (all users)</h3>" +
+        "<p class='kpi-l'>orders " + esc(((ledgerRes.reconciliation||{}).orders)||0) +
+        " · missing journal " + esc(((ledgerRes.reconciliation||{}).missing_journal)||0) + "</p>" +
+        "<table><thead><tr><th>Time</th><th>User</th><th>Kind</th><th>Symbol</th><th>Strategy</th><th>Note</th><th>Ref</th></tr></thead><tbody>" +
+        ((ledgerRes.entries || []).map(function (e) {
+          return "<tr><td>" + esc(e.ts) + "</td><td>" + esc(e.email) + "</td><td>" + esc(e.kind) +
+            "</td><td>" + esc(e.symbol) + "</td><td>" + esc(e.strategy) + "</td><td>" + esc((e.note || "").slice(0, 120)) +
+            "</td><td>" + esc(e.ref_id || "") + "</td></tr>";
+        }).join("") || "<tr><td colspan='7' class='dim'>no journal entries</td></tr>") +
+        "</tbody></table></div>" +
         "<div class='card'><h3>Risk & gap register</h3><table><thead><tr><th>Area</th><th>Severity</th><th>Status</th><th>Owner</th><th>Detail</th></tr></thead><tbody>" +
         ((gapsRes.gaps || []).map(function (g) {
           var cls = g.status === "open" ? "neg" : (g.status === "configured" || g.status === "closed" ? "pos" : "dim");
@@ -3583,7 +3653,7 @@
             err.classList.add("visible");
             return; 
           }
-          toast("Welcome back, " + (me.user ? me.user.email : "user") + "!", "success");
+          toast("Welcome back, " + displayName(me) + "!", "success");
           location.hash = "#/dashboard"; router();
         })
         .catch(function (e) {
@@ -3617,7 +3687,7 @@
             err.classList.add("visible");
             return; 
           }
-          toast("Account created! Welcome to Mafutani.", "success");
+          toast("Welcome, " + displayName(me) + "!", "success");
           location.hash = "#/dashboard"; router();
         })
         .catch(function (e) {

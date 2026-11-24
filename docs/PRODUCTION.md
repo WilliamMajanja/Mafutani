@@ -107,3 +107,30 @@ the MT5 bridge is configured.
 architecture, page-by-page operations, risk, chain operations, security,
 investor reporting, the CBK DhowCSD/bond blueprint, and the zero-dependency
 broker adapter blueprint.
+
+## 8. Live venue routing (Option B: Alpaca + MT5)
+
+Hosted live orders route by instrument:
+
+| Instrument | Venue | Environment |
+| --- | --- | --- |
+| US equities (AAPL, MSFT, NVDA, ...) | Alpaca | `ALPACA_API_KEY`, `ALPACA_API_SECRET` |
+| Crypto (BTCUSD, ETHUSD, SOLUSD, XRPUSD) | Alpaca | same keys |
+| FX, metals, energy, indices | MT5 | `MT5_BRIDGE_URL`, `MT5_BRIDGE_TOKEN` |
+
+Alpaca base URL defaults to `https://api.alpaca.markets` (live) and must be
+HTTPS. Set `ALPACA_BASE_URL` only to point at a different live host. The adapter
+maps `BTCUSD` -> `BTC/USD` and submits market/limit orders; fills are taken from
+Alpaca's order response.
+
+Instruments with no adapter (non-US indices, futures such as US10Y, and
+commodities when MT5 is absent) are rejected with an explicit venue error. They
+are never routed to a simulated venue.
+
+## 9. Journal and reconciliation
+
+Every order path writes a `journal` row with `kind='trade'` and
+`ref_id='order:<id>'`; backtests, AI reviews, and anomaly reviews are logged too.
+Admin -> Trade ledger shows all users, and `/api/admin/journal` returns a
+reconciliation count of orders missing a journal row. Backfill was run for
+existing orders and backtests.

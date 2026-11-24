@@ -47,10 +47,10 @@ function treemap(canvas, items, onTile) {
   }
   var total = list.reduce(function (a, d) { return a + d.value; }, 0);
   function color(p) {
-    if (p == null || !isFinite(p)) return "#16232c";
-    var a = Math.min(1, Math.abs(p) / 3);
-    if (p >= 0) return "rgba(43,255,163," + (0.12 + 0.65 * a).toFixed(2) + ")";
-    return "rgba(255,84,112," + (0.12 + 0.65 * a).toFixed(2) + ")";
+    if (p == null || !isFinite(p)) return "#24343d";
+    var a = Math.min(1, Math.abs(p) / 4);
+    if (p >= 0) return "rgba(34,197,94," + (0.45 + 0.5 * a).toFixed(2) + ")";
+    return "rgba(239,68,68," + (0.45 + 0.5 * a).toFixed(2) + ")";
   }
   var rects = [];
   (function layout(sub, x, y, w, h, horiz) {
@@ -91,13 +91,14 @@ function treemap(canvas, items, onTile) {
     ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
     ctx.strokeStyle = "#04070a";
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
-    if (r.w > 44 && r.h > 30) {
-      ctx.fillStyle = "#e8f2f7";
-      ctx.fillText(String(r.item.label).slice(0, 10), r.x + 5, r.y + 15);
-      if (r.item.pct != null && isFinite(r.item.pct) && r.h > 44) {
+    if (r.w > 26 && r.h > 16) {
+      ctx.fillStyle = "#f4fffa";
+      ctx.font = (r.w > 54 && r.h > 34 ? "11px" : "9px") + " ui-monospace,monospace";
+      ctx.fillText(String(r.item.label).slice(0, 10), r.x + 4, r.y + 12);
+      if (r.item.pct != null && isFinite(r.item.pct) && r.h > 40 && r.w > 52) {
         var s = (r.item.pct >= 0 ? "+" : "") + r.item.pct.toFixed(2) + "%";
-        ctx.fillStyle = r.item.pct >= 0 ? "#06351f" : "#4d0f1c";
-        ctx.fillText(s, r.x + 5, r.y + 29);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(s, r.x + 4, r.y + 26);
       }
     }
   });
