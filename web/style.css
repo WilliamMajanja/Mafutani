@@ -978,3 +978,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .base-card { min-width: 240px; max-width: 320px; flex: 1 1 240px; }
 .base-card .tag { margin-left: 6px; }
 #mk-base-filter { margin: 6px 0 10px; }
+
+/* ---- wiki ---- */
+.wiki-link {
+  display: block; width: 100%; text-align: left; margin: 3px 0;
+  background: var(--panel2); border: 1px solid var(--line);
+  color: var(--txt); font-family: var(--sans); font-size: 12px;
+  letter-spacing: 0; text-transform: none; padding: 7px 8px;
+}
+.wiki-link:hover { border-color: var(--accent); background: var(--panel3); }
+#wiki-body h3 { margin-top: 0; }

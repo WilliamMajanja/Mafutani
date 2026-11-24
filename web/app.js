@@ -3153,14 +3153,17 @@
 
 
   function pagePolicies() {
-    view().innerHTML = "<h2>Policies</h2><p class='kpi-l'>Loading…</p>";
+    hideLogin();
+    view().innerHTML = "<h2>Policies & Wiki</h2><p class='kpi-l'>Loading policy set and operator wiki…</p>";
     api("GET", "/api/policies").then(function (r) {
       var sum = r.summary || {};
       var caveats = r.caveats || [];
+      var wiki = r.wiki || [];
       var badges = Object.keys(sum).map(function (k) { return "<span class='badge'>" + esc(k.replace(/_/g," ")) + ": " + esc(typeof sum[k] === 'string' ? sum[k] : String(sum[k])) + "</span>"; }).join(" ");
       var caveatHtml = caveats.length ? "<ul style='margin:6px 0 0 18px'>" + caveats.map(function(c){ return "<li>" + esc(c) + "</li>"; }).join("") + "</ul>" : "";
       var doc = esc(r.document || "See docs/POLICIES.md").replace(/\n/g, "<br>");
-      view().innerHTML = "<h2>Policies & Risk Disclosures</h2>" +
+      var cats = ["all"].concat(Array.from(new Set(wiki.map(function (a) { return a.category; }))).sort());
+      view().innerHTML = "<h2>Policies & Wiki</h2>" +
         "<div class='warn' style='margin:8px 0;padding:10px;border:1px solid #b45309;background:#1f1300'>" +
         "<b>EXPERIMENTAL / UNAUDITED — NOT HARDENED OR CERTIFIED FOR ALL INDUSTRIES OR DISCIPLINES.</b><br>" +
         "Not financial, investment, legal, tax, or real-estate/title advice. No guaranteed security, consensus correctness, value, liquidity, settlement, or compliance. " +
@@ -3170,7 +3173,43 @@
         "Production reliance requires independent audits, formal/threat modeling, adversarial/fuzz/fork-stall testing, vetted standardized PQC migration with versioned test vectors, and operator compliance/custody controls." +
         caveatHtml + "</div>" +
         "<div class='kpi-row' style='flex-wrap:wrap;gap:6px;margin:8px 0'>" + badges + "</div>" +
-        "<h3>Full Policy</h3><div class='card' style='max-height:60vh;overflow:auto;font-size:13px;line-height:1.45'>" + doc + "</div>";
+        "<h3>Policy document</h3><div class='card' style='max-height:45vh;overflow:auto;font-size:13px;line-height:1.45'>" + doc + "</div>" +
+        "<h3>Operator wiki</h3>" +
+        "<div class='card'><div class='row'>" +
+        "<label>Search <input id='wiki-q' placeholder='login, MT5, P&L, 403…' autocomplete='off'></label>" +
+        "<label>Category <select id='wiki-cat'>" + cats.map(function (c) { return "<option value='" + esc(c) + "'>" + esc(c) + "</option>"; }).join("") + "</select></label>" +
+        "<span class='kpi-l' id='wiki-count'>" + wiki.length + " articles</span></div>" +
+        "<div class='grid2'><div id='wiki-list' style='max-height:55vh;overflow:auto'></div>" +
+        "<div id='wiki-body' class='card' style='max-height:55vh;overflow:auto;font-size:13px;line-height:1.5'></div></div></div>";
+
+      function show(slug) {
+        var a = wiki.filter(function (x) { return x.slug === slug; })[0];
+        if (!a) return;
+        document.getElementById("wiki-body").innerHTML = "<h3>" + esc(a.title) +
+          "</h3><p class='kpi-l'>" + esc(a.category) + "</p><div style='white-space:pre-wrap'>" +
+          esc(a.body) + "</div>";
+      }
+      function list() {
+        var q = (document.getElementById("wiki-q").value || "").toLowerCase();
+        var cat = document.getElementById("wiki-cat").value;
+        var items = wiki.filter(function (a) {
+          if (cat !== "all" && a.category !== cat) return false;
+          if (!q) return true;
+          return (a.title + " " + a.category + " " + a.body).toLowerCase().indexOf(q) >= 0;
+        });
+        document.getElementById("wiki-count").textContent = items.length + " article(s)";
+        document.getElementById("wiki-list").innerHTML = items.map(function (a) {
+          return "<button type='button' class='wiki-link' data-wiki='" + esc(a.slug) + "'>" +
+            esc(a.title) + "<br><span class='kpi-l'>" + esc(a.category) + "</span></button>";
+        }).join("") || "<p class='kpi-l'>no matches</p>";
+        view().querySelectorAll("[data-wiki]").forEach(function (b) {
+          b.onclick = function () { show(b.getAttribute("data-wiki")); };
+        });
+      }
+      document.getElementById("wiki-q").oninput = list;
+      document.getElementById("wiki-cat").onchange = list;
+      list();
+      if (wiki.length) show(wiki[0].slug);
     }).catch(function (e) { view().innerHTML = "<h2>Policies</h2><p class='error'>" + esc(e.message) + "</p>"; });
   }
 

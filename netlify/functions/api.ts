@@ -16,6 +16,7 @@ import { executeOrder, paperEnabled } from "./lib/trading";
 import { runBacktest } from "./lib/backtest";
 import { liveConfigured, liveDisabledReason } from "./lib/mt5";
 import { policies } from "./lib/policies";
+import { wikiArticles } from "./lib/wiki";
 import { logJournal } from "./lib/journal";
 import { alpacaConfigured } from "./lib/alpaca";
 
@@ -1093,7 +1094,7 @@ router.on("GET", "/api/me/entitlements", async ({ req }) => {
   const u: any = await db()`SELECT tier, email, display_name FROM users WHERE id = ${sess[0].user_id}`;
   return json({ tier: u[0]?.tier || "Free", email: u[0]?.email || "", display_name: u[0]?.display_name || "", entitlements: {} });
 });
-router.on("GET", "/api/policies", async () => json(policies()));
+router.on("GET", "/api/policies", async () => json({ ...policies(), wiki: wikiArticles() }));
 router.on("GET", "/api/kyc/me", async ({ req }) => {
   const token = getSessionToken(req);
   const sess: any = await db()`SELECT user_id FROM sessions WHERE token = ${token} AND expires_at > ${Math.floor(Date.now()/1000)}`;
