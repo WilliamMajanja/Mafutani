@@ -32,6 +32,8 @@ export function sessionCookie(token: string, req: Request, maxAgeSeconds = 7 * 2
 }
 
 export async function readBody(req: Request): Promise<any> {
+  const len = Number(req.headers.get("content-length") || 0);
+  if (len > 1_000_000) throw new Error("request body too large (max 1 MB)");
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     try { return await req.json(); } catch { return {}; }

@@ -284,6 +284,39 @@ Incident:
 Not yet done: external penetration test, SSO/MFA, central SIEM, formal SOC 2
 or ISO 27001 certification. Do not claim them.`),
 
+    A("hardening", "Hardening baseline (CPIP-informed)", "Security",
+`CPIP- is a report-only external reference. Mafutani does not vendor, depend on,
+or auto-apply it. Its defensive concepts are adopted manually.
+
+Hosted hardening baseline (Admin -> Hardening baseline; /api/admin/hardening):
+H-01 live-only hosted; paper rejected
+H-02 ADMIN_SETUP_TOKEN on setup endpoints
+H-03 env bootstrap admins; demo accounts removed
+H-04 Admin tier on every admin route
+H-05 per-user session revocation
+H-06 TOTP/SSO — FAIL, not implemented in the Netlify port
+H-07 audit_log for auth/orders/admin/bridge tests
+H-08 journal for trades, backtests, AI reviews, UX errors
+H-09 HTTPS, HSTS, CSP, frame-deny, nosniff, referrer policy
+H-10 live bridge tokens only over HTTPS
+H-11 edge rate limit — PARTIAL, per isolate
+H-12 request body limit — 1 MB at the function boundary
+H-13 live venue — FAIL until Alpaca/MT5 credentials
+H-14 chain service — FAIL until CHAIN_API_URL
+H-15 external penetration test — MANUAL
+H-16 KYC/AML/sanctions — MANUAL
+H-17 backup/restore test — MANUAL
+H-18 data provenance and partial-bar flag — PASS
+
+Next actions: TOTP/SSO, shared rate-limit store, live venue, chain service,
+penetration test, KYC/AML program, restore drill.
+
+Verification:
+  curl -sI https://mafutani.org/ | grep -Ei 'content-security|x-frame|strict-transport'
+  curl -s https://mafutani.org/api/admin/hardening -H "X-Session: $TOKEN"
+
+This is a control checklist, not a certification or guarantee.`),
+
     A("errors", "Troubleshooting: HTTP status codes", "Troubleshooting",
 `400 bad input: read the message; symbol/side/qty/price validation.
 401 unauthorized: missing or expired session. Log in again.

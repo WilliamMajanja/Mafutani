@@ -148,3 +148,22 @@ From `MAFUTANI_BLOCK_REWARD_FORK_HEIGHT` (default **4**), each block carries one
 This is a hard fork. Every node must upgrade before mining a block at or above
 the fork height. Old nodes reject the reward transaction. Existing blocks are
 unchanged; height 4 was mined and credited 500 MFT to the Pi operator wallet.
+
+## 11. CommCoin hosted bridge (current deployment)
+
+The Pi chain is proxied through a Cloudflare quick tunnel for evaluation:
+
+- `CHAIN_API_URL` points at the tunnel origin
+- `CHAIN_API_TOKEN` matches `MAFUTANI_CHAIN_SERVICE_TOKEN` in
+  `~/.config/systemd/user/mafutani.service`
+- The Python chain accepts `X-Mafutani-Token` + `X-Mafutani-User` on
+  `/api/chain/*` only, creates a chain identity for the hosted email, and skips
+  CSRF for that signed proxy path.
+
+Quick tunnels are **not durable**: the hostname changes when cloudflared
+restarts. For production, use a named Cloudflare tunnel on a stable hostname,
+or deploy the Python service with TLS on Render/Railway/Fly and update
+`CHAIN_API_URL`.
+
+Verified through the hosted site: chain info 200, wallet creation, and a mined
+block at height 5 credited 500 MFT to the hosted user's chain wallet.

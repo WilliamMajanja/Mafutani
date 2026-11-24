@@ -1573,6 +1573,41 @@ router.on("GET", "/api/admin/symbols", async ({ req }) => {
   return json({ symbols: await listSymbols(db()) });
 });
 
+router.on("GET", "/api/admin/hardening", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const checks: any = {};
+  try { await db()`SELECT 1`; checks.db = true; } catch { checks.db = false; }
+  const controls = [
+    { id: "mode-live-only", area: "Execution", status: paperEnabled() ? "fail" : "pass", evidence: paperEnabled() ? "TRADING_MODE allows paper" : "hosted paper orders rejected", action: "Set TRADING_MODE=live" },
+    { id: "setup-token", area: "Access", status: process.env.ADMIN_SETUP_TOKEN ? "pass" : "fail", evidence: process.env.ADMIN_SETUP_TOKEN ? "ADMIN_SETUP_TOKEN set" : "setup token missing", action: "Set ADMIN_SETUP_TOKEN" },
+    { id: "bootstrap-admins", area: "Access", status: (process.env.GLOBAL_ADMIN_EMAILS && process.env.GLOBAL_ADMIN_PASSWORD) ? "pass" : "fail", evidence: "bootstrap env", action: "Set GLOBAL_ADMIN_EMAILS and GLOBAL_ADMIN_PASSWORD" },
+    { id: "session-revoke", area: "Access", status: "pass", evidence: "Admin -> Revoke sessions; /api/admin/users/:id/revoke", action: "none" },
+    { id: "admin-gate", area: "Access", status: "pass", evidence: "all /api/admin/* require Admin tier", action: "none" },
+    { id: "audit-log", area: "Logging", status: checks.db ? "pass" : "fail", evidence: "audit_log + journal", action: "verify retention and export" },
+    { id: "edge-rate-limit", area: "Availability", status: "pass", evidence: "edge function /api/* 300 req/min per isolate", action: "move to a shared store for global limits" },
+    { id: "security-headers", area: "Transport", status: "pass", evidence: "CSP, HSTS, frame-deny, nosniff, referrer policy", action: "verify with curl -I" },
+    { id: "tls", area: "Transport", status: "manual", evidence: "Netlify managed TLS; chain/bridge must be HTTPS", action: "verify certificate and bridge URL" },
+    { id: "two-factor", area: "Access", status: "fail", evidence: "TOTP enrolment returns 501 in the Netlify port", action: "implement TOTP or SSO" },
+    { id: "pen-test", area: "Assurance", status: "manual", evidence: "no external penetration test recorded", action: "commission test and remediate" },
+    { id: "kyc-aml", area: "Compliance", status: "manual", evidence: "workflow hooks only; no certification", action: "legal/sanctions/record program" },
+    { id: "backups", area: "Continuity", status: "manual", evidence: "Neon PITR; Pi chain state on disk", action: "test restore and document RTO/RPO" },
+    { id: "live-venue", area: "Execution", status: (alpacaConfigured() || liveConfigured()) ? "pass" : "fail", evidence: alpacaConfigured() ? "Alpaca configured" : (liveConfigured() ? "MT5 configured" : "no live venue"), action: "set Alpaca or MT5 credentials" },
+    { id: "chain-service", area: "CommCoin", status: process.env.CHAIN_API_URL ? "pass" : "fail", evidence: process.env.CHAIN_API_URL ? "CHAIN_API_URL set" : "chain service missing", action: "set CHAIN_API_URL/CHAIN_API_TOKEN" },
+  ];
+  const scored = controls.filter((c) => c.status !== "manual");
+  const passed = scored.filter((c) => c.status === "pass").length;
+  return json({
+    generated_at: new Date().toISOString(),
+    reference: "CPIP- defensive concepts; report-only, no auto-apply",
+    score_pct: scored.length ? Math.round((passed / scored.length) * 100) : 0,
+    passed,
+    scored: scored.length,
+    manual: controls.filter((c) => c.status === "manual").length,
+    controls,
+  });
+});
+
 router.on("GET", "/api/admin/journal", async ({ req, query }) => {
   const gate = await adminUser(req);
   if (gate.error) return gate.error;

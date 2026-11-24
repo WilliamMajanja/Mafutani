@@ -3437,10 +3437,11 @@
       api("GET", "/api/symbols").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/admin/gaps").catch(function (e) { return { gaps: [], error: e.message }; }),
-      api("GET", "/api/admin/journal?limit=100").catch(function (e) { return { entries: [], error: e.message }; })
+      api("GET", "/api/admin/journal?limit=100").catch(function (e) { return { entries: [], error: e.message }; }),
+      api("GET", "/api/admin/hardening").catch(function (e) { return { controls: [], error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
-      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {}, hardRes = res[8] || {};
       if (ov.error) {
         view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
@@ -3522,6 +3523,19 @@
             "</td><td>" + esc(e.ref_id || "") + "</td></tr>";
         }).join("") || "<tr><td colspan='7' class='dim'>no journal entries</td></tr>") +
         "</tbody></table></div>" +
+        "<div class='card'><h3>Hardening baseline</h3>" +
+        "<p class='kpi-l'>CPIP-informed defensive controls · report-only reference · score " +
+        esc(hardRes.score_pct == null ? "—" : hardRes.score_pct + "%") + " (" +
+        esc(hardRes.passed || 0) + "/" + esc(hardRes.scored || 0) + " scored, " +
+        esc(hardRes.manual || 0) + " manual)</p>" +
+        "<div style='height:8px;background:var(--panel3);border-radius:2px;overflow:hidden;margin:6px 0'>" +
+        "<div style='height:100%;width:" + Math.min(100, Number(hardRes.score_pct) || 0) + "%;background:var(--up)'></div></div>" +
+        "<table><thead><tr><th>Control</th><th>Area</th><th>Status</th><th>Evidence</th><th>Action</th></tr></thead><tbody>" +
+        ((hardRes.controls || []).map(function (c) {
+          var cls = c.status === "pass" ? "pos" : (c.status === "fail" ? "neg" : "dim");
+          return "<tr><td>" + esc(c.id) + "</td><td>" + esc(c.area) + "</td><td class='" + cls + "'>" + esc(c.status) +
+            "</td><td>" + esc(c.evidence) + "</td><td>" + esc(c.action) + "</td></tr>";
+        }).join("") || "<tr><td colspan='5' class='dim'>no baseline</td></tr>") + "</tbody></table></div>" +
         "<div class='card'><h3>Risk & gap register</h3><table><thead><tr><th>Area</th><th>Severity</th><th>Status</th><th>Owner</th><th>Detail</th></tr></thead><tbody>" +
         ((gapsRes.gaps || []).map(function (g) {
           var cls = g.status === "open" ? "neg" : (g.status === "configured" || g.status === "closed" ? "pos" : "dim");
