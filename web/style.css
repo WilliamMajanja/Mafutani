@@ -299,7 +299,7 @@ a { color: var(--accent); }
 /* ---- better mobile ---- */
 @media (max-width: 600px) {
   #topbar { padding: 6px 10px; flex-direction: column; align-items: stretch; gap: 6px; }
-  #nav { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+  #nav { flex-wrap: wrap; }
   #nav a { padding: 4px 6px; font-size: 11px; white-space: nowrap; }
   #userbox { margin-left: 0; justify-content: space-between; flex-wrap: wrap; }
   #login-section { margin: 24px 12px; padding: 20px 18px; max-width: calc(100% - 24px); }
@@ -933,8 +933,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 #nav {
   display: flex; flex-wrap: nowrap; gap: 2px; align-items: center;
   padding: 2px; border: 1px solid var(--line); border-radius: 4px;
-  background: rgba(4, 7, 10, 0.6); overflow-x: auto; scrollbar-width: none;
-  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+  background: rgba(4, 7, 10, 0.6); flex-wrap: wrap; overflow: visible;
 }
 #nav::-webkit-scrollbar { display: none; }
 #nav > a, #nav-more > summary {

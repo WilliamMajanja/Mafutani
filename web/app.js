@@ -1511,11 +1511,20 @@
       "<label><input type='checkbox' id='ov-vw' checked style='width:auto'> VWAP</label>" +
       "<label><input type='checkbox' id='ov-bb' style='width:auto'> Bollinger(20)</label>" +
       "<label><input type='checkbox' id='ov-rsi' checked style='width:auto'> RSI(14)</label>" +
+      "<label><input type='checkbox' id='ov-vol' checked style='width:auto'> Volume</label>" +
+      "<label><input type='checkbox' id='ov-macd' checked style='width:auto'> MACD</label>" +
+      "<label><input type='checkbox' id='ov-atr' style='width:auto'> ATR</label>" +
+      "<label><input type='checkbox' id='ov-dd' style='width:auto'> Drawdown</label>" +
       "<label>TF <select id='c-tf'><option value='1m'>1m</option>" +
       "<option value='1d'>1d</option></select></label>" +
       "<label>Limit <input id='c-lim' type='number' value='200' style='width:90px'></label>" +
       "<button id='c-go' type='button'>Reload</button></div>" +
-      "<canvas class='chart' id='cv'></canvas><canvas class='rsi' id='rsi' style='margin-top:8px'></canvas>" +
+      "<canvas class='chart' id='cv'></canvas>" +
+      "<canvas class='rsi' id='rsi' style='margin-top:8px'></canvas>" +
+      "<canvas class='rsi' id='vol' style='margin-top:8px'></canvas>" +
+      "<canvas class='rsi' id='macd' style='margin-top:8px'></canvas>" +
+      "<canvas class='rsi' id='atr' style='margin-top:8px'></canvas>" +
+      "<canvas class='rsi' id='dd' style='margin-top:8px'></canvas>" +
       "<div id='cerr'></div><h3>News — " + esc(sym) + "</h3><div id='cnews' class='kpi-l'>loading…</div>";
     var closes = [], vols = [], raw = [], reg = null, posCtx = null;
 
@@ -1604,13 +1613,18 @@
       try {
         drawCandles(document.getElementById("cv"), raw, e9, e21, vw,
           { title: sym, bands: bands, regime: reg, position: posCtx });
-        if (document.getElementById("ov-rsi").checked) {
-          document.getElementById("rsi").style.display = "";
-          try { drawRSI(document.getElementById("rsi"), raw); }
-          catch (e) { /* rsi optional */ }
-        } else {
-          document.getElementById("rsi").style.display = "none";
+        function panel(id, on, fn) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (!on) { el.style.display = "none"; return; }
+          el.style.display = "";
+          try { fn(el); } catch (e) { /* panel optional */ }
         }
+        panel("rsi", document.getElementById("ov-rsi").checked, function (el) { drawRSI(el, raw); });
+        panel("vol", document.getElementById("ov-vol").checked, function (el) { drawVolume(el, raw); });
+        panel("macd", document.getElementById("ov-macd").checked, function (el) { drawMACD(el, closes); });
+        panel("atr", document.getElementById("ov-atr").checked, function (el) { drawATR(el, raw); });
+        panel("dd", document.getElementById("ov-dd").checked, function (el) { drawDrawdown(el, closes); });
       } catch (e) { document.getElementById("cerr").innerHTML = showErr(e); }
     }
     function load() {
@@ -1712,7 +1726,7 @@
             });
         }).catch(function (e) { document.getElementById("cerr").innerHTML = showErr(e); });
     }
-    ["ov-e9", "ov-e21", "ov-vw", "ov-bb", "ov-rsi"].forEach(function (id) {
+    ["ov-e9", "ov-e21", "ov-vw", "ov-bb", "ov-rsi", "ov-vol", "ov-macd", "ov-atr", "ov-dd"].forEach(function (id) {
       document.getElementById(id).onchange = render;
     });
     document.getElementById("c-go").onclick = load;
@@ -3805,7 +3819,13 @@
     }
     var more = document.getElementById("nav-more");
     if (more) {
-      view().addEventListener("click", function () { more.removeAttribute("open"); });
+      // Close after choosing a destination, and on any outside click.
+      more.querySelectorAll("a").forEach(function (a) {
+        a.addEventListener("click", function () { more.removeAttribute("open"); });
+      });
+      document.addEventListener("click", function (e) {
+        if (!more.contains(e.target)) more.removeAttribute("open");
+      });
     }
   } catch (e) { /* terminal/palette are decorative; never break boot */ }
   tickClock();

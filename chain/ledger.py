@@ -129,6 +129,20 @@ def make_seed_tx(epoch, recipient_address, memo="epoch seed"):
     }
 
 
+def make_block_reward_tx(height, epoch, recipient_address):
+    """Coinbase-style subsidy tx for a block height. Pays to the miner."""
+    reward = consensus.block_reward(height)
+    if reward <= 0:
+        raise ConsensusError("no block reward at height %s" % height)
+    return {
+        "type": consensus.BLOCK_REWARD_TX_TYPE,
+        "epoch": int(epoch),
+        "inputs": [],
+        "outputs": [make_output(recipient_address, reward, int(epoch))],
+        "memo": "block reward",
+    }
+
+
 def block_header_bytes(block):
     v = int(block.get("v", 1))
     obj = {
@@ -356,7 +370,7 @@ class Chain(object):
             raise
         return bh
 
-    def validate_tx(self, tx, current_epoch, height, block_has_seed=False):
+    def validate_tx(self, tx, current_epoch, height, block_has_seed=False, block_has_reward=False):
         ttype = tx.get("type", "transfer")
         outputs = tx.get("outputs") or []
         inputs = tx.get("inputs") or []
@@ -404,6 +418,20 @@ class Chain(object):
                 raise ConsensusError("seed tx amount must equal EPOCH_REWARD")
             if self.has_seed_for_epoch(current_epoch) or block_has_seed:
                 raise ConsensusError("seed tx already issued for epoch")
+            return 0, out_sum
+
+        if ttype == consensus.BLOCK_REWARD_TX_TYPE:
+            if inputs:
+                raise ConsensusError("block reward tx must not have inputs")
+            if int(tx.get("epoch", -1)) != int(current_epoch):
+                raise ConsensusError("block reward epoch mismatch")
+            reward = consensus.block_reward(height)
+            if reward <= 0:
+                raise ConsensusError("block reward not active at height %s" % height)
+            if out_sum != reward:
+                raise ConsensusError("block reward must equal %s base units" % reward)
+            if block_has_reward:
+                raise ConsensusError("multiple block reward txs in block")
             return 0, out_sum
 
         # transfer
@@ -476,10 +504,14 @@ class Chain(object):
             raise ConsensusError("PoW target not met")
         # validate txs
         block_has_seed = False
+        block_has_reward = False
         for tx in txs:
-            self.validate_tx(tx, epoch, h, block_has_seed=block_has_seed)
+            self.validate_tx(tx, epoch, h, block_has_seed=block_has_seed,
+                             block_has_reward=block_has_reward)
             if tx.get("type") == consensus.SEED_TX_TYPE:
                 block_has_seed = True
+            if tx.get("type") == consensus.BLOCK_REWARD_TX_TYPE:
+                block_has_reward = True
         return True
 
     def add_block(self, block):
@@ -528,6 +560,9 @@ class Chain(object):
             "reference_value_note": consensus.REFERENCE_VALUE_NOTE,
             "epoch_reward_mft": str(consensus.EPOCH_REWARD // consensus.COIN),
             "epoch_reward": str(consensus.EPOCH_REWARD // consensus.COIN),
+            "block_reward_mft": str(consensus.block_reward(int(self.tip()["height"]) + 1) // consensus.COIN),
+            "block_reward_fork_height": consensus.BLOCK_REWARD_FORK_HEIGHT,
+            "block_reward_halving_blocks": consensus.BLOCK_REWARD_HALVING_INTERVAL,
             "token_lifetime_epochs": consensus.TOKEN_LIFETIME_EPOCHS,
             "pqc": pqc.SIG_ALG,
         }

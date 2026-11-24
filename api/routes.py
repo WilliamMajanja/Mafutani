@@ -10,8 +10,10 @@ All engine imports are lazy with fallbacks so the server boots even if
 engines/ is absent.
 """
 
+import hmac
 import json
 import os
+import secrets
 import time
 import threading
 import urllib.parse
@@ -2088,7 +2090,46 @@ class Router:
             return _err(h, "markets failed: {}".format(e), 500)
 
     # -- auth helpers --------------------------------------------------
+    def _is_service_chain(self, h):
+        """True when a trusted hosting proxy calls a chain route with the
+        shared service token. Scope is deliberately chain paths only."""
+        expected = os.environ.get("MAFUTANI_CHAIN_SERVICE_TOKEN", "")
+        if not expected:
+            return False
+        path = urllib.parse.urlsplit(getattr(h, "path", "")).path
+        if not path.startswith("/api/chain/"):
+            return False
+        got = h.headers.get("X-Mafutani-Token", "")
+        return bool(got) and hmac.compare_digest(str(got), str(expected))
+
+    def _service_chain_user(self, conn, h):
+        email = (h.headers.get("X-Mafutani-User", "") or "").strip().lower()
+        if not email or "@" not in email or len(email) > 254:
+            return None
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        if row is not None:
+            return row
+        # Chain identity only; no login credential is issued for this row.
+        import secrets as _secrets
+        try:
+            from core.auth import pbkdf2_hash as _hash
+            pwh = _hash(_secrets.token_urlsafe(32))
+        except Exception:
+            pwh = "service-chain-unusable"
+        try:
+            cur = conn.execute(
+                "INSERT INTO users (email, password_hash, tier) VALUES (?, ?, 'Free')",
+                (email, pwh))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        return conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
     def _require_user(self, conn, h):
+        if self._is_service_chain(h):
+            user = self._service_chain_user(conn, h)
+            if user is not None:
+                return user, None
         user, sess = _get_user_and_session(conn, h)
         if user is None:
             _err(h, "unauthorized", 401)
@@ -2096,6 +2137,8 @@ class Router:
         return user, sess
 
     def _require_csrf(self, conn, h, sess):
+        if self._is_service_chain(h):
+            return True
         if not _check_csrf(h, sess):
             _err(h, "csrf mismatch", 403)
             return False

@@ -3,6 +3,9 @@
 Normative rules:
 - COIN = 10**8 base units.
 - EPOCH_REWARD = 100,000,000,000 MFT (100B) minted once per epoch via a SEED tx.
+- BLOCK_REWARD = 500 MFT per block from BLOCK_REWARD_FORK_HEIGHT (default 4),
+  halving every 1,000,000 blocks, capped at 10 halvings. Paid by a
+  block_reward tx with no inputs. This is a hard fork: older nodes reject it.
 - EPOCH_SECONDS = 182 days (6 months). Epoch 0 starts at GENESIS_TIME.
 - TOKEN_LIFETIME_EPOCHS = 1: outputs expire at (creation_epoch + 1). Expired
   outputs MUST NOT be spent. The per-epoch SEED replaces expiring supply.
@@ -48,6 +51,25 @@ CHAIN_ID = "mafutani-mainnet-v1"
 
 # Seed tx marker
 SEED_TX_TYPE = "epoch_seed"
+
+# Block subsidy. Added at a fork height so existing blocks remain valid.
+# 500 MFT per block, halving every 1,000,000 blocks (about 3.8 years at 2 min
+# blocks), capped at 10 halvings. This is minted on top of the epoch seed and
+# is part of the monetary policy from the fork onward.
+BLOCK_REWARD_TX_TYPE = "block_reward"
+BLOCK_REWARD_START = 500 * COIN
+BLOCK_REWARD_HALVING_INTERVAL = 1_000_000
+BLOCK_REWARD_MAX_HALVINGS = 10
+BLOCK_REWARD_FORK_HEIGHT = int(_os.environ.get("MAFUTANI_BLOCK_REWARD_FORK_HEIGHT", "4"))
+
+
+def block_reward(height):
+    """Subsidy for a block height, in base units. Zero before the fork."""
+    h = int(height)
+    if h < BLOCK_REWARD_FORK_HEIGHT:
+        return 0
+    halvings = min(BLOCK_REWARD_MAX_HALVINGS, (h - BLOCK_REWARD_FORK_HEIGHT) // BLOCK_REWARD_HALVING_INTERVAL)
+    return BLOCK_REWARD_START >> halvings
 
 
 def epoch_for_time(ts):

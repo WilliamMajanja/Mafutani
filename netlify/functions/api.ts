@@ -535,6 +535,7 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
         const token = getSessionToken(req);
         if (token) headers["X-Session"] = token;
         if (process.env.CHAIN_API_TOKEN) headers["X-Mafutani-Token"] = process.env.CHAIN_API_TOKEN;
+        headers["X-Mafutani-User"] = user.email;
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 4000);
         const [infoRes, walletRes] = await Promise.all([
@@ -1115,8 +1116,9 @@ router.on("POST", "/api/terminal/command", async ({ req }) => {
       return json({
         ok: true,
         output: [
-          "commands: help | status | screener | quote SYMBOL | positions | orders | cash",
-          "buy SYMBOL QTY [limit PRICE] | sell SYMBOL QTY [limit PRICE]",
+          "commands: help | status | screener | universe | markets | anomalies",
+          "quote SYMBOL | analyze SYMBOL | news [SYMBOL]",
+          "positions | orders | cash | buy SYMBOL QTY [limit PRICE] | sell SYMBOL QTY [limit PRICE]",
           "backtest STRATEGY SYMBOL | clear",
         ].join("\n"),
       });
@@ -1134,6 +1136,59 @@ router.on("POST", "/api/terminal/command", async ({ req }) => {
         return { symbol: s.symbol, vol: c.reduce((a, x) => a + x.volume, 0) };
       }).sort((a: any, b: any) => b.vol - a.vol).slice(0, 12);
       return json({ ok: true, output: leaders.map((l: any) => `${l.symbol} vol ${Math.round(l.vol).toLocaleString()}`).join("\n"), data: { leaders } });
+    }
+    if (cmd === "news") {
+      const symbol = (args[0] || "").toUpperCase() || undefined;
+      const n = await refreshNews(db(), symbol, 8);
+      return json({
+        ok: true,
+        output: n.items.length
+          ? n.items.map((x) => `${x.title} (${x.source})`).join("\n")
+          : (n.error ? `news feed error: ${n.error}` : "no headlines"),
+        data: { items: n.items, stale: n.stale },
+      });
+    }
+    if (cmd === "analyze" || cmd === "analysis") {
+      const symbol = (args[0] || "").toUpperCase();
+      if (!symbol) return json({ ok: false, output: "usage: analyze SYMBOL" });
+      const candles = (await getCandles(db(), symbol, 250, "1d")) as Candle[];
+      if (!candles.length) return json({ ok: false, output: `no candles for ${symbol}` });
+      const a = analyse(candles);
+      return json({
+        ok: true,
+        output: `${symbol} bias ${a.bias} score ${a.score} rsi ${a.rsi14 ?? "—"} trend ${a.trend} vol ${a.vol_ann_pct ?? "—"}%\n${a.reason}`,
+        data: a,
+      });
+    }
+    if (cmd === "anomalies") {
+      const syms: any = await listSymbols(db());
+      const series = await dailySeries(db(), 120);
+      const hit: string[] = [];
+      for (const s of syms) {
+        const c = series.get(s.symbol);
+        if (!c || !c.length) continue;
+        const a = analyse(c as Candle[]);
+        if (a.anomaly_score > 0) {
+          hit.push(`${s.symbol} score ${a.anomaly_score}: ` + a.anomalies.map((x) => x.kind).join(", "));
+        }
+      }
+      return json({ ok: true, output: hit.length ? hit.join("\n") : "no flagged instruments", data: { flagged: hit.length } });
+    }
+    if (cmd === "universe") {
+      const syms: any = await listSymbols(db());
+      const series = await dailySeries(db(), 120);
+      let up = 0, down = 0;
+      for (const s of syms) {
+        const c = series.get(s.symbol);
+        if (!c || c.length < 2) continue;
+        const chg = c[c.length - 1].close - c[c.length - 2].close;
+        if (chg > 0) up++; else if (chg < 0) down++;
+      }
+      return json({ ok: true, output: `${syms.length} instruments · ${up} up / ${down} down / ${syms.length - up - down} flat`, data: { scanned: syms.length, up, down } });
+    }
+    if (cmd === "markets") {
+      const venues = await listMarkets(db());
+      return json({ ok: true, output: venues.map((v: any) => `${v.code} ${v.region} ${v.currency}`).join("\n"), data: { venues } });
     }
     if (cmd === "quote") {
       const symbol = (args[0] || "").toUpperCase();
@@ -1622,6 +1677,8 @@ export default async (req: Request): Promise<Response> => {
     const target = base + pathname + (url.search || "");
     const headers: Record<string, string> = { "Content-Type": req.headers.get("content-type") || "application/json" };
     if (process.env.CHAIN_API_TOKEN) headers["X-Mafutani-Token"] = process.env.CHAIN_API_TOKEN;
+    const chainUser = await currentUser(req);
+    if (chainUser) headers["X-Mafutani-User"] = chainUser.email;
     if (req.headers.get("x-session")) headers["X-Session"] = req.headers.get("x-session")!;
     if (req.headers.get("cookie")) headers["Cookie"] = req.headers.get("cookie")!;
     try {

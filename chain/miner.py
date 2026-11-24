@@ -11,7 +11,8 @@ submitting blocks.
 import time
 
 from chain import consensus
-from chain.ledger import Chain, block_hash, block_header_bytes, merkle_root, make_seed_tx, txid_for
+from chain.ledger import (Chain, block_hash, block_header_bytes, merkle_root,
+                          make_seed_tx, make_block_reward_tx, txid_for)
 
 
 class Miner(object):
@@ -33,6 +34,10 @@ class Miner(object):
         epoch = consensus.epoch_for_time(now)
         bits = self.chain.next_bits()
         txs = list(extra_txs or [])
+        # Block subsidy, once the fork is active. Paid to the miner address.
+        reward = consensus.block_reward(height)
+        if reward > 0 and not any(t.get("type") == consensus.BLOCK_REWARD_TX_TYPE for t in txs):
+            txs.insert(0, make_block_reward_tx(height, epoch, addr))
         # If this epoch has not been seeded, include deterministic seed tx.
         # "Replace expired tokens without breaking consensus": each epoch mints
         # 100B fresh MFT; prior-epoch outputs expire per consensus rules.

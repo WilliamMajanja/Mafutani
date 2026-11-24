@@ -134,3 +134,17 @@ Every order path writes a `journal` row with `kind='trade'` and
 Admin -> Trade ledger shows all users, and `/api/admin/journal` returns a
 reconciliation count of orders missing a journal row. Backfill was run for
 existing orders and backtests.
+
+## 10. Block reward (hard fork)
+
+From `MAFUTANI_BLOCK_REWARD_FORK_HEIGHT` (default **4**), each block carries one
+`block_reward` transaction:
+
+- 500 MFT per block, halving every 1,000,000 blocks, capped at 10 halvings.
+- No inputs; exactly one output to the miner address; creation epoch = block epoch.
+- Exactly one reward tx per block. Zero before the fork height.
+- The epoch seed (100B per 182 days) is unchanged and separate.
+
+This is a hard fork. Every node must upgrade before mining a block at or above
+the fork height. Old nodes reject the reward transaction. Existing blocks are
+unchanged; height 4 was mined and credited 500 MFT to the Pi operator wallet.

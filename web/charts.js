@@ -349,3 +349,135 @@ function drawRSI(canvas, candles) {
   ctx.fillStyle = "#d7e3ea";
   ctx.fillText("RSI(14) " + (last == null ? "—" : last.toFixed(1)), 60, 12);
 }
+
+/* ---- auxiliary panels: volume, MACD, ATR, drawdown ---- */
+function _panelSetup(canvas, h) {
+  var dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+  var W = canvas.clientWidth || 600;
+  var H = canvas.clientHeight || h || 90;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  var ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#020507"; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#1d2b36"; ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+  return { ctx: ctx, W: W, H: H };
+}
+
+function drawVolume(canvas, candles) {
+  var s = _panelSetup(canvas, 90), ctx = s.ctx, W = s.W, H = s.H;
+  var max = 0;
+  candles.forEach(function (c) { var v = c.v != null ? c.v : (c.volume || 0); if (v > max) max = v; });
+  if (!max) { ctx.fillStyle = "#7d93a1"; ctx.fillText("no volume", 8, 16); return; }
+  var n = candles.length, step = W / n;
+  candles.forEach(function (c, i) {
+    var v = c.v != null ? c.v : (c.volume || 0);
+    var up = (c.c != null ? c.c : c.close) >= (c.o != null ? c.o : c.open);
+    var bh = (v / max) * (H - 18);
+    ctx.fillStyle = up ? "rgba(34,197,94,0.55)" : "rgba(239,68,68,0.55)";
+    ctx.fillRect(i * step + 0.5, H - bh - 2, Math.max(1, step - 1), bh);
+  });
+  ctx.fillStyle = "#7d93a1"; ctx.font = "10px ui-monospace,monospace";
+  ctx.fillText("VOLUME · max " + Math.round(max).toLocaleString(), 6, 12);
+}
+
+function drawMACD(canvas, closes) {
+  var s = _panelSetup(canvas, 100), ctx = s.ctx, W = s.W, H = s.H;
+  function ema(vals, p) {
+    var k = 2 / (p + 1), out = [], prev = null;
+    vals.forEach(function (v, i) {
+      prev = prev == null ? v : v * k + prev * (1 - k);
+      out.push(i + 1 >= p ? prev : null);
+    });
+    return out;
+  }
+  var e12 = ema(closes, 12), e26 = ema(closes, 26);
+  var macd = closes.map(function (_, i) { return e12[i] == null || e26[i] == null ? null : e12[i] - e26[i]; });
+  var valid = macd.filter(function (v) { return v != null; });
+  var sig = ema(valid, 9);
+  var off = macd.length - valid.length;
+  var signal = macd.map(function (_, i) { return i < off ? null : sig[i - off]; });
+  var hist = macd.map(function (v, i) { return v == null || signal[i] == null ? null : v - signal[i]; });
+  var all = macd.concat(signal).concat(hist).filter(function (v) { return v != null; });
+  var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+  if (!isFinite(lo) || lo === hi) { ctx.fillStyle = "#7d93a1"; ctx.fillText("MACD warming up", 8, 16); return; }
+  var pad = (hi - lo) * 0.1 || 1;
+  lo -= pad; hi += pad;
+  function y(v) { return H - 14 - ((v - lo) / (hi - lo)) * (H - 24); }
+  var n = closes.length, step = W / n;
+  ctx.strokeStyle = "#2c4252"; ctx.beginPath(); ctx.moveTo(0, y(0)); ctx.lineTo(W, y(0)); ctx.stroke();
+  hist.forEach(function (v, i) {
+    if (v == null) return;
+    ctx.fillStyle = v >= 0 ? "rgba(34,197,94,0.45)" : "rgba(239,68,68,0.45)";
+    var y0 = y(0), y1 = y(v);
+    ctx.fillRect(i * step + 0.5, Math.min(y0, y1), Math.max(1, step - 1), Math.abs(y1 - y0));
+  });
+  function line(data, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.beginPath();
+    var started = false;
+    data.forEach(function (v, i) {
+      if (v == null) return;
+      var x = i * step + step / 2;
+      if (!started) { ctx.moveTo(x, y(v)); started = true; } else ctx.lineTo(x, y(v));
+    });
+    ctx.stroke(); ctx.lineWidth = 1;
+  }
+  line(macd, "#41c7ff"); line(signal, "#ffb224");
+  ctx.fillStyle = "#7d93a1"; ctx.font = "10px ui-monospace,monospace";
+  ctx.fillText("MACD(12,26,9) · cyan MACD · amber signal", 6, 12);
+}
+
+function drawATR(canvas, candles, period) {
+  period = period || 14;
+  var s = _panelSetup(canvas, 90), ctx = s.ctx, W = s.W, H = s.H;
+  if (candles.length < period + 1) { ctx.fillStyle = "#7d93a1"; ctx.fillText("ATR warming up", 8, 16); return; }
+  var trs = [];
+  for (var i = 1; i < candles.length; i++) {
+    var c = candles[i], h = c.h != null ? c.h : c.high, l = c.l != null ? c.l : c.low;
+    var pc = candles[i - 1].c != null ? candles[i - 1].c : candles[i - 1].close;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  var atr = [], sum = 0;
+  for (i = 0; i < trs.length; i++) {
+    sum += trs[i];
+    if (i >= period) sum -= trs[i - period];
+    atr.push(i + 1 >= period ? sum / period : null);
+  }
+  var vals = atr.filter(function (v) { return v != null; });
+  var hi = Math.max.apply(null, vals) || 1, lo = Math.min.apply(null, vals) || 0;
+  var pad = (hi - lo) * 0.15 || 1; hi += pad; lo = Math.max(0, lo - pad);
+  function y(v) { return H - 14 - ((v - lo) / (hi - lo || 1)) * (H - 26); }
+  var n = atr.length, step = W / n;
+  ctx.strokeStyle = "#ffb224"; ctx.lineWidth = 1.2; ctx.beginPath();
+  var started = false;
+  atr.forEach(function (v, i) {
+    if (v == null) return;
+    var x = i * step + step / 2;
+    if (!started) { ctx.moveTo(x, y(v)); started = true; } else ctx.lineTo(x, y(v));
+  });
+  ctx.stroke(); ctx.lineWidth = 1;
+  var last = atr[atr.length - 1];
+  ctx.fillStyle = "#7d93a1"; ctx.font = "10px ui-monospace,monospace";
+  ctx.fillText("ATR(" + period + ") " + (last == null ? "—" : last.toFixed(4)), 6, 12);
+}
+
+function drawDrawdown(canvas, closes) {
+  var s = _panelSetup(canvas, 90), ctx = s.ctx, W = s.W, H = s.H;
+  var peak = -Infinity, dd = [];
+  closes.forEach(function (c) {
+    if (c > peak) peak = c;
+    dd.push(peak > 0 ? ((c - peak) / peak) * 100 : 0);
+  });
+  var min = Math.min.apply(null, dd);
+  if (!isFinite(min) || min === 0) { ctx.fillStyle = "#7d93a1"; ctx.fillText("no drawdown", 8, 16); return; }
+  var n = dd.length, step = W / n;
+  function y(v) { return 14 + (v / min) * (H - 28); }
+  ctx.beginPath(); ctx.moveTo(0, 14);
+  dd.forEach(function (v, i) { ctx.lineTo(i * step + step / 2, y(v)); });
+  ctx.lineTo(W, 14); ctx.closePath();
+  ctx.fillStyle = "rgba(239,68,68,0.22)"; ctx.fill();
+  ctx.strokeStyle = "#ff5c7a"; ctx.lineWidth = 1.2; ctx.beginPath();
+  dd.forEach(function (v, i) { var x = i * step + step / 2; if (i === 0) ctx.moveTo(x, y(v)); else ctx.lineTo(x, y(v)); });
+  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillStyle = "#7d93a1"; ctx.font = "10px ui-monospace,monospace";
+  ctx.fillText("DRAWDOWN · max " + min.toFixed(2) + "%", 6, 12);
+}
