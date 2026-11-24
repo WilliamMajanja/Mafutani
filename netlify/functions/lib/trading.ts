@@ -18,8 +18,14 @@ const num = (v: unknown): number => {
   return isFinite(n) ? n : NaN;
 };
 
+export function paperEnabled(): boolean {
+  // Hosted deployments are live-only unless the operator explicitly opts in
+  // to paper. Local development sets TRADING_MODE=paper in .env.local.
+  return String(process.env.TRADING_MODE || "live").toLowerCase() === "paper";
+}
+
 /**
- * Execute a paper order against the latest stored quote.
+ * Execute an order against the latest stored quote.
  *
  * The write set is: order row, fill row, position row, cash. All four are
  * derived from the same fill price so the book reconciles, and a rejected
@@ -41,6 +47,9 @@ export async function executeOrder(userId: number, input: OrderInput) {
     throw httpError(400, "limit orders need a positive price");
   }
   const isLive = String(input.mode || "paper").toLowerCase() === "live";
+  if (!isLive && !paperEnabled()) {
+    throw httpError(403, "paper trading is disabled on this deployment; live only");
+  }
 
   const sym: any = await db()`SELECT symbol, enabled FROM symbols WHERE symbol = ${symbol}`;
   if (!sym.length || !sym[0].enabled) throw httpError(404, "unknown or disabled symbol");

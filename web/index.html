@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#04070a">
 <meta name="color-scheme" content="dark">
-<title>Mafutani Consolidation Trading Application (Paper Default)</title>
+<title>Mafutani Consolidation Trading Application</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="disclaimer" role="banner"><span id="disc-text">NOT FINANCIAL ADVICE. Paper trading by default; live MT5 orders require a configured bridge and are gated. CommCoin/MFT and M-Pesa off-ramp require the configured chain service; MFT is experimental and you can lose all value. Market data is delayed daily history from Yahoo Finance. Past performance does not predict future results. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></span><button id="disc-close" type="button" aria-label="Dismiss disclaimer" title="Dismiss">×</button></div>
+<div id="disclaimer" role="banner"><span id="disc-text">NOT FINANCIAL ADVICE. Trading mode is environment-bound: local development is PAPER; hosted deployments are LIVE-ONLY and reject paper orders. Live MT5 orders require the configured bridge, tier permission and explicit confirmation. CommCoin/MFT and M-Pesa off-ramp require the configured chain service; MFT is experimental and you can lose all value. Market data is delayed daily history from Yahoo Finance. Past performance does not predict future results. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></span><button id="disc-close" type="button" aria-label="Dismiss disclaimer" title="Dismiss">×</button></div>
 <header id="topbar">
   <span id="logo" title="Mafutani Consolidation Trading Application">MAFUTANI</span>
   <nav id="nav" aria-label="Primary">
@@ -31,7 +31,6 @@
     <a href="#/policies">Policies</a>
     <a href="#/admin">Admin</a>
   </nav>
-  <span id="userbox"><span id="tier-badge"></span> <button id="terminal-toggle" type="button" aria-expanded="false" title="Toggle OpenTerminal (` or Ctrl+K)">_ Terminal</button> <button id="logout-btn" type="button">Logout</button></span>
 </header>
 <div id="tape" aria-hidden="true"><div id="tape-track">connecting tape…</div></div>
 <main id="view"></main>
@@ -41,6 +40,7 @@
   <span>TIER <b id="sb-tier-label">—</b></span>
   <span id="sb-clock">--:--:--</span>
   <span class="sb-right"><label style="margin-right:6px">Locale <select id="locale-select" aria-label="Locale"><option value="en">EN</option><option value="sw">SW</option><option value="fr">FR</option><option value="es">ES</option><option value="ar">AR</option><option value="pt">PT</option><option value="de">DE</option><option value="zh">ZH</option><option value="hi">HI</option></select></label> ` terminal · Ctrl+K palette</span>
+  <span id="userbox"><span id="tier-badge"></span> <button id="terminal-toggle" type="button" aria-expanded="false" title="Toggle OpenTerminal (` or Ctrl+K)">_ Terminal</button> <button id="logout-btn" type="button">Logout</button></span>
 </footer>
 <section id="login-section">
   <h2>Login / Signup</h2>

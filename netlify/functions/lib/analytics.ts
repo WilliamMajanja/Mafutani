@@ -194,11 +194,13 @@ export function detectAnomalies(candles: Candle[]): Anomaly[] {
 export function scoreSeries(candles: Candle[]): { closes: number[]; last: number | null; change_pct: number | null; volume: number } {
   const closes = candles.map((c) => c.close);
   const last = closes.length ? closes[closes.length - 1] : null;
-  const first = closes.length ? closes[0] : null;
+  const prev = closes.length > 1 ? closes[closes.length - 2] : null;
   return {
     closes: closes.slice(-30),
     last,
-    change_pct: first && last ? Number((((last - first) / first) * 100).toFixed(2)) : null,
+    // Session change: last close against the prior bar, not the start of
+    // the whole stored window (which read as a 120-day return).
+    change_pct: prev && last ? Number((((last - prev) / prev) * 100).toFixed(2)) : null,
     volume: candles.reduce((a, c) => a + (c.volume || 0), 0),
   };
 }

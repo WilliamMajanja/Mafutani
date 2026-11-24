@@ -255,7 +255,7 @@
         if (!k) return;
         k.innerHTML =
           "<div class='card kpi'><h3>Cash Balance</h3><div class='kpi-v'>" + num(cash) +
-          "</div><div class='kpi-l'>" + esc(p.tier || "paper") + " account</div></div>" +
+          "</div><div class='kpi-l'>" + esc(p.email || p.tier || "paper") + " account</div></div>" +
           "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
           (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>real " + num(sum.realized_pnl) +
           " / unreal " + num(sum.unrealized_pnl) + "</div></div>" +
@@ -901,10 +901,8 @@
     api("GET", "/api/screener").then(function (d) {
       var list = d.results || d.rows || [];
       var items = list.map(function (r) {
-        var c = r.closes || [], pct = null;
-        if (c.length > 1 && c[0]) pct = (c[c.length - 1] - c[0]) / c[0] * 100;
-        return { label: r.symbol, value: r.volume || 0, pct: pct };
-      }).filter(function (x) { return x.value > 0; });
+        return { label: r.symbol, value: r.volume || 1, pct: r.change_pct };
+      });
       document.getElementById("hm-sub").textContent = items.length +
         " symbols · tile size = volume · color = session change · click tile for chart";
       try {
@@ -1968,6 +1966,7 @@
     var confirmHost = document.getElementById("t-confirm-host");
 
     var lastBook = null;      // latest quote for the ticket symbol
+    var lastTf = "1m";        // resolution the API actually served
     var portfolio = null;     // last /api/portfolio payload
     var posEnteredAt = null;  // when the current position was opened
 
@@ -2114,9 +2113,12 @@
         portfolio = p;
         cashOut.textContent = "cash " + num(p.cash, 2);
         var canLive = !!p.live_trading_enabled;
+        var paperOk = p.paper_enabled !== false;
         liveOut.textContent = canLive ? "live enabled" :
           ("live disabled" + (p.live_reason ? " — " + p.live_reason : ""));
         liveOut.className = "badge " + (canLive ? "wired" : "locked");
+        var paperOpt = modeEl.querySelector("option[value='paper']");
+        if (!paperOk && paperOpt) paperOpt.remove();
         if (!canLive) {
           // Keep the option visible but say why it is closed, instead of
           // offering a mode that will 403 on submit.
@@ -2125,7 +2127,19 @@
             opt.disabled = true;
             opt.textContent = "live (unavailable)";
           }
-          if (modeEl.value === "live") modeEl.value = "paper";
+        }
+        if (canLive) {
+          if (!paperOk) modeEl.value = "live";
+        } else if (paperOk) {
+          modeEl.value = "paper";
+        } else {
+          modeEl.value = "live";
+          var buyBtn = document.getElementById("t-buy");
+          var sellBtn = document.getElementById("t-sell");
+          if (buyBtn) buyBtn.disabled = true;
+          if (sellBtn) sellBtn.disabled = true;
+          out("<p class='error'>LIVE ONLY — the MT5 venue is not connected. " +
+              "Orders are disabled until MT5_BRIDGE_URL is configured.</p>");
         }
         var nowPos = (portfolio.positions || []).length;
         if (!hadPos && nowPos) posEnteredAt = Date.now();
@@ -2359,20 +2373,17 @@
 
     function renderMarketInfo() {
       if (!mktEl || !raw.length) return;
-      var first = closes[0], last = closes[closes.length - 1];
-      if (!(first > 0) || !(last > 0)) return;
-      var hi = -Infinity, lo = Infinity, totV = 0;
-      for (var i = 0; i < raw.length; i++) {
-        var h = raw[i].h != null ? raw[i].h : raw[i].high;
-        var l = raw[i].l != null ? raw[i].l : raw[i].low;
-        var v = raw[i].v != null ? raw[i].v : raw[i].volume;
-        if (h != null && h > hi) hi = h;
-        if (l != null && l < lo) lo = l;
-        if (v != null) totV += v;
-      }
-      var chg = last - first, pct = first ? chg / first * 100 : 0;
-      var q0 = raw[0] || {};
-      var o0 = q0.o != null ? q0.o : q0.open;
+      var lastBar = raw[raw.length - 1] || {};
+      var prevBar = raw.length > 1 ? raw[raw.length - 2] : null;
+      var last = clOf(lastBar);
+      var prevClose = prevBar ? clOf(prevBar) : null;
+      if (!(last > 0)) return;
+      var hi = lastBar.h != null ? lastBar.h : lastBar.high;
+      var lo = lastBar.l != null ? lastBar.l : lastBar.low;
+      var totV = lastBar.v != null ? lastBar.v : lastBar.volume;
+      var chg = prevClose != null ? last - prevClose : 0;
+      var pct = prevClose ? (chg / prevClose) * 100 : 0;
+      var o0 = lastBar.o != null ? lastBar.o : lastBar.open;
       var b = lastBook || {};
       var spread = b.spread_bps;
       function cell(k, v, cls) {
@@ -2381,18 +2392,18 @@
       }
       mktEl.innerHTML =
         cell("Last", num(last)) +
-        cell("Chg", (pct >= 0 ? "+" : "") + num(pct) + "%",
+        cell("Day", (pct >= 0 ? "+" : "") + num(pct) + "%",
              pct >= 0 ? "up" : "down") +
         cell("Bid", b.bid != null ? num(b.bid) : "—") +
         cell("Ask", b.ask != null ? num(b.ask) : "—") +
         cell("Spread", spread != null ? num(spread) + " bps" : "—") +
         cell("Open", o0 != null ? num(o0) : "—") +
-        cell("High", hi > -Infinity ? num(hi) : "—") +
-        cell("Low", lo < Infinity ? num(lo) : "—") +
+        cell("High", hi != null ? num(hi) : "—") +
+        cell("Low", lo != null ? num(lo) : "—") +
         cell("Volume", num(totV, 0));
       if (cstatsEl) {
-        cstatsEl.textContent = "n=" + raw.length + " · range " + num(lo) +
-          "–" + num(hi) + " · 1m bars";
+        cstatsEl.textContent = "n=" + raw.length + " · last bar " + num(lo) +
+          "–" + num(hi) + " · " + lastTf + " bars";
       }
     }
 
@@ -2408,6 +2419,7 @@
         .then(function (d) {
           var rows = d.candles || d.rows || [];
           if (chartSym !== symbol()) return;   // symbol changed mid-flight
+          lastTf = d.tf || "1m";
           if (!rows.length) {
             raw = []; closes = [];
             if (cstatsEl) {
@@ -3475,7 +3487,9 @@
     api("GET", "/api/portfolio").then(function (p) {
       var mode = document.getElementById("sb-mode");
       var tier = document.getElementById("sb-tier");
-      if (mode) mode.textContent = p.live_trading_enabled ? "LIVE" : "PAPER";
+      if (mode) mode.textContent = p.paper_enabled === false
+        ? (p.live_trading_enabled ? "LIVE" : "LIVE ONLY — OFFLINE")
+        : (p.live_trading_enabled ? "LIVE" : "PAPER");
       if (tier) tier.textContent = p.tier ? ("TIER " + p.tier.toUpperCase()) : "";
       // Separate element: this used to share the id "sb-tier" with the
       // span above, and getElementById only ever returned the first one,

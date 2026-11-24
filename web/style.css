@@ -913,3 +913,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .kpi-v { font-family: var(--mono); font-size: 18px; color: var(--txt); }
 .kpi-l { color: var(--dim); font-size: 11px; }
 .page-purpose { color: var(--dim); margin: 4px 0 10px; }
+
+/* user controls live in the footer, not the nav */
+#statusbar #userbox { margin-left: auto; gap: 6px; }
+#statusbar #userbox button { padding: 2px 7px; font-size: 10px; }
+#statusbar #tier-badge { font-size: 10px; }

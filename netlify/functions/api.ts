@@ -9,10 +9,10 @@ import { storage, BUCKET } from "./lib/storage";
 import { chat, listModels, AI_BASE } from "./lib/ai";
 import { authConfig, AUTH_BASE } from "./lib/auth";
 import { listSymbols, getQuotes, getCandles, listExchanges, listMarkets, latestPrice, dailySeries, quoteMap } from "./lib/market";
-import { listNews } from "./lib/news";
+import { listNews, refreshNews } from "./lib/news";
 import { analyse, detectAnomalies, scoreSeries, annualisedVolPct, signalFor, type Candle } from "./lib/analytics";
 import { currentUser, accountFor } from "./lib/session";
-import { executeOrder } from "./lib/trading";
+import { executeOrder, paperEnabled } from "./lib/trading";
 import { runBacktest } from "./lib/backtest";
 import { liveConfigured, liveDisabledReason } from "./lib/mt5";
 
@@ -324,10 +324,25 @@ router.on("GET", "/api/markets", async () => {
       r.venues_tracked += 1;
       v.asset_classes.forEach((a: string) => r.asset_classes.add(a));
     }
-    const regions = Array.from(byRegion.values()).map((r) => ({
-      ...r,
-      asset_classes: Array.from(r.asset_classes),
-    }));
+    const SESSIONS: Record<string, { name: string; open: number; close: number }> = {
+      AMER: { name: "Americas", open: 13.5, close: 20 },
+      EMEA: { name: "Europe / Africa", open: 7, close: 16 },
+      GLOBAL: { name: "Global", open: 0, close: 24 },
+    };
+    const now = new Date();
+    const hour = now.getUTCHours() + now.getUTCMinutes() / 60;
+    const weekday = now.getUTCDay() >= 1 && now.getUTCDay() <= 5;
+    const regions = Array.from(byRegion.values()).map((r) => {
+      const s = SESSIONS[r.code] || { name: r.name, open: 0, close: 24 };
+      return {
+        ...r,
+        name: s.name,
+        open_utc: s.open,
+        close_utc: s.close,
+        open: s.close - s.open >= 24 ? true : (weekday && hour >= s.open && hour < s.close),
+        asset_classes: Array.from(r.asset_classes),
+      };
+    });
     return json({ config_path: "exchanges table", regions, venues });
   } catch (e) { return error(500, (e as Error).message); }
 });
@@ -370,8 +385,9 @@ router.on("GET", "/api/quote", async ({ query }) => {
 router.on("GET", "/api/news", async ({ query }) => {
   try {
     const symbol = query.get("symbol") || undefined;
-    const limit = parseInt(query.get("limit") || "20", 10);
-    return json({ news: await listNews(db(), symbol, limit) });
+    const limit = Math.min(100, Math.max(1, parseInt(query.get("limit") || "20", 10) || 20));
+    const result = await refreshNews(db(), symbol, limit);
+    return json({ items: result.items, news: result.items, stale: result.stale, error: result.error || "" });
   } catch (e) { return error(500, (e as Error).message); }
 });
 
@@ -421,9 +437,11 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
       starting_cash: acct.starting_cash,
       equity: acct.cash + marketValue,
       tier: user.tier,
+      email: user.email,
       live_trading_enabled: liveAvailable,
       live_venue: liveAvailable ? "MT5" : null,
       live_reason: liveAvailable ? "" : (liveDisabledReason() || "live trading is not enabled for this tier"),
+      paper_enabled: paperEnabled(),
       positions,
       fills,
       summary: {
