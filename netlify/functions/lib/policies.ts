@@ -82,7 +82,14 @@ Market data (Yahoo), MT5 execution, Neon Postgres, and the Neon AI Gateway are
 third-party dependencies. Model output is research assistance, not a trading
 signal or guarantee. Vendor outages are surfaced in the UI, not hidden.
 
-12. CHANGES
+12. ZONES AND CONSOLIDATION BASES
+Ports, airports, docks, special economic zones, dry ports, and logistics hubs
+shown on the Markets page are informational context. They are not legal title,
+a registry, an operating-status feed, or an endorsement. Coordinates are
+approximate. Market-to-base links are analytical, not a claim of physical
+delivery or custody.
+
+13. CHANGES
 Policy changes require review, an audit entry, and a redeploy.`;
 export function policies(): PolicyBundle {
   return {
@@ -93,6 +100,7 @@ export function policies(): PolicyBundle {
       execution_gate: "tier + bridge + confirm + risk limits",
       auth: "HttpOnly session cookie + bearer token; Admin tier for ops",
       chain: "separate Python CommCoin service",
+      zones: "informational ports, airports, SEZs, dry ports and logistics hubs",
     },
     caveats: [
       "Delayed daily market data is not a real-time execution feed.",

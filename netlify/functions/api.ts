@@ -319,6 +319,37 @@ router.on("GET", "/api/realtime/config", async () =>
   json({ url: process.env.NEON_REALTIME_URL || "", hasSecret: !!process.env.NEON_REALTIME_SECRET }),
 );
 
+router.on("GET", "/api/bases", async ({ query }) => {
+  try {
+    const region = (query.get("region") || "").toUpperCase();
+    const type = (query.get("type") || "").toLowerCase();
+    const symbol = (query.get("symbol") || "").toUpperCase();
+    const rows: any = region && type
+      ? await db()`SELECT * FROM consolidation_bases WHERE region = ${region} AND type = ${type} ORDER BY region, type, name`
+      : region
+        ? await db()`SELECT * FROM consolidation_bases WHERE region = ${region} ORDER BY type, name`
+        : type
+          ? await db()`SELECT * FROM consolidation_bases WHERE type = ${type} ORDER BY region, name`
+          : await db()`SELECT * FROM consolidation_bases ORDER BY region, type, name`;
+    const bases = rows.map((r: any) => ({
+      ...r,
+      related_symbols: JSON.parse(r.related_symbols || "[]"),
+    })).filter((r: any) => !symbol || r.related_symbols.includes(symbol));
+    const byRegion: Record<string, any[]> = {};
+    const types: Record<string, number> = {};
+    for (const b of bases) {
+      (byRegion[b.region] = byRegion[b.region] || []).push(b);
+      types[b.type] = (types[b.type] || 0) + 1;
+    }
+    return json({
+      bases,
+      by_region: byRegion,
+      types,
+      note: "Informational context only. Not legal title, registry, operating status, or an endorsement.",
+    });
+  } catch (e) { return error(500, (e as Error).message); }
+});
+
 router.on("GET", "/api/symbols", async () => {
   try { return json({ symbols: await listSymbols(db()) }); }
   catch (e) { return error(500, (e as Error).message); }
@@ -362,7 +393,8 @@ router.on("GET", "/api/markets", async () => {
     }
     const SESSIONS: Record<string, { name: string; open: number; close: number }> = {
       AMER: { name: "Americas", open: 13.5, close: 20 },
-      EMEA: { name: "Europe / Africa", open: 7, close: 16 },
+      EMEA: { name: "Europe / Middle East / Africa", open: 7, close: 16 },
+      APAC: { name: "Asia-Pacific", open: 0, close: 6.5 },
       GLOBAL: { name: "Global", open: 0, close: 24 },
     };
     const now = new Date();
@@ -1210,6 +1242,25 @@ router.on("GET", "/api/admin/audit", async ({ req }) => {
   if (gate.error) return gate.error;
   const rows: any = await db()`SELECT * FROM audit_log ORDER BY ts DESC LIMIT 100`;
   return json({ audit: rows });
+});
+
+router.on("GET", "/api/admin/gaps", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  const gaps = [
+    { id: "live-bridge", area: "Execution", severity: "blocker", status: liveConfigured() ? "configured" : "open", owner: "Operations", detail: liveConfigured() ? "MT5 bridge configured" : "MT5_BRIDGE_URL / MT5_BRIDGE_TOKEN missing" },
+    { id: "chain-service", area: "CommCoin", severity: "blocker", status: process.env.CHAIN_API_URL ? "configured" : "open", owner: "Operations", detail: process.env.CHAIN_API_URL ? "chain service configured" : "CHAIN_API_URL missing; hosted CommCoin unavailable" },
+    { id: "market-data", area: "Data", severity: "high", status: "mitigated", owner: "Data", detail: "Delayed daily Yahoo history; not an execution feed" },
+    { id: "cbk", area: "Treasury", severity: "blocker", status: "open", owner: "Legal/Treasury", detail: "CBK DhowCSD, bonds and T-bills require onboarding and licensing" },
+    { id: "broker-licence", area: "Brokerage", severity: "blocker", status: "open", owner: "Legal", detail: "Internal matcher is not a licensed broker; venue adapters are the path" },
+    { id: "pen-test", area: "Security", severity: "high", status: "open", owner: "Security", detail: "External penetration test not completed" },
+    { id: "2fa", area: "Security", severity: "medium", status: "open", owner: "Engineering", detail: "TOTP enrolment endpoint returns 501 in the Netlify port" },
+    { id: "rate-limit", area: "Security", severity: "medium", status: "mitigated", owner: "Engineering", detail: "Edge limiter is per-isolate; add a shared store for global limits" },
+    { id: "kyc", area: "Compliance", severity: "high", status: "open", owner: "Compliance", detail: "KYC/AML hooks are workflow plumbing, not certification" },
+    { id: "demo-accounts", area: "Access", severity: "high", status: "closed", owner: "Engineering", detail: "Shared demo accounts removed from hosted seed path and database" },
+    { id: "paper-hosted", area: "Policy", severity: "high", status: "closed", owner: "Engineering", detail: "Hosted paper orders return 403; local remains paper" },
+  ];
+  return json({ gaps, blockers: gaps.filter((g) => g.status === "open" && g.severity === "blocker").length });
 });
 
 router.on("GET", "/api/admin/users", async ({ req }) => {

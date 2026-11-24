@@ -671,6 +671,28 @@ def build():
         "Train operators on order rejection, kill switch, incident response, and audit.",
     ])
 
+    s += [PageBreak(), H1("Appendix K. Regional zones and consolidation bases")]
+    s += [P("Markets are grouped into real regional zones with session windows computed in "
+            "UTC. The consolidation-base registry adds informational context: seaports, "
+            "airports, docks, special economic zones, inland container depots, rail and "
+            "logistics hubs. It is not a title registry or an operating-status feed.")]
+    s += [table([
+        ["Zone", "Approx. session (UTC)", "Examples"],
+        ["AMER", "13:30–20:00", "NYSE, Nasdaq, CME, CBOT, COMEX, NYMEX"],
+        ["EMEA", "07:00–16:00", "EBS, LSE, ICE, European and African ports"],
+        ["APAC", "00:00–06:30", "TSE, HKEX, ASX, NSE, Singapore and Shanghai"],
+        ["GLOBAL", "24h", "Crypto venues and global logistics nodes"],
+    ], widths=[26 * mm, 44 * mm, 82 * mm])]
+    s += [P("Base types", "H2x")]
+    s += [P("seaport · airport · dock · sez · icd · rail · logistics. Each row stores a "
+            "country, city, approximate coordinates, operator, notes, and linked symbols "
+            "where an analytical relationship exists.")]
+    s += [P("The Markets page renders every base with its operator, coordinates, and "
+            "linked instruments. The API is GET /api/bases with optional region, type, "
+            "and symbol filters.")]
+    s += [P("Informational only: coordinates are approximate; a listed base does not "
+            "imply delivery, custody, title, licensing, or an operating relationship.", "Warnx")]
+
     s += [Spacer(1, 8 * mm),
           P("End of textbook. This document is descriptive, not a solicitation or "
             "financial advice. Verify every operational claim against the running system "

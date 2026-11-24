@@ -260,4 +260,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
+
+CREATE TABLE IF NOT EXISTS consolidation_bases (
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  region TEXT NOT NULL,
+  country TEXT NOT NULL,
+  city TEXT NOT NULL,
+  lat DOUBLE PRECISION NOT NULL,
+  lon DOUBLE PRECISION NOT NULL,
+  related_symbols TEXT NOT NULL DEFAULT '[]',
+  operator TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  updated_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_bases_region ON consolidation_bases(region, type);
 `;

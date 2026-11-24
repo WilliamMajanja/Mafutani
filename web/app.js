@@ -356,7 +356,10 @@
     hideLogin();
     view().innerHTML = "<h2>Global Markets</h2>" +
       "<div class='kpi-l' id='mk-sub'>loading market config…</div>" +
-      "<div id='mk-regions'></div><div id='mk-venues'></div>";
+      "<div id='mk-regions'></div><div id='mk-venues'></div>" +
+      "<h3>Consolidation bases</h3>" +
+      "<p class='kpi-l'>Ports, airports, docks, SEZs, dry ports and logistics hubs. Informational context only — not legal title, registry, or operating status.</p>" +
+      "<div class='row' id='mk-base-filter'></div><div id='mk-bases'></div>";
     api("GET", "/api/markets").then(function (d) {
       var regions = d.regions || [];
       var venues = d.venues || [];
@@ -391,9 +394,55 @@
               "<td>" + esc(v.currency) + "</td><td>" + esc(v.tz) + "</td></tr>";
           }).join("") + "</table>";
       }).join("");
+      loadBases("all");
     }).catch(function (e) {
       document.getElementById("mk-sub").textContent = "market config failed: " + e.message;
     });
+
+    function loadBases(filter) {
+      var host = document.getElementById("mk-bases");
+      if (!host) return;
+      host.innerHTML = "<p class='kpi-l'>loading bases…</p>";
+      api("GET", "/api/bases" + (filter && filter !== "all" ? "?type=" + encodeURIComponent(filter) : ""))
+        .then(function (d) {
+          var list = d.bases || [];
+          var f = document.getElementById("mk-base-filter");
+          if (f && !f.dataset.ready) {
+            f.dataset.ready = "1";
+            var types = ["all"].concat(Object.keys(d.types || {}).sort());
+            f.innerHTML = types.map(function (t) {
+              return "<button type='button' data-base-filter='" + esc(t) + "'" +
+                (t === "all" ? " class='primary'" : "") + ">" + esc(t) + "</button>";
+            }).join("");
+            f.querySelectorAll("[data-base-filter]").forEach(function (b) {
+              b.onclick = function () {
+                f.querySelectorAll("[data-base-filter]").forEach(function (x) { x.className = ""; });
+                b.className = "primary";
+                loadBases(b.getAttribute("data-base-filter"));
+              };
+            });
+          }
+          if (!list.length) { host.innerHTML = "<p class='kpi-l'>no bases match this filter</p>"; return; }
+          var byRegion = {};
+          list.forEach(function (b) { (byRegion[b.region] = byRegion[b.region] || []).push(b); });
+          host.innerHTML = Object.keys(byRegion).sort().map(function (region) {
+            return "<h4>" + esc(region) + " · " + byRegion[region].length + " bases</h4>" +
+              "<div class='cards'>" + byRegion[region].map(function (b) {
+                var syms = (b.related_symbols || []).map(function (sym) {
+                  return "<a class='tag' href='#/analysis/" + encodeURIComponent(sym) + "'>" + esc(sym) + "</a>";
+                }).join(" ");
+                return "<div class='card base-card'><div class='row spb'><b>" + esc(b.name) + "</b>" +
+                  "<span class='tag'>" + esc(b.type) + "</span></div>" +
+                  "<p class='kpi-l'>" + esc(b.city) + ", " + esc(b.country) + " · " +
+                  Number(b.lat).toFixed(3) + ", " + Number(b.lon).toFixed(3) + "</p>" +
+                  (b.operator ? "<p class='kpi-l'>operator: " + esc(b.operator) + "</p>" : "") +
+                  (b.notes ? "<p class='dim'>" + esc(b.notes) + "</p>" : "") +
+                  (syms ? "<p class='kpi-l'>linked: " + syms + "</p>" : "") + "</div>";
+              }).join("") + "</div>";
+          }).join("");
+        })
+        .catch(function (e) { host.innerHTML = showErr(e); });
+    }
   }
 
   // ---- arbitrage --------------------------------------------------------
@@ -3135,10 +3184,11 @@
       api("GET", "/api/admin/audit").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/admin/users").catch(function (e) { return { error: e.message }; }),
       api("GET", "/api/symbols").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; })
+      api("GET", "/api/live/config").catch(function (e) { return { error: e.message }; }),
+      api("GET", "/api/admin/gaps").catch(function (e) { return { gaps: [], error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
-      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {};
       if (ov.error) {
         view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
@@ -3209,6 +3259,12 @@
         "<p class='kpi-l'>Saved per browser. Applies immediately.</p>" +
         "<h3>Build</h3><p class='kpi-l'>Paper execution live · daily Yahoo history · MT5 bridge required for live orders.</p></div>" +
         "</div>" +
+        "<div class='card'><h3>Risk & gap register</h3><table><thead><tr><th>Area</th><th>Severity</th><th>Status</th><th>Owner</th><th>Detail</th></tr></thead><tbody>" +
+        ((gapsRes.gaps || []).map(function (g) {
+          var cls = g.status === "open" ? "neg" : (g.status === "configured" || g.status === "closed" ? "pos" : "dim");
+          return "<tr><td>" + esc(g.area) + "</td><td>" + esc(g.severity) + "</td><td class='" + cls + "'>" + esc(g.status) +
+            "</td><td>" + esc(g.owner) + "</td><td>" + esc(g.detail) + "</td></tr>";
+        }).join("") || "<tr><td colspan='5' class='dim'>no register</td></tr>") + "</tbody></table></div>" +
         "<div class='card'><h3>Audit trail</h3><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Tier</th></tr></thead><tbody>" + auditRows + "</tbody></table></div>";
 
       view().querySelectorAll("[data-toggle-user]").forEach(function (b) {

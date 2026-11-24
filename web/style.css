@@ -973,3 +973,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
   #nav { grid-column: 1 / -1; order: 3; }
   #top-actions { order: 2; }
 }
+
+/* ---- consolidation bases ---- */
+.base-card { min-width: 240px; max-width: 320px; flex: 1 1 240px; }
+.base-card .tag { margin-left: 6px; }
+#mk-base-filter { margin: 6px 0 10px; }

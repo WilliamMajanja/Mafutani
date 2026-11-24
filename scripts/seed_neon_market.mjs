@@ -44,6 +44,10 @@ const INSTRUMENTS = [
   { symbol: "VIX", yahoo: "^VIX", name: "CBOE Volatility Index", asset: "index", exchange: "CBOE", currency: "USD", sector: "Volatility" },
   { symbol: "SOLUSD", yahoo: "SOL-USD", name: "Solana / US Dollar", asset: "crypto", exchange: "COINBASE", currency: "USD", sector: "" },
   { symbol: "XRPUSD", yahoo: "XRP-USD", name: "XRP / US Dollar", asset: "crypto", exchange: "COINBASE", currency: "USD", sector: "" },
+  { symbol: "N225", yahoo: "^N225", name: "Nikkei 225 Index", asset: "index", exchange: "TSE", currency: "JPY", sector: "Index" },
+  { symbol: "HSI", yahoo: "^HSI", name: "Hang Seng Index", asset: "index", exchange: "HKEX", currency: "HKD", sector: "Index" },
+  { symbol: "ASX200", yahoo: "^AXJO", name: "S&P/ASX 200 Index", asset: "index", exchange: "ASX", currency: "AUD", sector: "Index" },
+  { symbol: "SENSEX", yahoo: "^BSESN", name: "BSE Sensex", asset: "index", exchange: "NSE", currency: "INR", sector: "Index" },
 ];
 
 async function yahooDaily(yahoo, range = "1y") {
