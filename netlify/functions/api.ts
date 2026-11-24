@@ -574,14 +574,23 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
       paper_enabled: paperEnabled(),
       positions,
       fills,
-      summary: {
-        realized_pnl: Number(realized.toFixed(2)),
-        unrealized_pnl: Number(unrealized.toFixed(2)),
-        total_pnl: Number((realized + unrealized).toFixed(2)),
-        market_value: Number((marketValue + commcoinValue).toFixed(2)),
-        market_value_securities: Number(marketValue.toFixed(2)),
-        commcoin_value: commcoinValue,
-      },
+      summary: (() => {
+        const securitiesEquity = acct.cash + marketValue;
+        const basis = Number(acct.starting_cash) || 0;
+        const totalPnl = securitiesEquity + commcoinValue - basis;
+        const realizedPnl = securitiesEquity - basis - unrealized;
+        return {
+          starting_cash: basis,
+          securities_equity: Number(securitiesEquity.toFixed(2)),
+          realized_pnl: Number(realizedPnl.toFixed(2)),
+          unrealized_pnl: Number(unrealized.toFixed(2)),
+          total_pnl: Number(totalPnl.toFixed(2)),
+          return_pct: basis ? Number(((totalPnl / basis) * 100).toFixed(4)) : null,
+          market_value: Number((marketValue + commcoinValue).toFixed(2)),
+          market_value_securities: Number(marketValue.toFixed(2)),
+          commcoin_value: commcoinValue,
+        };
+      })(),
     });
   } catch (e) { return error(500, (e as Error).message); }
 });
@@ -1347,7 +1356,7 @@ router.on("GET", "/api/admin/overview", async ({ req }) => {
   if (gate.error) return gate.error;
   const [users, accounts, symbols, candles, orders, sessions, equity]: any[] = await Promise.all([
     db()`SELECT COUNT(*)::int AS n FROM users`,
-    db()`SELECT COUNT(*)::int AS n, COALESCE(SUM(cash), 0) AS cash FROM accounts`,
+    db()`SELECT COUNT(*)::int AS n, COALESCE(SUM(cash), 0) AS cash, COALESCE(SUM(starting_cash), 0) AS starting_cash FROM accounts`,
     db()`SELECT COUNT(*)::int AS n FROM symbols WHERE enabled = 1`,
     db()`SELECT COUNT(*)::int AS n FROM candles_1d`,
     db()`SELECT COUNT(*)::int AS n FROM orders`,
@@ -1371,7 +1380,9 @@ router.on("GET", "/api/admin/overview", async ({ req }) => {
       users: users[0].n,
       accounts: accounts[0].n,
       cash: Number(accounts[0].cash),
+      starting_cash: Number(accounts[0].starting_cash),
       equity: Number(equity[0].equity),
+      total_pnl: Number((Number(equity[0].equity) - Number(accounts[0].starting_cash)).toFixed(2)),
       symbols: symbols[0].n,
       candles_daily: candles[0].n,
       orders: orders[0].n,

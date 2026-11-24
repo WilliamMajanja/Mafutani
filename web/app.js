@@ -289,7 +289,8 @@
           "</div><div class='kpi-l'>" + esc(p.email || p.tier || "paper") + " account</div></div>" +
           "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
           (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>real " + num(sum.realized_pnl) +
-          " / unreal " + num(sum.unrealized_pnl) + "</div></div>" +
+          " / unreal " + num(sum.unrealized_pnl) +
+          (sum.return_pct == null ? "" : " · " + num(sum.return_pct, 4) + "%") + "</div></div>" +
           "<div class='card kpi'><h3>Equity</h3><div class='kpi-v'>" + num(p.equity != null ? p.equity : cash) +
           "</div><div class='kpi-l'>securities " + num(p.market_value_securities) + " · CommCoin " + num(p.commcoin && p.commcoin.value_usd) + "</div></div>" +
           "<div class='card kpi'><h3>CommCoin</h3><div class='kpi-v'>" +
@@ -3044,7 +3045,8 @@
         "<div class='card kpi'><h3>Cash Balance</h3><div class='kpi-v'>" + num(cash) +
         "</div><div class='kpi-l'>" + esc(p.tier || "paper") + " account</div></div>" +
         "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
-        (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>paper account</div></div>" +
+        (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>" +
+        (sum.return_pct == null ? "since inception" : num(sum.return_pct, 4) + "% return") + "</div></div>" +
         "<div class='card kpi'><h3>Realized</h3><div class='kpi-v'>" + num(sum.realized_pnl) +
         "</div><div class='kpi-l'>closed trades</div></div>" +
         "<div class='card kpi'><h3>Unrealized</h3><div class='kpi-v'>" + num(sum.unrealized_pnl) +
