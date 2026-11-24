@@ -20,6 +20,7 @@ import { wikiArticles } from "./lib/wiki";
 import { logJournal } from "./lib/journal";
 import { alpacaConfigured } from "./lib/alpaca";
 import { venueRegistry, routeLive } from "./lib/venues";
+import { getSetting, getBool, getNumber, allSettings, setSettings } from "./lib/settings";
 import { createCashMovement, listCashMovements, listAdminCashMovements, confirmCashMovement, rejectCashMovement, cashReconciliation, MPESA_C2C_NUMBER, MPESA_C2C_NAME } from "./lib/cash";
 
 const router = new Router();
@@ -499,9 +500,10 @@ router.on("GET", "/api/news", async ({ query }) => {
 
 router.on("GET", "/api/cash/config", async () => json({
   rail: "mpesa_c2c",
-  number: MPESA_C2C_NUMBER,
-  name: MPESA_C2C_NAME,
+  number: await getSetting("mpesa_c2c_number"),
+  name: await getSetting("mpesa_c2c_name"),
   currency: "KES",
+  approval_required: await getBool("cash_approval_required"),
   note: "Send M-Pesa C2C to this number, then submit the transaction reference. An admin confirms receipt before cash is credited.",
 }));
 
@@ -523,14 +525,20 @@ router.on("POST", "/api/cash/deposit", async ({ req }) => {
       idempotency_key: "deposit:" + user.id + ":" + ref,
       details: { number: MPESA_C2C_NUMBER, submitted_by: user.email },
     });
+    const cashApproval = await getBool("cash_approval_required");
+    let movement = m;
+    if (!cashApproval) {
+      const confirmed = await confirmCashMovement(m.id, 0);
+      if (confirmed) movement = { ...m, status: "confirmed", cash_after: confirmed.cash };
+    }
     await logJournal(user.id, {
-      kind: "cash", symbol: "", strategy: "deposit_request",
+      kind: "cash", symbol: "", strategy: cashApproval ? "deposit_request" : "deposit_auto_confirmed",
       note: `M-Pesa deposit ${amount} KES ref ${ref}`,
       ref_id: `cash:${m.id}`,
-      details: { movement_id: m.id, amount, currency: "KES", reference: ref, status: m.status },
+      details: { movement_id: m.id, amount, currency: "KES", reference: ref, status: movement.status },
     });
     return json({
-      movement: m,
+      movement: movement,
       instructions: `Send KES ${amount.toFixed(2)} via M-Pesa C2C to ${MPESA_C2C_NUMBER} (${MPESA_C2C_NAME}) and keep the transaction code ${ref}. An admin must confirm receipt before cash is credited.`,
     }, 201);
   } catch (e) { return error(400, (e as Error).message); }
@@ -731,6 +739,10 @@ router.on("POST", "/api/orders", async ({ req }) => {
   try {
     const body = await readBody(req);
     const mode = String(body.mode || (paperEnabled() ? "paper" : "live")).toLowerCase();
+    if (mode === "live" && !(await getBool("live_trading_enabled"))) {
+      return error(403, "live trading is disabled by the administrator");
+    }
+    const approvalRequired = await getBool("order_approval_required");
     // Local paper bypasses the approval queue. Hosted live orders, and any
     // explicitly live order, require admin approval.
     if (mode !== "live" && paperEnabled()) {
@@ -750,6 +762,13 @@ router.on("POST", "/api/orders", async ({ req }) => {
       return json(result, 201);
     }
 
+    if (mode === "live" && !approvalRequired) {
+      if (body.confirm !== true) return error(428, "live orders require confirm:true");
+      const result = await executeOrder(user.id, { ...body, mode: "live", confirm: true });
+      await audit(user.id, "order.place", user.tier, { symbol: body.symbol, side: body.side, qty: body.qty, mode: "live", auto: true });
+      return json(result, 201);
+    }
+
     const symbol = String(body.symbol || "").trim().toUpperCase();
     const side = String(body.side || "").trim().toLowerCase();
     const type = String(body.type || "market").trim().toLowerCase();
@@ -765,7 +784,7 @@ router.on("POST", "/api/orders", async ({ req }) => {
     const adminRows: any = await db()`SELECT COUNT(*)::int AS n FROM users WHERE tier = 'Admin' AND disabled = 0`;
     const adminCount = Number(adminRows[0].n) || 0;
     if (adminCount === 0) return error(503, "no active admin available to approve orders");
-    const threshold = Number(process.env.ORDER_CONSENSUS_THRESHOLD || 100000);
+    const threshold = await getNumber("order_consensus_threshold");
     const large = notional >= threshold;
     const required = large ? adminCount : 1;
 
@@ -1799,6 +1818,24 @@ async function adminUser(req: Request) {
   if (user.tier !== "Admin") return { error: error(403, "admin tier required") };
   return { user };
 }
+
+router.on("GET", "/api/admin/settings", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  return json({ settings: await allSettings() });
+});
+
+router.on("POST", "/api/admin/settings", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const body = await readBody(req);
+    const values = body.settings && typeof body.settings === "object" ? body.settings : body;
+    const saved = await setSettings(values, gate.user!.id);
+    await audit(gate.user!.id, "admin.settings", gate.user!.tier, { keys: Object.keys(values) });
+    return json({ settings: saved });
+  } catch (e) { return error(400, (e as Error).message); }
+});
 
 router.on("GET", "/api/admin/overview", async ({ req }) => {
   const gate = await adminUser(req);

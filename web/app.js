@@ -3508,10 +3508,11 @@
       api("GET", "/api/venues").catch(function (e) { return { venues: [], error: e.message }; }),
       api("GET", "/api/admin/cash?status=pending").catch(function (e) { return { movements: [], error: e.message }; }),
       api("GET", "/api/admin/cash/reconcile").catch(function (e) { return { error: e.message }; }),
-      api("GET", "/api/admin/orders/pending").catch(function (e) { return { orders: [], error: e.message }; })
+      api("GET", "/api/admin/orders/pending").catch(function (e) { return { orders: [], error: e.message }; }),
+      api("GET", "/api/admin/settings").catch(function (e) { return { settings: {}, error: e.message }; })
     ]).then(function (res) {
       var ov = res[0] || {}, ready = res[1] || {}, audit = res[2] || {};
-      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {}, hardRes = res[8] || {}, venuesRes = res[9] || {}, cashRes = res[10] || {}, reconRes = res[11] || {}, apprRes = res[12] || {};
+      var usersRes = res[3] || {}, symsRes = res[4] || {}, live = res[5] || {}, gapsRes = res[6] || {}, ledgerRes = res[7] || {}, hardRes = res[8] || {}, venuesRes = res[9] || {}, cashRes = res[10] || {}, reconRes = res[11] || {}, apprRes = res[12] || {}, setRes = res[13] || {};
       if (ov.error) {
         view().innerHTML = "<h2>Admin Console</h2><p class='error'>" + esc(ov.error) + "</p>";
         return;
@@ -3609,6 +3610,16 @@
             "</td><td>" + action + "</td></tr>";
         }).join("") || "<tr><td colspan='9' class='dim'>no journal entries</td></tr>") +
         "</tbody></table></div>" +
+        "<div class='card'><h3>Manual controls</h3>" +
+        "<p class='kpi-l'>These switches apply immediately. Every change is audited.</p>" +
+        "<div class='grid2'>" +
+        "<label><input type='checkbox' id='set-order-approval' style='width:auto'" + ((setRes.settings || {}).order_approval_required === "true" ? " checked" : "") + "> Require admin approval for live orders</label>" +
+        "<label><input type='checkbox' id='set-cash-approval' style='width:auto'" + ((setRes.settings || {}).cash_approval_required === "true" ? " checked" : "") + "> Require admin approval for cash deposits</label>" +
+        "<label><input type='checkbox' id='set-live' style='width:auto'" + ((setRes.settings || {}).live_trading_enabled === "true" ? " checked" : "") + "> Allow live trading</label>" +
+        "<label>Large-move threshold <input id='set-threshold' type='number' min='0' value='" + esc((setRes.settings || {}).order_consensus_threshold || "100000") + "'></label>" +
+        "<label>M-Pesa C2C number <input id='set-mpesa' value='" + esc((setRes.settings || {}).mpesa_c2c_number || "+254713270444") + "'></label>" +
+        "<label>M-Pesa name <input id='set-mpesa-name' value='" + esc((setRes.settings || {}).mpesa_c2c_name || "Mafutani") + "'></label>" +
+        "</div><button type='button' class='primary' id='set-save'>Save controls</button><div id='set-out' class='kpi-l'></div></div>" +
         "<div class='card'><h3>Trade approvals</h3>" +
         "<p class='kpi-l'>pending " + esc((apprRes.orders || []).length) + " · large moves require all active admins</p>" +
         "<table><thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Approvals</th><th>Status</th><th>Action</th></tr></thead><tbody>" +
@@ -3687,6 +3698,22 @@
             .catch(function (e) { alert(e.message); b.disabled = false; });
         };
       });
+      var setSave = document.getElementById("set-save");
+      if (setSave) setSave.onclick = function () {
+        var payload = {
+          order_approval_required: document.getElementById("set-order-approval").checked ? "true" : "false",
+          cash_approval_required: document.getElementById("set-cash-approval").checked ? "true" : "false",
+          live_trading_enabled: document.getElementById("set-live").checked ? "true" : "false",
+          order_consensus_threshold: document.getElementById("set-threshold").value,
+          mpesa_c2c_number: document.getElementById("set-mpesa").value,
+          mpesa_c2c_name: document.getElementById("set-mpesa-name").value
+        };
+        setSave.disabled = true;
+        api("POST", "/api/admin/settings", { settings: payload })
+          .then(function () { document.getElementById("set-out").innerHTML = "<span class='pos'>saved</span>"; })
+          .catch(function (e) { document.getElementById("set-out").innerHTML = showErr(e); })
+          .then(function () { setSave.disabled = false; });
+      };
       view().querySelectorAll("[data-appr-ok]").forEach(function (b) {
         b.onclick = function () {
           var note = prompt("Approval note (optional)") || "";
