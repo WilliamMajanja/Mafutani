@@ -2114,7 +2114,8 @@
         portfolio = p;
         cashOut.textContent = "cash " + num(p.cash, 2);
         var canLive = !!p.live_trading_enabled;
-        liveOut.textContent = canLive ? "live enabled" : "live disabled";
+        liveOut.textContent = canLive ? "live enabled" :
+          ("live disabled" + (p.live_reason ? " — " + p.live_reason : ""));
         liveOut.className = "badge " + (canLive ? "wired" : "locked");
         if (!canLive) {
           // Keep the option visible but say why it is closed, instead of
