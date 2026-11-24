@@ -764,8 +764,16 @@ router.on("POST", "/api/orders", async ({ req }) => {
 
     if (mode === "live" && !approvalRequired) {
       if (body.confirm !== true) return error(428, "live orders require confirm:true");
-      const result = await executeOrder(user.id, { ...body, mode: "live", confirm: true });
+      const result: any = await executeOrder(user.id, { ...body, mode: "live", confirm: true });
       await audit(user.id, "order.place", user.tier, { symbol: body.symbol, side: body.side, qty: body.qty, mode: "live", auto: true });
+      const auto: any = result.order || {};
+      await logJournal(user.id, {
+        kind: "trade", symbol: auto.symbol || String(body.symbol || "").toUpperCase(),
+        strategy: String(body.strategy || "manual"),
+        note: `live ${auto.side || body.side} ${auto.qty || body.qty} ${auto.symbol || body.symbol} ${auto.status || ""} (auto-approved)`.trim(),
+        ref_id: auto.id ? `order:${auto.id}` : "",
+        details: { order_id: auto.id, side: auto.side, qty: auto.qty, price: (result.fill && result.fill.price) || auto.price, status: auto.status, mode: "live", auto_approved: true },
+      });
       return json(result, 201);
     }
 
