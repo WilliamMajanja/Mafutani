@@ -1,0 +1,2 @@
+{"ts":1795546327,"event":"sign_intent","address":"mft15b3f6c35f0530d1557d34ad701a7b4bdd32118e3","next_index_before":0,"need_sigs":1,"max_sigs":1024,"inputs":1,"outputs":2,"amount_base":100000000000000}
+{"ts":1795546331,"event":"sign_committed","next_index_before":0,"next_index_after":1}

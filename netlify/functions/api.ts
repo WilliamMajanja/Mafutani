@@ -866,6 +866,8 @@ router.on("GET", "/api/universe", async () => {
     const syms: any = await listSymbols(db());
     const series = await dailySeries(db(), 120);
     const quotes = await quoteMap(db());
+    const exchangeRows: any = await db()`SELECT code, region FROM exchanges`;
+    const exRegion = new Map<string, string>(exchangeRows.map((e: any) => [e.code, String(e.region || "GLOBAL")]));
     const rows: any[] = [];
     for (const s of syms) {
       const candles = series.get(s.symbol);
@@ -883,12 +885,16 @@ router.on("GET", "/api/universe", async () => {
         for (let i = 1; i < closes.length; i++) e = closes[i] * k + e * (1 - k);
         return e;
       })();
+      const lastTs = Number(candles[candles.length - 1].ts);
       rows.push({
-        symbol: s.symbol, name: s.name, asset_type: s.asset_type, region: s.exchange,
+        symbol: s.symbol, name: s.name, asset_type: s.asset_type,
+        exchange: s.exchange, region: exRegion.get(s.exchange) || "GLOBAL",
         last, change_pct: chg, rsi14: a.rsi14, trend: a.trend, score: a.score,
         vol_ann_pct: a.vol_ann_pct, anomaly_score: a.anomaly_score,
         above_ema21: last != null && last > ema21,
-        volume: scored.volume,
+        volume: scored.volume, bars: candles.length,
+        last_date: new Date(lastTs * 1000).toISOString().slice(0, 10),
+        last_ts: lastTs,
       });
     }
     const changes = rows.map((r) => r.change_pct).filter((x) => x != null) as number[];
@@ -921,7 +927,39 @@ router.on("GET", "/api/universe", async () => {
     const sorted = rows.filter((r) => r.change_pct != null).sort((a, b) => b.change_pct - a.change_pct);
     const up = rows.filter((r) => (r.change_pct || 0) > 0).length;
     const down = rows.filter((r) => (r.change_pct || 0) < 0).length;
+    const byRegion: Record<string, any> = {};
+    for (const r of rows) {
+      const k = r.region || "GLOBAL";
+      const b = byRegion[k] = byRegion[k] || { count: 0, up: 0, down: 0, changes: [] as number[] };
+      b.count += 1;
+      if (r.change_pct > 0) b.up += 1; else if (r.change_pct < 0) b.down += 1;
+      if (r.change_pct != null) b.changes.push(r.change_pct);
+    }
+    const regions = Object.keys(byRegion).sort().map((k) => ({
+      region: k, count: byRegion[k].count, up: byRegion[k].up, down: byRegion[k].down,
+      avg_change_pct: avg(byRegion[k].changes) == null ? null : Number(avg(byRegion[k].changes)!.toFixed(2)),
+    }));
+    const dates = rows.map((r) => r.last_ts).filter((x) => x > 0).sort((a, b) => a - b);
+    const latest = dates.length ? new Date(dates[dates.length - 1] * 1000).toISOString().slice(0, 10) : null;
+    const earliest = dates.length ? new Date(dates[0] * 1000).toISOString().slice(0, 10) : null;
+    const today = new Date().toISOString().slice(0, 10);
+    const coverage = {
+      instruments: syms.length,
+      with_data: rows.length,
+      missing_data: Math.max(0, syms.length - rows.length),
+      earliest_last_bar: earliest,
+      latest_last_bar: latest,
+      bars_window: 120,
+      source: "Yahoo Finance daily history",
+      delayed: true,
+      partial_last_bar: latest === today,
+      note: latest === today
+        ? "The latest bar may be today's incomplete session. Changes are last stored bar vs prior bar, not a unified global close."
+        : "Daily bars; not a real-time feed.",
+    };
     return json({
+      coverage,
+      regions,
       as_of: new Date().toISOString(),
       scanned: rows.length,
       breadth: {
@@ -939,6 +977,7 @@ router.on("GET", "/api/universe", async () => {
       classes,
       gainers: sorted.slice(0, 8),
       losers: sorted.slice(-8).reverse(),
+      instruments: rows.sort((a, b) => a.symbol.localeCompare(b.symbol)),
       regime: (avg(changes) || 0) > 0 && up > down ? "risk-on" : (avg(changes) || 0) < 0 && down > up ? "risk-off" : "mixed",
     });
   } catch (e) { return error(500, (e as Error).message); }
@@ -1102,6 +1141,29 @@ router.on("GET", "/api/kyc/me", async ({ req }) => {
   if (sess.length === 0) return error(401, "unauthorized");
   return json({ kyc: { status: "none" } });
 });
+router.on("POST", "/api/ux/event", async ({ req }) => {
+  try {
+    const user = await currentUser(req);
+    if (!user) return new Response(null, { status: 204 });
+    const body = await readBody(req);
+    const event = String(body.event || "event").slice(0, 80);
+    const page = String(body.page || "").slice(0, 120);
+    const symbol = String(body.symbol || "").slice(0, 32).toUpperCase();
+    const detail = body.detail && typeof body.detail === "object" ? body.detail : {};
+    const note = String(body.note || "").slice(0, 1000);
+    await logJournal(user.id, {
+      kind: "ux",
+      symbol,
+      strategy: event,
+      note: note || `${event}${page ? " @ " + page : ""}`,
+      details: { page, ...detail },
+    });
+    return new Response(null, { status: 204 });
+  } catch {
+    return new Response(null, { status: 204 });
+  }
+});
+
 router.on("POST", "/api/terminal/command", async ({ req }) => {
   try {
     const body = await readBody(req);

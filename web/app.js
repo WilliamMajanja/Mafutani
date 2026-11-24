@@ -86,6 +86,22 @@
     return local.replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
 
+  // UX telemetry. Journaled server-side for operators; rate-limited per event
+  // so a broken render loop cannot flood the ledger.
+  var uxLast = {};
+  function ux(event, detail, note) {
+    try {
+      var now = Date.now();
+      if (uxLast[event] && now - uxLast[event] < 1500) return;
+      uxLast[event] = now;
+      detail = detail || {};
+      api("POST", "/api/ux/event", {
+        event: event, page: location.hash || "", symbol: detail.symbol || "",
+        detail: detail, note: note || ""
+      }).catch(function () { /* telemetry must never break UX */ });
+    } catch (e) { /* ignore */ }
+  }
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -1011,7 +1027,7 @@
       "<label>Max spread bps <input id='f-spread' type='number' value='100'></label>" +
       "<label>Exchange <select id='f-ex'><option value=''>all</option></select></label>" +
       "<label>Asset <select id='f-asset'><option value=''>all</option>" +
-      "<option>crypto</option><option>equity</option><option>fx</option><option>commodity</option></select></label>" +
+      "<option>crypto</option><option>equity</option><option>fx</option><option>commodity</option><option>commodity_etf</option><option>index</option><option>future</option></select></label>" +
       "<label>Region <select id='f-region'><option value=''>all</option>" +
       "<option value='AMER'>Americas</option><option value='EUROPE'>Europe</option>" +
       "<option value='MEA'>Middle East &amp; Africa</option>" +
@@ -1283,9 +1299,24 @@
           "</td><td>" + esc(r.trend || "—") + "</td><td>" + (r.rsi14 == null ? "—" : num(r.rsi14, 1)) +
           "</td><td>" + esc(r.asset_type) + "</td></tr>";
       }).join("");
+      var cov = u.coverage || {};
+      var regRows = (u.regions || []).map(function (r) {
+        return "<tr><td>" + esc(r.region) + "</td><td>" + esc(r.count) + "</td><td>" + esc(r.up) +
+          "</td><td>" + esc(r.down) + "</td><td class='" + ((r.avg_change_pct || 0) >= 0 ? "pos" : "neg") + "'>" +
+          (r.avg_change_pct == null ? "—" : (r.avg_change_pct >= 0 ? "+" : "") + num(r.avg_change_pct, 2) + "%") + "</td></tr>";
+      }).join("");
+      var allRows = (u.instruments || []).map(function (r) {
+        return "<tr><td>" + esc(r.symbol) + "</td><td>" + esc(r.asset_type) + "</td><td>" + esc(r.region) +
+          "</td><td>" + num(r.last) + "</td><td class='" + ((r.change_pct || 0) >= 0 ? "pos" : "neg") + "'>" +
+          (r.change_pct == null ? "—" : (r.change_pct >= 0 ? "+" : "") + num(r.change_pct, 2) + "%") +
+          "</td><td>" + (r.rsi14 == null ? "—" : num(r.rsi14, 1)) + "</td><td>" + esc(r.trend) +
+          "</td><td>" + (r.above_ema21 ? "yes" : "no") + "</td><td>" + esc(r.last_date || "") + "</td></tr>";
+      }).join("");
       host.innerHTML = "<h3>Universe overview</h3>" +
         "<p class='kpi-l'>" + esc(u.scanned) + " instruments · regime <b>" + esc(u.regime) +
-        "</b> · as of " + esc(u.as_of || "") + "</p>" +
+        "</b> · coverage " + esc(cov.with_data) + "/" + esc(cov.instruments) +
+        " · bars through " + esc(cov.latest_last_bar || "—") + " · " + esc(cov.source || "") + "</p>" +
+        (cov.partial_last_bar ? "<p class='warn' style='padding:6px 8px;border:1px solid #b45309;background:#1f1300'>" + esc(cov.note) + "</p>" : "<p class='kpi-l'>" + esc(cov.note || "") + "</p>") +
         "<div class='cards'>" +
         "<div class='card kpi'><h3>Breadth</h3><div class='kpi-v'><span class='pos'>" + esc(b.up) +
         "</span> / <span class='neg'>" + esc(b.down) + "</span></div><div class='kpi-l'>up / down · " +
@@ -1301,8 +1332,19 @@
         "</div>" +
         "<div class='grid2'>" +
         "<div><h4>By asset class</h4><table><thead><tr><th>Class</th><th>N</th><th>Up</th><th>Down</th><th>Avg chg</th><th>Avg RSI</th></tr></thead><tbody>" + cls + "</tbody></table></div>" +
+        "<div><h4>By region</h4><table><thead><tr><th>Region</th><th>N</th><th>Up</th><th>Down</th><th>Avg chg</th></tr></thead><tbody>" + regRows + "</tbody></table></div>" +
+        "</div>" +
+        "<div class='grid2'>" +
         "<div><h4>Movers</h4><table><thead><tr><th>Symbol</th><th>Last</th><th>Day</th><th>Trend</th><th>RSI</th><th>Class</th></tr></thead><tbody>" + moverRows + "</tbody></table></div>" +
-        "</div>";
+        "<div><h4>Coverage</h4><div class='card'><div class='kv'><span>instruments</span><b>" + esc(cov.instruments) + "</b></div>" +
+        "<div class='kv'><span>with data</span><b>" + esc(cov.with_data) + "</b></div>" +
+        "<div class='kv'><span>missing</span><b>" + esc(cov.missing_data) + "</b></div>" +
+        "<div class='kv'><span>earliest last bar</span><b>" + esc(cov.earliest_last_bar || "—") + "</b></div>" +
+        "<div class='kv'><span>latest last bar</span><b>" + esc(cov.latest_last_bar || "—") + "</b></div>" +
+        "<div class='kv'><span>window</span><b>" + esc(cov.bars_window) + " daily bars</b></div></div></div>" +
+        "</div>" +
+        "<details style='margin-top:8px'><summary class='kpi-l'>All instruments (" + (u.instruments || []).length + ")</summary>" +
+        "<table><thead><tr><th>Symbol</th><th>Class</th><th>Region</th><th>Last</th><th>Day</th><th>RSI</th><th>Trend</th><th>Above EMA21</th><th>Last bar</th></tr></thead><tbody>" + allRows + "</tbody></table></details>";
     }).catch(function (e) {
       var host = document.getElementById("an-universe");
       if (host) host.innerHTML = showErr(e);
@@ -1432,14 +1474,21 @@
   function pageAnomalies() {
     hideLogin();
     view().innerHTML = "<h2>Anomaly Radar</h2>" +
+      "<div class='row'><button type='button' class='primary' id='anm-scan'>Run scan — all instruments</button>" +
+      "<span class='kpi-l' id='anm-ts'></span></div>" +
       "<div class='kpi-l' id='anm-sub'>scanning…</div>" +
       "<div id='anm-kinds' class='kpi-l'></div>" +
       "<label style='display:inline-block;margin:8px 0'><input type='checkbox' id='anm-all' style='width:auto'> flagged only (hide clean tape)</label>" +
       "<div id='anm-out'></div>";
     function load() {
       var flaggedOnly = document.getElementById("anm-all") && document.getElementById("anm-all").checked;
-      document.getElementById("anm-out").innerHTML = "<p class='kpi-l'>scanning…</p>";
-      api("GET", "/api/anomalies").then(function (d) {
+      var scanBtn = document.getElementById("anm-scan");
+      if (scanBtn) scanBtn.disabled = true;
+      document.getElementById("anm-out").innerHTML = "<p class='kpi-l'>scanning all instruments…</p>";
+      api("GET", "/api/anomalies?scan=1").then(function (d) {
+        if (scanBtn) scanBtn.disabled = false;
+        var tsEl = document.getElementById("anm-ts");
+        if (tsEl) tsEl.textContent = "last scan " + new Date().toISOString().slice(11, 19) + "Z";
         var all = d.results || [];
         var list = all.filter(function (r) {
           return !flaggedOnly || (Number(r.anomaly_score) || 0) > 0;
@@ -1470,10 +1519,15 @@
               num(r.anomaly_score, 1) + "</b></td><td>" + (al.length ? al.map(anBadge).join("<br>") : "<span class='dim'>—</span>") + "</td></tr>";
           }).join("") + "</table>" :
           "<p class='kpi-l'>no anomalies — quiet tape across the universe</p>";
-      }).catch(function (e) { document.getElementById("anm-out").innerHTML = showErr(e); });
+      }).catch(function (e) {
+        if (scanBtn) scanBtn.disabled = false;
+        document.getElementById("anm-out").innerHTML = showErr(e);
+      });
     }
     var box = document.getElementById("anm-all");
     if (box) box.addEventListener("change", load);
+    var scanBtn = document.getElementById("anm-scan");
+    if (scanBtn) scanBtn.addEventListener("click", load);
     load();
   }
 
@@ -2361,12 +2415,18 @@
 
     function send(payload) {
       out("<p class='muted'>placing…</p>");
+      var started = Date.now();
+      ux("ticket_submit", { symbol: payload.symbol, side: payload.side, qty: payload.qty, type: payload.type, mode: payload.mode }, "ticket submit");
       api("POST", "/api/orders", payload)
         .then(function (r) {
+          ux("ticket_result", { symbol: payload.symbol, side: payload.side, status: (r.order && r.order.status) || "", mode: payload.mode, ms: Date.now() - started }, "order accepted");
           out(renderOrderResult(r));
           return loadPortfolio();
         })
-        .catch(function (e) { out(showErr(e)); });
+        .catch(function (e) {
+          ux("ticket_error", { symbol: payload.symbol, side: payload.side, mode: payload.mode, message: e.message, status: e.status, ms: Date.now() - started }, "ticket rejected");
+          out(showErr(e));
+        });
     }
 
     function order(side) {
@@ -2416,6 +2476,7 @@
       if (!list.length) { out("<p class='muted'>already flat</p>"); return; }
       var names = list.map(function (p) { return p.symbol; }).join(", ");
       out("<p class='muted'>flattening " + esc(names) + "…</p>");
+      ux("ticket_flatten", { symbols: names, mode: modeEl.value }, "flatten all");
       api("POST", "/api/positions/flatten", { mode: modeEl.value })
         .then(function (r) {
           var bits = ["<div class='sig sig-flat'><span class='sig-label'>FLAT</span>" +
@@ -3047,47 +3108,124 @@
 
   function pagePortfolio() {
     hideLogin();
-    view().innerHTML = "<h2>Portfolio</h2><div id='out'>loading…</div>";
-    Promise.all([
-      api("GET", "/api/portfolio"),
-      api("GET", "/api/orders?limit=10").catch(function () { return { orders: [] }; })
-    ]).then(function (res) {
-      var p = res[0] || {}, sum = p.summary || {};
-      var tot = sum.total_pnl, totCls = tot > 0 ? "up" : (tot < 0 ? "down" : "");
-      var cash = p.cash != null ? +p.cash : 0;
-      var html = "<div class='cards'>" +
-        "<div class='card kpi'><h3>Cash Balance</h3><div class='kpi-v'>" + num(cash) +
-        "</div><div class='kpi-l'>" + esc(p.tier || "paper") + " account</div></div>" +
-        "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" +
-        (tot > 0 ? "+" : "") + num(tot) + "</div><div class='kpi-l'>" +
-        (sum.return_pct == null ? "since inception" : num(sum.return_pct, 4) + "% return") + "</div></div>" +
-        "<div class='card kpi'><h3>Realized</h3><div class='kpi-v'>" + num(sum.realized_pnl) +
-        "</div><div class='kpi-l'>closed trades</div></div>" +
-        "<div class='card kpi'><h3>Unrealized</h3><div class='kpi-v'>" + num(sum.unrealized_pnl) +
-        "</div><div class='kpi-l'>open positions</div></div></div>";
-      html += "<h3>Positions</h3>" + positionRows(p.positions, {
-        showRealized: true,
-        mode: p.live_trading_enabled ? "LIVE" : "paper",
-        empty: "no open positions — the book is flat"
+    view().innerHTML = "<h2>Portfolio</h2><p class='kpi-l' id='pf-updated'>loading…</p><div id='out'>loading…</div>";
+    function load() {
+      Promise.all([
+        api("GET", "/api/portfolio"),
+        api("GET", "/api/orders?limit=25").catch(function () { return { orders: [] }; }),
+        api("GET", "/api/risk").catch(function () { return {}; })
+      ]).then(function (res) {
+        var p = res[0] || {}, sum = p.summary || {}, risk = res[2] || {};
+        var tot = sum.total_pnl, totCls = tot > 0 ? "up" : (tot < 0 ? "down" : "");
+        var cash = p.cash != null ? +p.cash : 0;
+        var equity = p.equity != null ? +p.equity : cash;
+        var mv = sum.market_value_securities || 0;
+        var comm = p.commcoin || {};
+        var exposure = equity ? (mv / equity) * 100 : 0;
+        var upd = document.getElementById("pf-updated");
+        if (upd) upd.textContent = "updated " + new Date().toISOString().slice(11, 19) + "Z · " +
+          (p.paper_enabled === false ? "LIVE-ONLY" : "paper") + " · " + (p.email || p.tier || "");
+
+        var positions = p.positions || [];
+        var alloc = positions.map(function (x) { return { label: x.symbol, v: +x.market_value || 0 }; })
+          .filter(function (x) { return x.v > 0; })
+          .sort(function (a, b) { return b.v - a.v; });
+        var totalAlloc = cash + alloc.reduce(function (a, x) { return a + x.v; }, 0);
+        function bar(v, color) {
+          var pct = totalAlloc ? (v / totalAlloc) * 100 : 0;
+          return "<div style='height:8px;background:var(--panel3);border-radius:2px;overflow:hidden;margin:2px 0'>" +
+            "<div style='height:100%;width:" + Math.min(100, Math.max(0, pct)).toFixed(2) + "%;background:" + color + "'></div></div>";
+        }
+        var allocHtml = "<div class='card'><h3>Allocation</h3>" +
+          "<div class='kv'><span>Cash</span><b>" + num(cash) + "</b></div>" + bar(cash, "var(--accent)") +
+          alloc.map(function (x) {
+            return "<div class='kv'><span>" + esc(x.label) + "</span><b>" + num(x.v) + "</b></div>" +
+              bar(x.v, "var(--up)");
+          }).join("") +
+          "<p class='kpi-l'>securities " + num(mv) + " · CommCoin " + num(comm.value_usd) + "</p></div>";
+
+        var riskHtml = "<div class='card'><h3>Risk &amp; venue</h3>" +
+          "<div class='kv'><span>max notional</span><b>" + num(risk.max_notional) + "</b></div>" +
+          "<div class='kv'><span>max position</span><b>" + num(risk.max_position_qty) + "</b></div>" +
+          "<div class='kv'><span>max daily loss</span><b>" + num(risk.max_daily_loss) + "</b></div>" +
+          "<div class='kv'><span>kill switch</span><b class='" + (risk.kill_switch ? "neg" : "pos") + "'>" +
+          (risk.kill_switch ? "ON" : "off") + "</b></div>" +
+          "<div class='kv'><span>venue</span><b>" + esc(p.live_venue || (p.live_trading_enabled ? "configured" : "offline")) +
+          "</b></div><p class='kpi-l'>" + esc(p.live_reason || (p.live_trading_enabled ? "live execution enabled" : "")) + "</p></div>";
+
+        var commHtml = "<div class='card'><h3>CommCoin</h3>" +
+          "<div class='kpi-v'>" + (comm.available ? num(comm.value_usd) : "—") + "</div>" +
+          "<p class='kpi-l'>" + (comm.available
+            ? num(comm.balance_mft, 4) + " " + esc(comm.coin_symbol || "MFT") + " · reference valuation"
+            : esc(comm.reason || "chain service not connected")) + "</p></div>";
+
+        var html = "<div class='row spb'><div class='row'>" +
+          "<button type='button' id='pf-refresh'>Refresh</button>" +
+          "<button type='button' id='pf-export'>Export snapshot</button>" +
+          (!p.paper_enabled ? "<span class='kpi-l'>flatten is unavailable on live-only; use the venue ticket</span>"
+            : "<button type='button' id='pf-flatten'>Flatten all (paper)</button>") +
+          "</div><span class='kpi-l'>equity " + num(equity) + "</span></div>" +
+          "<div class='cards'>" +
+          "<div class='card kpi'><h3>Cash</h3><div class='kpi-v'>" + num(cash) + "</div><div class='kpi-l'>" + esc(p.display_name || p.email || p.tier || "") + "</div></div>" +
+          "<div class='card kpi'><h3>Equity</h3><div class='kpi-v'>" + num(equity) + "</div><div class='kpi-l'>starting " + num(sum.starting_cash) + "</div></div>" +
+          "<div class='card kpi'><h3>Total P&amp;L</h3><div class='kpi-v " + totCls + "'>" + (tot > 0 ? "+" : "") + num(tot) +
+          "</div><div class='kpi-l'>" + (sum.return_pct == null ? "—" : num(sum.return_pct, 4) + "% return") + "</div></div>" +
+          "<div class='card kpi'><h3>Exposure</h3><div class='kpi-v'>" + num(exposure, 1) + "%</div><div class='kpi-l'>securities " + num(mv) + "</div></div>" +
+          "</div>" +
+          "<div class='cards'>" +
+          "<div class='card kpi'><h3>Realized</h3><div class='kpi-v'>" + num(sum.realized_pnl) + "</div><div class='kpi-l'>closed trades</div></div>" +
+          "<div class='card kpi'><h3>Unrealized</h3><div class='kpi-v'>" + num(sum.unrealized_pnl) + "</div><div class='kpi-l'>open marks</div></div>" +
+          "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + positions.length + "</div><div class='kpi-l'>" +
+          positions.filter(function (x) { return +x.qty !== 0; }).length + " live</div></div>" +
+          "</div>" +
+          "<div class='grid2'>" + allocHtml + riskHtml + "</div>" +
+          commHtml +
+          "<h3>Positions</h3>" + positionRows(positions, {
+            showRealized: true,
+            mode: p.live_trading_enabled ? "LIVE" : (p.paper_enabled === false ? "LIVE-ONLY" : "paper"),
+            empty: "no open positions — the book is flat"
+          }) +
+          "<h3>All assets</h3><div id='port-assets'></div>" +
+          "<h3>Fills (latest 50)</h3><table><tr><th>ID</th><th>Order</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>Time</th></tr>" +
+          ((p.fills || []).map(function (f) {
+            return "<tr><td>" + esc(f.id) + "</td><td>" + esc(f.order_id) + "</td><td>" + esc(f.symbol) +
+              "</td><td>" + esc(f.side) + "</td><td>" + num(f.qty) + "</td><td>" + num(f.price) +
+              "</td><td>" + num(f.fee) + "</td><td>" + esc(fmtTs(f.ts)) + "</td></tr>";
+          }).join("") || "<tr><td colspan='8' class='dim'>no fills</td></tr>") + "</table>" +
+          "<h3>Recent orders</h3><table><tr><th>ID</th><th>Side</th><th>Qty</th><th>Symbol</th><th>Type</th><th>Status</th><th>Mode</th><th>Venue ID</th></tr>" +
+          ((res[1].orders || res[1].rows || []).map(function (o) {
+            return "<tr><td>" + esc(o.id) + "</td><td>" + esc(o.side) + "</td><td>" + num(o.qty) +
+              "</td><td>" + esc(o.symbol) + "</td><td>" + esc(o.type || o.order_type) + "</td><td>" +
+              esc(o.status) + "</td><td>" + esc(o.mode) + "</td><td>" + esc(o.venue_order_id || "—") + "</td></tr>";
+          }).join("") || "<tr><td colspan='8' class='dim'>no orders</td></tr>") + "</table>";
+        document.getElementById("out").innerHTML = html;
+        mountAssets("port-assets");
+        var rb = document.getElementById("pf-refresh");
+        if (rb) rb.onclick = load;
+        var ex = document.getElementById("pf-export");
+        if (ex) ex.onclick = function () {
+          var blob = new Blob([JSON.stringify({ generated_at: new Date().toISOString(), portfolio: p, risk: risk }, null, 2)], { type: "application/json" });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "mafutani-portfolio.json";
+          a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        };
+        var fl = document.getElementById("pf-flatten");
+        if (fl) fl.onclick = function () {
+          if (!confirm("Flatten every open paper position at market?")) return;
+          fl.disabled = true;
+          api("POST", "/api/positions/flatten", {}).then(function (r) {
+            toast("Flattened " + (r.count || 0) + " position(s)", "success");
+            load();
+          }).catch(function (e) { alert(e.message); fl.disabled = false; });
+        };
+      }).catch(function (e) {
+        var out = document.getElementById("out");
+        if (out) out.innerHTML = showErr(e);
       });
-      html += "<h3>All assets</h3><div id='port-assets'></div>";
-      html += "<h3>Fills (latest 50)</h3><table><tr><th>ID</th><th>Order</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>Time</th></tr>" +
-        ((p.fills || []).map(function (f) {
-          var qf = +f.qty || 0;
-          return "<tr><td>" + esc(f.id) + "</td><td>" + esc(f.order_id) + "</td><td>" + esc(f.symbol) +
-            "</td><td>" + (qf >= 0 ? "buy" : "sell") + "</td><td>" + num(Math.abs(qf)) + "</td><td>" +
-            num(f.price) + "</td><td>" + num(f.fee) + "</td><td>" + esc(fmtTs(f.ts)) + "</td></tr>";
-        }).join("")) + "</table>";
-      var ords = res[1].orders || res[1].rows || [];
-      html += "<h3>Recent orders</h3><table><tr><th>ID</th><th>Side</th><th>Qty</th><th>Symbol</th><th>Type</th><th>Status</th><th>Mode</th></tr>" +
-        ords.map(function (o) {
-          return "<tr><td>" + esc(o.id) + "</td><td>" + esc(o.side) + "</td><td>" + num(o.qty) +
-            "</td><td>" + esc(o.symbol) + "</td><td>" + esc(o.type || o.order_type) + "</td><td>" +
-            esc(o.status) + "</td><td>" + esc(o.mode) + "</td></tr>";
-        }).join("") + "</table>";
-      document.getElementById("out").innerHTML = html;
-      mountAssets("port-assets");
-    }).catch(function (e) { document.getElementById("out").innerHTML = showErr(e); });
+    }
+    load();
   }
 
   function pageJournal() {
@@ -3804,6 +3942,14 @@
       };
     }
   } catch (e) { /* storage optional */ }
+
+  window.addEventListener("error", function (e) {
+    ux("js_error", { message: e.message || "", source: e.filename || "", line: e.lineno || 0, col: e.colno || 0 });
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason;
+    ux("promise_rejection", { message: (r && r.message) ? r.message : String(r || "") });
+  });
 
   window.addEventListener("hashchange", router);
   try { bindAuth(); } catch (e) { console.error("bindAuth failed:", e); }
