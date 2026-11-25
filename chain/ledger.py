@@ -139,7 +139,10 @@ def make_block_reward_tx(height, epoch, recipient_address):
         "epoch": int(epoch),
         "inputs": [],
         "outputs": [make_output(recipient_address, reward, int(epoch))],
-        "memo": "block reward",
+        # Height in the memo makes each subsidy tx unique. Without it, two
+        # blocks paying the same address in the same epoch produce the same
+        # txid and the second insert fails on the txs primary key.
+        "memo": "block reward h=%d" % int(height),
     }
 
 
