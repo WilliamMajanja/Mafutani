@@ -4252,6 +4252,26 @@
       var pb = document.getElementById("palette-btn");
       if (pb) pb.onclick = function () { window.CommandPalette.toggle(); };
     }
+    var navToggle = document.getElementById("nav-toggle");
+    var navEl = document.getElementById("nav");
+    if (navToggle && navEl) {
+      navToggle.onclick = function () {
+        var open = navEl.classList.toggle("open");
+        navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+      navEl.querySelectorAll("a").forEach(function (a) {
+        a.addEventListener("click", function () {
+          navEl.classList.remove("open");
+          navToggle.setAttribute("aria-expanded", "false");
+        });
+      });
+      window.addEventListener("resize", function () {
+        if (window.innerWidth > 900) {
+          navEl.classList.remove("open");
+          navToggle.setAttribute("aria-expanded", "false");
+        }
+      });
+    }
     var more = document.getElementById("nav-more");
     if (more) {
       // Close after choosing a destination, and on any outside click.

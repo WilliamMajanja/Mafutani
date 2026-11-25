@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#04070a">
 <meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mafutani">
+<link rel="manifest" href="manifest.webmanifest">
 <title>Mafutani Consolidation Trading Application</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,6 +17,7 @@
 <div id="disclaimer" role="banner"><span id="disc-text">NOT FINANCIAL ADVICE. Trading mode is environment-bound: local development is PAPER; hosted deployments are LIVE-ONLY and reject paper orders. Live MT5 orders require the configured bridge, tier permission and explicit confirmation. CommCoin/MFT and M-Pesa off-ramp require the configured chain service; MFT is experimental and you can lose all value. Market data is delayed daily history from Yahoo Finance. Past performance does not predict future results. <a href="#/policies" style="color:inherit;text-decoration:underline">Policies</a></span><button id="disc-close" type="button" aria-label="Dismiss disclaimer" title="Dismiss">×</button></div>
 <header id="topbar">
   <span id="logo" title="Mafutani Consolidation Trading Application">MAFUTANI</span>
+  <button id="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
   <nav id="nav" aria-label="Primary">
     <a href="#/dashboard">Dashboard</a>
     <a href="#/screener">Screener</a>

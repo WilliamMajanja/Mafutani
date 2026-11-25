@@ -1,0 +1,11 @@
+{
+  "name": "Mafutani Trading Terminal",
+  "short_name": "Mafutani",
+  "start_url": "/#/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#04070a",
+  "theme_color": "#04070a",
+  "orientation": "any",
+  "description": "Mafutani live-only trading terminal, research workspace and CommCoin node console."
+}

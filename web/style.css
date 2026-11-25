@@ -987,3 +987,100 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 }
 .wiki-link:hover { border-color: var(--accent); background: var(--panel3); }
 #wiki-body h3 { margin-top: 0; }
+
+/* ---- responsive: tablet / phone / portable ---- */
+#nav-toggle {
+  display: none; background: var(--panel2); border: 1px solid var(--line-hi);
+  color: var(--txt); border-radius: 4px; padding: 4px 9px; font-size: 16px;
+  line-height: 1; cursor: pointer;
+}
+#nav-toggle:hover { border-color: var(--accent); }
+button, a, input, select, textarea { touch-action: manipulation; }
+button, #nav a, #nav-more > summary { -webkit-tap-highlight-color: transparent; }
+#view { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+#statusbar { padding-bottom: max(5px, env(safe-area-inset-bottom)); }
+
+@media (max-width: 1024px) {
+  #topbar { gap: 8px; padding: 6px 10px; }
+  #nav > a, #nav-more > summary { padding: 5px 6px; font-size: 10px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  #view { padding: 14px 12px 28px; }
+}
+
+@media (max-width: 900px) {
+  #topbar { grid-template-columns: auto auto 1fr; align-items: center; }
+  #nav-toggle { display: inline-block; order: 2; }
+  #top-actions { order: 3; justify-self: end; }
+  #nav {
+    display: none; grid-column: 1 / -1; width: 100%; order: 4;
+    flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+    border-radius: 6px; padding: 6px; gap: 2px;
+  }
+  #nav.open { display: flex; }
+  #nav > a, #nav-more > summary {
+    font-size: 12px; padding: 9px 10px; border-radius: 4px;
+  }
+  #nav-more { width: 100%; }
+  #nav-more .nav-menu {
+    position: static; margin: 4px 0 4px 8px; min-width: 0;
+    box-shadow: none; border-color: var(--line); width: calc(100% - 8px);
+  }
+  #nav-more .nav-menu a { padding: 8px 9px; font-size: 11px; }
+  #tape { font-size: 10px; }
+}
+
+@media (max-width: 640px) {
+  body { font-size: 13px; }
+  #view { padding: 10px 8px 22px; }
+  main h2 { font-size: 15px; }
+  .cards { grid-template-columns: 1fr; }
+  .quote-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quote-cell { padding: 6px 8px; }
+  .quote-cell .v { font-size: 13px; }
+  .row { gap: 6px; }
+  .row > label, .row > input, .row > select, .row > button { min-width: 0; }
+  .row input:not([type=checkbox]), .row select { width: 100%; max-width: 100%; }
+  label { display: flex; flex-direction: column; gap: 3px; }
+  label input[type=checkbox] { align-self: flex-start; }
+  input, select, textarea { font-size: 16px; } /* prevents iOS zoom on focus */
+  button, .btn { min-height: 38px; padding: 8px 11px; }
+  main table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  main table thead, main table tbody { display: table; width: 100%; }
+  th, td { white-space: nowrap; }
+  #login-section { margin: 18px 10px; padding: 18px 14px; }
+  #login-form .row { flex-direction: column; align-items: stretch; }
+  #login-form .row button { width: 100%; }
+  #statusbar { flex-direction: column; align-items: flex-start; gap: 6px; }
+  #statusbar .sb-right { margin-left: 0; width: 100%; }
+  #statusbar #userbox { margin-left: 0; width: 100%; flex-wrap: wrap; }
+  #terminal-panel { width: 100vw; left: 0; right: 0; max-height: 70vh; }
+  canvas.chart { height: 220px; }
+  canvas.rsi { height: 86px; }
+  #disclaimer { font-size: 10px; line-height: 1.35; padding: 5px 8px; }
+  #disclaimer #disc-close { flex: 0 0 auto; }
+  #palette { padding: 8vh 8px 8px; }
+  .base-card { min-width: 100%; max-width: 100%; }
+  .grid2 { grid-template-columns: 1fr; }
+  .kpi-v { font-size: 20px; }
+}
+
+@media (max-width: 380px) {
+  #logo { font-size: 12px; letter-spacing: 1px; }
+  #logo::after { display: none; }
+  .quote-grid { grid-template-columns: 1fr; }
+  #view { padding: 8px 6px 18px; }
+}
+
+/* cards: grid on every breakpoint (overrides earlier flex variant) */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+@media (max-width: 640px) { .cards { grid-template-columns: 1fr; } }
+
+/* phone status bar: keep mode, tier, clock and account; drop verbose hints */
+@media (max-width: 640px) {
+  #statusbar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #statusbar .sb-right { display: none; }
+  #statusbar #userbox { width: auto; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+  #disclaimer { max-height: 84px; overflow-y: auto; font-size: 9.5px; line-height: 1.3; }
+  .login-hint { font-size: 10px; }
+  #tape-track { font-size: 10px; animation-duration: 60s; }
+}
