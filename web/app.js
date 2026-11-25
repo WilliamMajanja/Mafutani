@@ -309,12 +309,13 @@
           (sum.return_pct == null ? "" : " · " + num(sum.return_pct, 4) + "%") + "</div></div>" +
           "<div class='card kpi'><h3>Equity</h3><div class='kpi-v'>" + num(p.equity != null ? p.equity : cash) +
           "</div><div class='kpi-l'>securities " + num(p.market_value_securities) + " · CommCoin " + num(p.commcoin && p.commcoin.value_usd) + "</div></div>" +
-          "<div class='card kpi'><h3>CommCoin</h3><div class='kpi-v'>" +
-          (p.commcoin && p.commcoin.value_usd != null ? num(p.commcoin.value_usd) : "—") +
+          "<div class='card kpi'><h3>CommCoin Wallet</h3><div class='kpi-v'>" +
+          (p.commcoin && p.commcoin.available ? num(p.commcoin.balance_mft, 4) + " " + esc(p.commcoin.coin_symbol || "MFT") : "—") +
           "</div><div class='kpi-l'>" +
           (p.commcoin && p.commcoin.available
-            ? num(p.commcoin.balance_mft, 4) + " " + esc(p.commcoin.coin_symbol || "MFT") +
-              (p.commcoin.market_price_usd ? " @ $" + num(p.commcoin.market_price_usd, 4) : " · no market price set")
+            ? (p.commcoin.value_usd != null
+                ? "value " + num(p.commcoin.value_usd) + " @ $" + num(p.commcoin.market_price_usd, 4)
+                : "no market price · excluded from equity")
             : esc((p.commcoin && p.commcoin.reason) || "chain not connected")) +
           "</div></div>" +
           "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + poss.length +
@@ -3182,6 +3183,13 @@
           "<div class='card kpi'><h3>Unrealized</h3><div class='kpi-v'>" + num(sum.unrealized_pnl) + "</div><div class='kpi-l'>open marks</div></div>" +
           "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + positions.length + "</div><div class='kpi-l'>" +
           positions.filter(function (x) { return +x.qty !== 0; }).length + " live</div></div>" +
+          "<div class='card kpi'><h3>CommCoin Wallet</h3><div class='kpi-v'>" +
+          (comm.available ? num(comm.balance_mft, 4) + " " + esc(comm.coin_symbol || "MFT") : "—") +
+          "</div><div class='kpi-l'>" +
+          (comm.available
+            ? (comm.value_usd != null ? "value " + num(comm.value_usd) + " @ $" + num(comm.market_price_usd, 4) : "no market price · excluded from equity")
+            : esc(comm.reason || "chain not connected")) +
+          "</div></div>" +
           "</div>" +
           "<div class='grid2'>" + allocHtml + riskHtml + "</div>" +
           commHtml +
