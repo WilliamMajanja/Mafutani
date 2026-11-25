@@ -18,6 +18,7 @@ import { liveConfigured, liveDisabledReason } from "./lib/mt5";
 import { policies } from "./lib/policies";
 import { wikiArticles } from "./lib/wiki";
 import { logJournal } from "./lib/journal";
+import { fillOrderManually } from "./lib/manual";
 import { alpacaConfigured } from "./lib/alpaca";
 import { venueRegistry, routeLive } from "./lib/venues";
 import { getSetting, getBool, getNumber, allSettings, setSettings } from "./lib/settings";
@@ -504,6 +505,7 @@ router.on("GET", "/api/cash/config", async () => json({
   name: await getSetting("mpesa_c2c_name"),
   currency: "KES",
   approval_required: await getBool("cash_approval_required"),
+  usd_kes_rate: await getNumber("usd_kes_rate"),
   note: "Send M-Pesa C2C to this number, then submit the transaction reference. An admin confirms receipt before cash is credited.",
 }));
 
@@ -539,6 +541,7 @@ router.on("POST", "/api/cash/deposit", async ({ req }) => {
     });
     return json({
       movement: movement,
+      usd_amount: movement.usd_amount,
       instructions: `Send KES ${amount.toFixed(2)} via M-Pesa C2C to ${MPESA_C2C_NUMBER} (${MPESA_C2C_NAME}) and keep the transaction code ${ref}. An admin must confirm receipt before cash is credited.`,
     }, 201);
   } catch (e) { return error(400, (e as Error).message); }
@@ -645,8 +648,17 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
     const tierLive: any = await db()`
       SELECT t.live_enabled FROM users u JOIN tiers t ON t.name = u.tier WHERE u.id = ${user.id}
     `;
-    const anyLive = alpacaConfigured() || liveConfigured();
+    const manualVenue = await getBool("manual_venue_enabled");
+    const anyLive = alpacaConfigured() || liveConfigured() || manualVenue;
     const liveAvailable = anyLive && !!(tierLive[0] && Number(tierLive[0].live_enabled));
+    const depRows: any = await db()`
+      SELECT COALESCE(SUM(CASE
+        WHEN movement_type = 'deposit' THEN COALESCE(usd_amount, amount)
+        WHEN movement_type = 'withdrawal' THEN -COALESCE(usd_amount, amount)
+        ELSE 0 END), 0) AS net_deposits
+      FROM cash_movements WHERE user_id = ${user.id} AND status = 'confirmed'
+    `;
+    const netDeposits = Number(depRows[0].net_deposits) || 0;
 
     // CommCoin value comes from the chain service, not from a hardcoded rate.
     // The chain exposes a reference value (metadata), so it is reported as a
@@ -695,23 +707,28 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
       email: user.email,
       display_name: user.display_name || "",
       live_trading_enabled: liveAvailable,
-      live_venue: liveAvailable ? (alpacaConfigured() ? "ALPACA" : "MT5") : null,
-      live_reason: liveAvailable ? "" : (anyLive ? "live trading is not enabled for this tier" : "ALPACA_API_KEY/SECRET or MT5_BRIDGE_URL is not configured"),
+      live_venue: liveAvailable ? (alpacaConfigured() ? "ALPACA" : (liveConfigured() ? "MT5" : "MANUAL")) : null,
+      live_reason: liveAvailable
+        ? (alpacaConfigured() || liveConfigured() ? "automated venue available" : "manual execution: admin approves and records the fill")
+        : (anyLive ? "live trading is not enabled for this tier" : "ALPACA_API_KEY/SECRET or MT5_BRIDGE_URL is not configured"),
       paper_enabled: paperEnabled(),
       positions,
       fills,
       summary: (() => {
         const securitiesEquity = acct.cash + marketValue;
         const basis = Number(acct.starting_cash) || 0;
-        const totalPnl = securitiesEquity + commcoinValue - basis;
-        const realizedPnl = securitiesEquity - basis - unrealized;
+        const capital = basis + netDeposits;
+        const totalPnl = securitiesEquity + commcoinValue - capital;
+        const realizedPnl = securitiesEquity - capital - unrealized;
         return {
           starting_cash: basis,
+          net_deposits: Number(netDeposits.toFixed(2)),
+          capital_base: Number(capital.toFixed(2)),
           securities_equity: Number(securitiesEquity.toFixed(2)),
           realized_pnl: Number(realizedPnl.toFixed(2)),
           unrealized_pnl: Number(unrealized.toFixed(2)),
           total_pnl: Number(totalPnl.toFixed(2)),
-          return_pct: basis ? Number(((totalPnl / basis) * 100).toFixed(4)) : null,
+          return_pct: capital ? Number(((totalPnl / capital) * 100).toFixed(4)) : null,
           market_value: Number((marketValue + commcoinValue).toFixed(2)),
           market_value_securities: Number(marketValue.toFixed(2)),
           commcoin_value: commcoinValue,
@@ -853,6 +870,18 @@ router.on("GET", "/api/admin/orders/pending", async ({ req }) => {
 
 async function tryExecuteApproved(order: any, adminId: number, note: string) {
   try {
+    const manualOnly = await getBool("manual_execution_only");
+    const venue = routeLive(order.symbol);
+    if (manualOnly || !venue) {
+      await db()`UPDATE orders SET status = 'awaiting_manual_fill', approval_note = ${note || "manual execution required"} WHERE id = ${order.id}`;
+      await logJournal(order.user_id, {
+        kind: "trade_approval", symbol: order.symbol, strategy: "manual_fill_required",
+        note: `approved request #${order.id}; no automated venue for ${order.symbol} — awaiting manual fill`,
+        ref_id: `order:${order.id}`,
+        details: { request_id: order.id, approved_by: adminId, status: "awaiting_manual_fill" },
+      });
+      return { ok: true, manual: true, order };
+    }
     const result: any = await executeOrder(order.user_id, {
       symbol: order.symbol, side: order.side, type: order.type, qty: Number(order.qty),
       price: order.price == null ? null : Number(order.price),
@@ -977,6 +1006,27 @@ router.on("POST", "/api/admin/orders/:id/retry", async ({ req, params }) => {
     if (!result.ok) return error(502, result.error || "venue execution failed");
     return json({ order_id: id, executed: result.executed });
   } catch (e) { return error(500, (e as Error).message); }
+});
+
+router.on("POST", "/api/admin/orders/:id/fill", async ({ req, params }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const id = parseInt(params.id, 10);
+    if (!Number.isInteger(id)) return error(400, "invalid order id");
+    const body = await readBody(req);
+    const price = Number(body.price);
+    if (!isFinite(price) || price <= 0) return error(400, "fill price must be greater than 0");
+    const result = await fillOrderManually(id, price, gate.user!.id);
+    await audit(gate.user!.id, "order.manual_fill", gate.user!.tier, { order_id: id, price, qty: result.order.qty, symbol: result.order.symbol });
+    await logJournal(result.order.user_id, {
+      kind: "trade", symbol: result.order.symbol, strategy: "manual_fill",
+      note: `manual fill ${result.order.side} ${result.order.qty} ${result.order.symbol} @ ${price}`,
+      ref_id: `order:${id}`,
+      details: { request_id: id, fill_id: result.fill.id, price, qty: result.order.qty, side: result.order.side, cash_after: result.cash_after, filled_by: gate.user!.id },
+    });
+    return json(result);
+  } catch (e) { return error(400, (e as Error).message); }
 });
 
 router.on("POST", "/api/positions/flatten", async ({ req }) => {
@@ -1377,20 +1427,28 @@ router.on("GET", "/api/anomalies", async ({ query }) => {
         kinds[an.kind] = (kinds[an.kind] || 0) + 1;
       }
       if (!showAll && a.anomaly_score <= 0) continue;
+      const lastTs = Number(candles[candles.length - 1].ts);
       results.push({
         symbol: s.symbol, name: s.name, asset_type: s.asset_type,
         last: a.last, score: a.score, bias: a.bias, regime: a.regime,
         anomaly_score: a.anomaly_score, anomalies: a.anomalies,
+        bars: candles.length,
+        last_date: new Date(lastTs * 1000).toISOString().slice(0, 10),
+        window_bars: 30,
       });
     }
     results.sort((x, y) => y.anomaly_score - x.anomaly_score);
     const flagged = results.filter((r) => r.anomaly_score > 0).length;
     return json({
       scanned: syms.length,
+      analysed: results.length,
+      listed: results.length,
       flagged,
       clean: Math.max(0, syms.length - flagged),
       by_severity: bySeverity,
       kinds,
+      window_bars: 30,
+      as_of: new Date().toISOString(),
       results,
     });
   } catch (e) { return error(500, (e as Error).message); }
@@ -1848,7 +1906,7 @@ router.on("POST", "/api/admin/settings", async ({ req }) => {
 router.on("GET", "/api/admin/overview", async ({ req }) => {
   const gate = await adminUser(req);
   if (gate.error) return gate.error;
-  const [users, accounts, symbols, candles, orders, sessions, equity]: any[] = await Promise.all([
+  const [users, accounts, symbols, candles, orders, sessions, equity, deposits]: any[] = await Promise.all([
     db()`SELECT COUNT(*)::int AS n FROM users`,
     db()`SELECT COUNT(*)::int AS n, COALESCE(SUM(cash), 0) AS cash, COALESCE(SUM(starting_cash), 0) AS starting_cash FROM accounts`,
     db()`SELECT COUNT(*)::int AS n FROM symbols WHERE enabled = 1`,
@@ -1868,6 +1926,13 @@ router.on("GET", "/api/admin/overview", async ({ req }) => {
         GROUP BY p.user_id
       ) mv ON mv.user_id = a.user_id
     `,
+    db()`
+      SELECT COALESCE(SUM(CASE
+        WHEN movement_type = 'deposit' THEN COALESCE(usd_amount, amount)
+        WHEN movement_type = 'withdrawal' THEN -COALESCE(usd_amount, amount)
+        ELSE 0 END), 0) AS net_deposits
+      FROM cash_movements WHERE status = 'confirmed'
+    `,
   ]);
   return json({
     overview: {
@@ -1876,7 +1941,8 @@ router.on("GET", "/api/admin/overview", async ({ req }) => {
       cash: Number(accounts[0].cash),
       starting_cash: Number(accounts[0].starting_cash),
       equity: Number(equity[0].equity),
-      total_pnl: Number((Number(equity[0].equity) - Number(accounts[0].starting_cash)).toFixed(2)),
+      net_deposits: Number(deposits[0].net_deposits),
+      total_pnl: Number((Number(equity[0].equity) - Number(accounts[0].starting_cash) - Number(deposits[0].net_deposits)).toFixed(2)),
       symbols: symbols[0].n,
       candles_daily: candles[0].n,
       orders: orders[0].n,
@@ -1921,6 +1987,43 @@ router.on("GET", "/api/admin/gaps", async ({ req }) => {
     { id: "paper-hosted", area: "Policy", severity: "high", status: "closed", owner: "Engineering", detail: "Hosted paper orders return 403; local remains paper" },
   ];
   return json({ gaps, blockers: gaps.filter((g) => g.status === "open" && g.severity === "blocker").length });
+});
+
+router.on("POST", "/api/admin/users", async ({ req }) => {
+  const gate = await adminUser(req);
+  if (gate.error) return gate.error;
+  try {
+    const body = await readBody(req);
+    const email = String(body.email || "").trim().toLowerCase();
+    const name = String(body.display_name || "").trim().slice(0, 80);
+    const tier = String(body.tier || "Free");
+    const password = String(body.password || "");
+    if (!email || !email.includes("@")) return error(400, "valid email required");
+    if (password.length < 8) return error(400, "password must be at least 8 characters");
+    const allowed: any = await db()`SELECT name FROM tiers`;
+    if (!allowed.some((r: any) => r.name === tier)) return error(400, "unknown tier");
+    const hash = hashPassword(password);
+    const rows: any = await db()`
+      INSERT INTO users (email, display_name, password_hash, tier)
+      VALUES (${email}, ${name}, ${hash}, ${tier})
+      RETURNING id, email, display_name, tier
+    `;
+    const u = rows[0];
+    const start = tier === "Admin" ? 100_000_000 : 100_000;
+    await db()`INSERT INTO accounts (user_id, cash, starting_cash) VALUES (${u.id}, ${start}, ${start}) ON CONFLICT (user_id) DO NOTHING`;
+    try { await db()`INSERT INTO risk_limits (user_id) VALUES (${u.id}) ON CONFLICT (user_id) DO NOTHING`; } catch { /* optional */ }
+    await audit(gate.user!.id, "admin.user_create", gate.user!.tier, { target: u.id, email, tier });
+    await logJournal(gate.user!.id, {
+      kind: "admin", strategy: "user_create",
+      note: `created ${u.email} (${tier})`,
+      ref_id: `user:${u.id}`,
+      details: { user_id: u.id, email: u.email, display_name: name, tier },
+    });
+    return json({ user: u }, 201);
+  } catch (e) {
+    const msg = (e as Error).message.includes("duplicate key") ? "email already registered" : (e as Error).message;
+    return error(400, msg);
+  }
 });
 
 router.on("GET", "/api/admin/users", async ({ req }) => {

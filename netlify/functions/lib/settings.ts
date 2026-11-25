@@ -5,12 +5,15 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   order_consensus_threshold: "100000",
   cash_approval_required: "true",
   live_trading_enabled: "true",
+  manual_venue_enabled: "true",
+  manual_execution_only: "true",
+  usd_kes_rate: "130",
   mpesa_c2c_number: process.env.MPESA_C2C_NUMBER || "+254713270444",
   mpesa_c2c_name: process.env.MPESA_C2C_NAME || "Mafutani",
 };
 
-const BOOLEAN_KEYS = new Set(["order_approval_required", "cash_approval_required", "live_trading_enabled"]);
-const NUMBER_KEYS = new Set(["order_consensus_threshold"]);
+const BOOLEAN_KEYS = new Set(["order_approval_required", "cash_approval_required", "live_trading_enabled", "manual_venue_enabled", "manual_execution_only"]);
+const NUMBER_KEYS = new Set(["order_consensus_threshold", "usd_kes_rate"]);
 
 export async function getSetting(key: string): Promise<string> {
   try {

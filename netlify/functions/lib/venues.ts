@@ -1,6 +1,7 @@
 import { alpacaConfigured, alpacaCanTrade } from "./alpaca";
 import { liveConfigured as mt5Configured } from "./mt5";
 import { paperEnabled } from "./trading";
+import { getBool } from "./settings";
 
 export type VenueDescriptor = {
   id: string;

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { getNumber } from "./settings";
 
 export const MPESA_C2C_NUMBER = process.env.MPESA_C2C_NUMBER || "+254713270444";
 export const MPESA_C2C_NAME = process.env.MPESA_C2C_NAME || "Mafutani";
@@ -25,12 +26,18 @@ export async function createCashMovement(userId: number, input: CashMovementInpu
     throw new Error("invalid movement_type");
   }
   const key = input.idempotency_key || keyFor(type);
+  const currency = String(input.currency || "KES").toUpperCase();
+  const fxRate = currency === "USD" ? 1 : await getNumber("usd_kes_rate");
+  if (!isFinite(fxRate) || fxRate <= 0) throw new Error("USD/KES rate is not configured");
+  const usdAmount = currency === "USD" ? amount : amount / fxRate;
   const rows: any = await db()`
     INSERT INTO cash_movements
-      (user_id, movement_type, rail, amount, currency, external_reference, status, idempotency_key, details_json)
+      (user_id, movement_type, rail, amount, currency, external_reference, status,
+       idempotency_key, details_json, fx_rate, usd_amount)
     VALUES (${userId}, ${type}, ${String(input.rail || "mpesa")}, ${amount},
-            ${String(input.currency || "KES")}, ${String(input.external_reference || "")},
-            'pending', ${key}, ${JSON.stringify(input.details || {})})
+            ${currency}, ${String(input.external_reference || "")},
+            'pending', ${key}, ${JSON.stringify({ ...(input.details || {}), usd_kes_rate: fxRate })},
+            ${fxRate}, ${Number(usdAmount.toFixed(2))})
     ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
     RETURNING *
   `;
@@ -73,10 +80,10 @@ export async function confirmCashMovement(id: number, adminId: number) {
       SET status = 'confirmed', confirmed_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
           confirmed_by = ${adminId}
       WHERE id = ${id} AND status = 'pending'
-      RETURNING id, user_id, amount, currency, movement_type
+      RETURNING id, user_id, amount, currency, movement_type, usd_amount, fx_rate
     ), up AS (
       INSERT INTO accounts (user_id, cash, starting_cash)
-      SELECT user_id, amount, 0 FROM m
+      SELECT user_id, COALESCE(usd_amount, amount), 0 FROM m
       ON CONFLICT (user_id) DO UPDATE SET cash = accounts.cash + EXCLUDED.cash
       RETURNING user_id, cash
     )
@@ -100,8 +107,8 @@ export async function rejectCashMovement(id: number, adminId: number, note: stri
 export async function cashReconciliation() {
   const rows: any = await db()`
     SELECT
-      COALESCE(SUM(CASE WHEN status = 'confirmed' AND movement_type = 'deposit' THEN amount ELSE 0 END), 0) AS confirmed_deposits,
-      COALESCE(SUM(CASE WHEN status = 'confirmed' AND movement_type = 'withdrawal' THEN amount ELSE 0 END), 0) AS confirmed_withdrawals,
+      COALESCE(SUM(CASE WHEN status = 'confirmed' AND movement_type = 'deposit' THEN COALESCE(usd_amount, amount) ELSE 0 END), 0) AS confirmed_deposits,
+      COALESCE(SUM(CASE WHEN status = 'confirmed' AND movement_type = 'withdrawal' THEN COALESCE(usd_amount, amount) ELSE 0 END), 0) AS confirmed_withdrawals,
       COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,
       COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) AS pending_amount
     FROM cash_movements

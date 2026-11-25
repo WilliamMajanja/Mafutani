@@ -3190,12 +3190,16 @@
           "<label>M-Pesa code <input id='cash-ref' placeholder='e.g. SFE4X8K2LM'></label>" +
           "<button type='button' class='primary' id='cash-submit'>Submit deposit</button></div>" +
           "<div id='cash-out' class='kpi-l'></div></div>" +
-          "<div class='card'><h3>Cash movements</h3><table><thead><tr><th>ID</th><th>Type</th><th>Amount</th><th>Ref</th><th>Status</th><th>Time</th></tr></thead><tbody>" +
+          "<div class='card'><h3>Cash movements</h3><table><thead><tr><th>ID</th><th>Type</th><th>KES</th><th>USD</th><th>Ref</th><th>Status</th><th>Time</th><th>Action</th></tr></thead><tbody>" +
           (((cashRes.movements || []).map(function (m) {
+            var adminAction = (p.tier === "Admin" && m.status === "pending")
+              ? "<button type='button' class='mini' data-pf-cash-ok='" + esc(m.id) + "'>Confirm</button> " +
+                "<button type='button' class='mini' data-pf-cash-no='" + esc(m.id) + "'>Reject</button>"
+              : "—";
             return "<tr><td>" + esc(m.id) + "</td><td>" + esc(m.movement_type) + "</td><td>" + num(m.amount) + " " + esc(m.currency) +
-              "</td><td>" + esc(m.external_reference) + "</td><td class='" + (m.status === "confirmed" ? "pos" : (m.status === "rejected" ? "neg" : "dim")) +
-              "'>" + esc(m.status) + "</td><td>" + esc(fmtTs(m.created_at)) + "</td></tr>";
-          }).join("") || "<tr><td colspan='6' class='dim'>no cash movements</td></tr>")) + "</tbody></table></div></div>" +
+              "</td><td>" + num(m.usd_amount) + "</td><td>" + esc(m.external_reference) + "</td><td class='" + (m.status === "confirmed" ? "pos" : (m.status === "rejected" ? "neg" : "dim")) +
+              "'>" + esc(m.status) + "</td><td>" + esc(fmtTs(m.created_at)) + "</td><td>" + adminAction + "</td></tr>";
+          }).join("") || "<tr><td colspan='8' class='dim'>no cash movements</td></tr>")) + "</tbody></table></div></div>" +
           "<h3>Positions</h3>" + positionRows(positions, {
             showRealized: true,
             mode: p.live_trading_enabled ? "LIVE" : (p.paper_enabled === false ? "LIVE-ONLY" : "paper"),
@@ -3227,6 +3231,24 @@
           a.click();
           setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
         };
+        view().querySelectorAll("[data-pf-cash-ok]").forEach(function (b) {
+          b.onclick = function () {
+            if (!confirm("Confirm M-Pesa receipt for movement #" + b.getAttribute("data-pf-cash-ok") + "?")) return;
+            b.disabled = true;
+            api("POST", "/api/admin/cash/" + encodeURIComponent(b.getAttribute("data-pf-cash-ok")) + "/confirm", {})
+              .then(function () { load(); })
+              .catch(function (e) { alert(e.message); b.disabled = false; });
+          };
+        });
+        view().querySelectorAll("[data-pf-cash-no]").forEach(function (b) {
+          b.onclick = function () {
+            var note = prompt("Reason for rejecting this deposit?") || "";
+            b.disabled = true;
+            api("POST", "/api/admin/cash/" + encodeURIComponent(b.getAttribute("data-pf-cash-no")) + "/reject", { note: note })
+              .then(function () { load(); })
+              .catch(function (e) { alert(e.message); b.disabled = false; });
+          };
+        });
         var cs = document.getElementById("cash-submit");
         if (cs) cs.onclick = function () {
           var amt = parseFloat(document.getElementById("cash-amt").value);
@@ -3535,7 +3557,7 @@
           "<td><select data-tier='" + esc(u.id) + "'>" + tiers + "</select></td>" +
           "<td>" + num(u.cash, 2) + "</td><td>" + num(u.equity, 2) + "</td>" +
           "<td>" + (u.disabled ? "<span class='neg'>disabled</span>" : "<span class='pos'>active</span>") + "</td>" +
-          "<td>" + esc(u.last_login_ts || "—") + "</td>" +
+          "<td>" + (Number(u.last_login_ts) > 0 ? esc(fmtTs(u.last_login_ts)) : "never") + "</td>" +
           "<td><button type='button' data-toggle-user='" + esc(u.id) + "' data-disabled='" + (u.disabled ? "0" : "1") + "'>" +
           (u.disabled ? "Enable" : "Disable") + "</button> " +
           "<button type='button' data-revoke='" + esc(u.id) + "'>Revoke sessions</button></td></tr>";
@@ -3571,7 +3593,16 @@
       view().innerHTML = "<h2>Admin Console</h2>" +
         "<p class='kpi-l'>Operator controls, account management, venue configuration and audit trail.</p>" +
         "<div class='cards'>" + kpis + "</div>" +
-        "<div class='card'><h3>Users</h3><table><thead><tr><th>ID</th><th>Email</th><th>Name</th><th>Tier</th><th>Cash</th><th>Equity</th><th>State</th><th>Last login</th><th>Action</th></tr></thead><tbody>" + userRows + "</tbody></table></div>" +
+        "<div class='card'><h3>Users</h3>" +
+        "<div class='row'><input id='admin-user-q' placeholder='filter email or name' autocomplete='off'>" +
+        "<button type='button' id='admin-new-toggle'>New user</button></div>" +
+        "<div id='admin-new-form' class='card' style='display:none;margin:8px 0'><div class='row'>" +
+        "<label>Email <input id='nu-email' type='email'></label>" +
+        "<label>Name <input id='nu-name'></label>" +
+        "<label>Tier <select id='nu-tier'><option>Free</option><option>Pro</option><option>Institutional</option><option>Admin</option></select></label>" +
+        "<label>Password <input id='nu-pass' type='password'></label>" +
+        "<button type='button' class='primary' id='nu-create'>Create</button></div><div id='nu-out' class='kpi-l'></div></div>" +
+        "<table><thead><tr><th>ID</th><th>Email</th><th>Name</th><th>Tier</th><th>Cash</th><th>Equity</th><th>State</th><th>Last login</th><th>Action</th></tr></thead><tbody>" + userRows + "</tbody></table></div>" +
         "<div class='card'><h3>Instruments</h3><table><thead><tr><th>Symbol</th><th>Name</th><th>Class</th><th>Venue</th><th>State</th><th>Action</th></tr></thead><tbody>" + symRows + "</tbody></table></div>" +
         "<div class='grid2'>" +
         "<div class='card'><h3>System readiness</h3><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>" + checkRows + "</tbody></table>" +
@@ -3596,7 +3627,10 @@
               action = "<button type='button' data-appr-ok='" + esc(oid) + "'>Approve</button> " +
                 "<button type='button' data-appr-no='" + esc(oid) + "'>Reject</button>";
             } else if (e.order_status === "execution_failed") {
-              action = "<button type='button' data-appr-retry='" + esc(oid) + "'>Retry</button>";
+              action = "<button type='button' data-appr-retry='" + esc(oid) + "'>Retry</button> " +
+                "<button type='button' data-order-fill='" + esc(oid) + "'>Fill</button>";
+            } else if (e.order_status === "awaiting_manual_fill") {
+              action = "<button type='button' data-order-fill='" + esc(oid) + "'>Fill</button>";
             }
           } else if (e.kind === "cash" && e.cash_status === "pending") {
             var cid = String(e.ref_id || "").replace("cash:", "");
@@ -3619,6 +3653,8 @@
         "<label>Large-move threshold <input id='set-threshold' type='number' min='0' value='" + esc((setRes.settings || {}).order_consensus_threshold || "100000") + "'></label>" +
         "<label>M-Pesa C2C number <input id='set-mpesa' value='" + esc((setRes.settings || {}).mpesa_c2c_number || "+254713270444") + "'></label>" +
         "<label>M-Pesa name <input id='set-mpesa-name' value='" + esc((setRes.settings || {}).mpesa_c2c_name || "Mafutani") + "'></label>" +
+        "<label>USD/KES rate <input id='set-usd-kes' type='number' min='1' step='any' value='" + esc((setRes.settings || {}).usd_kes_rate || "130") + "'></label>" +
+        "<label><input type='checkbox' id='set-manual-only' style='width:auto'" + ((setRes.settings || {}).manual_execution_only === "true" ? " checked" : "") + "> Manual execution only (no auto venue)</label>" +
         "</div><button type='button' class='primary' id='set-save'>Save controls</button><div id='set-out' class='kpi-l'></div></div>" +
         "<div class='card'><h3>Trade approvals</h3>" +
         "<p class='kpi-l'>pending " + esc((apprRes.orders || []).length) + " · large moves require all active admins</p>" +
@@ -3631,6 +3667,7 @@
             "</td><td><button type='button' data-appr-ok='" + esc(o.id) + "'>Approve</button> " +
             "<button type='button' data-appr-no='" + esc(o.id) + "'>Reject</button>" +
             (o.status === "execution_failed" ? " <button type='button' data-appr-retry='" + esc(o.id) + "'>Retry</button>" : "") +
+            ((o.status === "awaiting_manual_fill" || o.status === "execution_failed") ? " <button type='button' data-order-fill='" + esc(o.id) + "'>Fill</button>" : "") +
             "</td></tr>";
         }).join("") || "<tr><td colspan='9' class='dim'>no pending trade approvals</td></tr>")) + "</tbody></table></div>" +
         "<div class='card'><h3>Cash approvals (M-Pesa C2C)</h3>" +
@@ -3689,6 +3726,30 @@
             .catch(function (e) { alert(e.message); });
         };
       });
+      var uq = document.getElementById("admin-user-q");
+      if (uq) uq.oninput = function () {
+        var v = uq.value.trim().toLowerCase();
+        view().querySelectorAll("table tbody tr").forEach(function (tr) {
+          if (tr.querySelector("[data-toggle-user]") || tr.querySelector("[data-revoke]")) {
+            tr.style.display = !v || tr.textContent.toLowerCase().indexOf(v) >= 0 ? "" : "none";
+          }
+        });
+      };
+      var nt = document.getElementById("admin-new-toggle");
+      var nf = document.getElementById("admin-new-form");
+      if (nt && nf) nt.onclick = function () { nf.style.display = nf.style.display === "none" ? "" : "none"; };
+      var nc = document.getElementById("nu-create");
+      if (nc) nc.onclick = function () {
+        var out = document.getElementById("nu-out");
+        nc.disabled = true;
+        api("POST", "/api/admin/users", {
+          email: document.getElementById("nu-email").value,
+          display_name: document.getElementById("nu-name").value,
+          tier: document.getElementById("nu-tier").value,
+          password: document.getElementById("nu-pass").value
+        }).then(function (r) { out.innerHTML = "<span class='pos'>created " + esc(r.user.email) + "</span>"; })
+          .catch(function (e) { out.innerHTML = showErr(e); nc.disabled = false; });
+      };
       view().querySelectorAll("[data-revoke]").forEach(function (b) {
         b.onclick = function () {
           if (!confirm("Revoke every session for this user?")) return;
@@ -3706,7 +3767,9 @@
           live_trading_enabled: document.getElementById("set-live").checked ? "true" : "false",
           order_consensus_threshold: document.getElementById("set-threshold").value,
           mpesa_c2c_number: document.getElementById("set-mpesa").value,
-          mpesa_c2c_name: document.getElementById("set-mpesa-name").value
+          mpesa_c2c_name: document.getElementById("set-mpesa-name").value,
+          usd_kes_rate: document.getElementById("set-usd-kes").value,
+          manual_execution_only: document.getElementById("set-manual-only").checked ? "true" : "false"
         };
         setSave.disabled = true;
         api("POST", "/api/admin/settings", { settings: payload })
@@ -3728,6 +3791,18 @@
           var note = prompt("Reason for rejection") || "";
           b.disabled = true;
           api("POST", "/api/admin/orders/" + encodeURIComponent(b.getAttribute("data-appr-no")) + "/reject", { note: note })
+            .then(function () { pageAdmin(); })
+            .catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+      });
+      view().querySelectorAll("[data-order-fill]").forEach(function (b) {
+        b.onclick = function () {
+          var price = prompt("Execution price for order #" + b.getAttribute("data-order-fill") + "?");
+          if (price == null) return;
+          var p = parseFloat(price);
+          if (!isFinite(p) || p <= 0) { alert("price must be greater than 0"); return; }
+          b.disabled = true;
+          api("POST", "/api/admin/orders/" + encodeURIComponent(b.getAttribute("data-order-fill")) + "/fill", { price: p })
             .then(function () { pageAdmin(); })
             .catch(function (e) { alert(e.message); b.disabled = false; });
         };
