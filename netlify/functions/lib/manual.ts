@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { latestPrice } from "./market";
 
 /**
  * Manual execution of an admin-approved ticket.
@@ -19,6 +20,14 @@ export async function fillOrderManually(orderId: number, price: number, adminId:
   const qty = Number(o.qty);
   const symbol = String(o.symbol || "").toUpperCase();
   const side = String(o.side || "").toLowerCase();
+  const quote = await latestPrice(db(), symbol);
+  if (!quote || !isFinite(quote.last) || quote.last <= 0) throw new Error("no reference quote for this symbol");
+  if (price < quote.last * 0.25 || price > quote.last * 4) {
+    throw new Error(`fill price ${price} is outside 0.25x–4x the last quote ${quote.last}`);
+  }
+  const riskRows: any = await db()`SELECT max_notional FROM risk_limits WHERE user_id = ${o.user_id}`;
+  const maxNotional = Number(riskRows[0]?.max_notional || 100000);
+  if (qty * price > maxNotional) throw new Error(`fill notional ${qty * price} exceeds max_notional ${maxNotional}`);
   if (!symbol || !isFinite(qty) || qty <= 0 || (side !== "buy" && side !== "sell")) {
     throw new Error("order is malformed");
   }

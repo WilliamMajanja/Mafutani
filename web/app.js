@@ -310,10 +310,11 @@
           "<div class='card kpi'><h3>Equity</h3><div class='kpi-v'>" + num(p.equity != null ? p.equity : cash) +
           "</div><div class='kpi-l'>securities " + num(p.market_value_securities) + " · CommCoin " + num(p.commcoin && p.commcoin.value_usd) + "</div></div>" +
           "<div class='card kpi'><h3>CommCoin</h3><div class='kpi-v'>" +
-          (p.commcoin && p.commcoin.available ? num(p.commcoin.value_usd) : "—") +
+          (p.commcoin && p.commcoin.value_usd != null ? num(p.commcoin.value_usd) : "—") +
           "</div><div class='kpi-l'>" +
           (p.commcoin && p.commcoin.available
-            ? num(p.commcoin.balance_mft, 4) + " " + esc(p.commcoin.coin_symbol || "MFT") + " · reference valuation"
+            ? num(p.commcoin.balance_mft, 4) + " " + esc(p.commcoin.coin_symbol || "MFT") +
+              (p.commcoin.market_price_usd ? " @ $" + num(p.commcoin.market_price_usd, 4) : " · no market price set")
             : esc((p.commcoin && p.commcoin.reason) || "chain not connected")) +
           "</div></div>" +
           "<div class='card kpi'><h3>Open positions</h3><div class='kpi-v'>" + poss.length +
@@ -3157,9 +3158,10 @@
           "</b></div><p class='kpi-l'>" + esc(p.live_reason || (p.live_trading_enabled ? "live execution enabled" : "")) + "</p></div>";
 
         var commHtml = "<div class='card'><h3>CommCoin</h3>" +
-          "<div class='kpi-v'>" + (comm.available ? num(comm.value_usd) : "—") + "</div>" +
+          "<div class='kpi-v'>" + (comm.value_usd != null ? num(comm.value_usd) : "—") + "</div>" +
           "<p class='kpi-l'>" + (comm.available
-            ? num(comm.balance_mft, 4) + " " + esc(comm.coin_symbol || "MFT") + " · reference valuation"
+            ? num(comm.balance_mft, 4) + " " + esc(comm.coin_symbol || "MFT") +
+              (comm.market_price_usd ? " @ $" + num(comm.market_price_usd, 4) : " · no market price configured (excluded from equity)")
             : esc(comm.reason || "chain service not connected")) + "</p></div>";
 
         var html = "<div class='row spb'><div class='row'>" +
@@ -3654,6 +3656,7 @@
         "<label>M-Pesa C2C number <input id='set-mpesa' value='" + esc((setRes.settings || {}).mpesa_c2c_number || "+254713270444") + "'></label>" +
         "<label>M-Pesa name <input id='set-mpesa-name' value='" + esc((setRes.settings || {}).mpesa_c2c_name || "Mafutani") + "'></label>" +
         "<label>USD/KES rate <input id='set-usd-kes' type='number' min='1' step='any' value='" + esc((setRes.settings || {}).usd_kes_rate || "130") + "'></label>" +
+        "<label>MFT/USD price <input id='set-mft-price' type='number' min='0' step='any' value='" + esc((setRes.settings || {}).mft_usd_price || "0") + "' title='0 excludes CommCoin from equity'></label>" +
         "<label><input type='checkbox' id='set-manual-only' style='width:auto'" + ((setRes.settings || {}).manual_execution_only === "true" ? " checked" : "") + "> Manual execution only (no auto venue)</label>" +
         "</div><button type='button' class='primary' id='set-save'>Save controls</button><div id='set-out' class='kpi-l'></div></div>" +
         "<div class='card'><h3>Trade approvals</h3>" +
@@ -3769,6 +3772,7 @@
           mpesa_c2c_number: document.getElementById("set-mpesa").value,
           mpesa_c2c_name: document.getElementById("set-mpesa-name").value,
           usd_kes_rate: document.getElementById("set-usd-kes").value,
+          mft_usd_price: document.getElementById("set-mft-price").value,
           manual_execution_only: document.getElementById("set-manual-only").checked ? "true" : "false"
         };
         setSave.disabled = true;

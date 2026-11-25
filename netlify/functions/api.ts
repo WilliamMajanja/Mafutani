@@ -683,12 +683,16 @@ router.on("GET", "/api/portfolio", async ({ req }) => {
         const wallet: any = walletRes.ok ? await walletRes.json() : {};
         const balance = wallet && wallet.exists ? Number(wallet.balance_mft) : 0;
         const ref = info && info.reference_value_usd != null ? Number(info.reference_value_usd) : null;
+        const mftPrice = await getNumber("mft_usd_price");
         mft = {
           available: true,
           balance_mft: isFinite(balance) ? balance : 0,
           reference_value_usd: isFinite(ref as number) ? ref : null,
-          value_usd: isFinite(ref as number) && isFinite(balance) ? Number((balance * (ref as number)).toFixed(2)) : null,
-          note: info.reference_value_note || "reference value only, not a market price",
+          market_price_usd: mftPrice > 0 ? mftPrice : null,
+          value_usd: mftPrice > 0 && isFinite(balance) ? Number((balance * mftPrice).toFixed(2)) : null,
+          note: mftPrice > 0
+            ? "operator-set MFT/USD price; not a market guarantee"
+            : "no MFT/USD market price configured; reference metadata is not included in equity",
           coin_symbol: info.coin_symbol || "MFT",
         };
       } catch (e) {
@@ -806,6 +810,22 @@ router.on("POST", "/api/orders", async ({ req }) => {
     const quote = await latestPrice(db(), symbol);
     const refPrice = type === "limit" ? Number(body.price) : (quote ? (side === "buy" ? quote.ask : quote.bid) : Number(body.price || 0));
     const notional = qty * refPrice;
+    const riskRows: any = await db()`
+      SELECT max_position_qty, max_notional, kill_switch FROM risk_limits WHERE user_id = ${user.id}
+    `;
+    const risk = riskRows[0] || { max_position_qty: 100, max_notional: 100000, kill_switch: 0 };
+    if (Number(risk.kill_switch)) return error(403, "kill switch is on");
+    if (notional > Number(risk.max_notional)) {
+      return error(403, `order notional ${notional.toFixed(2)} exceeds max_notional ${risk.max_notional}`);
+    }
+    const posRows: any = await db()`
+      SELECT qty FROM positions WHERE user_id = ${user.id} AND symbol = ${symbol}
+    `;
+    const currentQty = Number(posRows[0]?.qty || 0);
+    const resultingQty = currentQty + (side === "buy" ? qty : -qty);
+    if (Math.abs(resultingQty) > Number(risk.max_position_qty)) {
+      return error(403, `resulting position ${resultingQty} exceeds max_position_qty ${risk.max_position_qty}`);
+    }
     const adminRows: any = await db()`SELECT COUNT(*)::int AS n FROM users WHERE tier = 'Admin' AND disabled = 0`;
     const adminCount = Number(adminRows[0].n) || 0;
     if (adminCount === 0) return error(503, "no active admin available to approve orders");
