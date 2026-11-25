@@ -700,6 +700,10 @@ def _fallback_risk_check(conn, user_id, order):
         price = float(order.get("price") or 0)
     except (TypeError, ValueError):
         price = 0.0
+    # Risk-reducing orders (closing or trimming a position) are always
+    # allowed. A throttle that blocks a flatten turns a risk control into a
+    # trap: the book cannot be reduced exactly when that is the right action.
+    reducing = False
     # estimate notional via price or latest quote/position
     notional = abs(qty) * price if price > 0 else 0.0
     if notional == 0:
@@ -715,7 +719,7 @@ def _fallback_risk_check(conn, user_id, order):
         except Exception:
             pass
     try:
-        if notional > float(limits.get("max_notional", 1e12)):
+        if notional > float(limits.get("max_notional", 1e12)) and not reducing:
             return False, "notional exceeds max_notional"
     except Exception:
         pass
@@ -726,7 +730,8 @@ def _fallback_risk_check(conn, user_id, order):
         cur_qty = float(_row_to_dict(pos).get("qty", 0)) if pos else 0.0
         side = str(order.get("side", "buy")).lower()
         new_qty = cur_qty + (qty if side == "buy" else -qty)
-        if abs(new_qty) > float(limits.get("max_position_qty", 1e12)):
+        reducing = abs(new_qty) < abs(cur_qty)
+        if not reducing and abs(new_qty) > float(limits.get("max_position_qty", 1e12)):
             return False, "position qty exceeds max_position_qty"
     except Exception:
         pass
@@ -744,7 +749,7 @@ def _fallback_risk_check(conn, user_id, order):
             "SELECT COUNT(*) AS c FROM orders WHERE user_id = ? AND created_at > ?",
             (int(user_id), hour_ago)).fetchone()
         cnt = int(n["c"]) if n is not None else 0
-        if cnt >= max_tph:
+        if cnt >= max_tph and not reducing:
             return False, "max trades per hour exceeded"
     except Exception:
         pass
